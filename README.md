@@ -6,7 +6,7 @@ C2 dedup/clustering service, writing to the validated `news` + `queue` Postgres
 schemas and speaking the `news_item/1` / `signal.dedup/1` / `signal.triage/1`
 contracts from `queue-contracts-spec.md`.
 
-**Validated:** 23 unit tests + 11 integration tests against a live PostgreSQL 16
+**Validated:** 44 unit tests + 21 integration tests (Phases 1+2) against a live PostgreSQL 16
 instance (the integration suite replays the full news-lifecycle story through the
 actual service code: store → transactional enqueue → dedup → cluster →
 corroboration → DLQ → prune → gap tracking).
@@ -136,11 +136,48 @@ EOF
   is deliberately coarse in Phase 1 (gap thresholds only); the exchange-calendar
   library lands with C3/C4 where holiday precision is load-bearing.
 
+
+## Phase 2 — A1 Triage + Router (observe-only)
+
+Consumes `signal.triage` (DedupedSignal), runs grammar-constrained triage
+against the Fast-slot model, journals a TRIAGE decision for every item
+(ESCALATE / DISCARD / REJECT — nothing is silent), and routes TriagedSignals
+per the four deterministic §6 rules onto `signal.guard` / `signal.thesis` /
+`signal.analyst` / `signal.overnight`. No trading.
+
+Run: `python -m a1_triage.service` (after C1/C2; config in `config/a1.yaml`).
+
+**Model serving (Spark).** The Fast slot runs Qwen3-8B-Instruct Q6_K under
+llama.cpp's server with the JSON-Schema grammar constraint:
+
+```bash
+# one-time: fetch the GGUF (or convert; ~6.9GB at Q6_K)
+llama-server -m qwen3-8b-instruct-q6_k.gguf --host 127.0.0.1 --port 8080 \
+  -c 8192 --parallel 2
+```
+
+Then in `.env` / `pipeline.env`: nothing — `config/a1.yaml` already points at
+`http://127.0.0.1:8080`. Set `model.backend: stub` in a1.yaml for
+model-server-less dev. Grammar enforcement is server-side during decoding;
+the wrapper still validates code-side and retries once with the error appended
+before journaling a REJECT (models propose, code disposes).
+
+**Design notes:**
+- Decision + routing fan-out commit in ONE transaction — a journaled decision
+  without its routes (or vice versa) is impossible.
+- `config_version` is real from Phase 2: the git SHA at service start is
+  registered in `journal.config_versions` and stamped on every decision.
+- Routing facts are code: NYSE calendar via pandas-market-calendars
+  (holiday-correct), open-position intersection (empty until Phase 4),
+  thesis matches (stub until Phase 8), `priority_score` with PLACEHOLDER
+  weights in `config/a1.yaml` (real values are a Phase-4-gating item).
+- Guard fan-out survives DISCARD: an immaterial item touching a held name
+  still reaches `signal.guard` — corrections on held positions must reach A12.
+- Material items are promoted to the `retrieval` collection at triage time
+  (idempotent upsert; safe under at-least-once redelivery).
+
 ## Known deferred items (by design, per baseline)
 
-- Router (TriagedSignal routing rules, position-touching guard path) — Phase 2
-  with A1; C1 enqueues correction revisions normally until then.
-- `retrieval` collection writer — Phase 2 (A1 material flag is the admission).
 - LULD halt feed — arrives with the market-data provider integration (C3/C4);
   the `market.halt` queue contract is already defined.
 - Exchange-calendar precision, dead-man thresholds, C7 alerting jobs — later

@@ -1,0 +1,31 @@
+# A1 Triage + Router configuration (Phase 2, observe-only).
+#
+# NOTE ON VALUES: priority weights and the corroboration bonus are PLACEHOLDER
+# starting points. Config starting values are a deferred design item gating
+# Phase 4 (baseline §14); the formula SHAPE is fixed here, the numbers are not.
+
+model:
+  backend: llamacpp            # llamacpp | stub
+  endpoint: "http://127.0.0.1:8080"   # llama-server on the Spark
+  model_id: "qwen3-8b-q6_k"    # journal provenance string (decisions.model_id)
+  temperature: 0.0             # deterministic gates deserve deterministic proposals
+  max_tokens: 512
+  timeout_secs: 30
+  retries_on_invalid: 1        # one retry with the validation error appended,
+                               # then REJECT to journal (never crash, never drop)
+
+router:
+  # priority_score = tier_weight + urgency_weight + round(novelty*4) + corroboration_bonus
+  tier_weight:        # by source_tier
+    1: 6
+    2: 4
+    3: 1
+  urgency_weight:
+    high: 6
+    medium: 3
+    low: 0
+  corroboration_bonus_per_outlet: 1   # (independent_outlets - 1) * this, capped
+  corroboration_bonus_cap: 3
+  # queue.priority is ascending (0 = most urgent). Overnight enqueue priority:
+  # max(0, overnight_base - priority_score)
+  overnight_base: 50

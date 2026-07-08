@@ -1,7 +1,7 @@
 [project]
 name = "news-pipeline"
-version = "0.1.0"
-description = "C1 ingestion + C2 dedup for the multi-agent news trading system (baseline v0.5, Phase 1)"
+version = "0.2.0"
+description = "C1 ingestion + C2 dedup + A1 triage/router for the multi-agent news trading system (baseline v0.5, Phase 1)"
 requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary,pool]>=3.1",
@@ -10,6 +10,7 @@ dependencies = [
     "feedparser>=6.0",
     "pydantic>=2.7",
     "qdrant-client>=1.9",
+    "pandas-market-calendars>=4.4",
 ]
 
 [project.optional-dependencies]
