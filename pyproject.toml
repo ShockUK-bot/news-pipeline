@@ -1,0 +1,24 @@
+[project]
+name = "news-pipeline"
+version = "0.1.0"
+description = "C1 ingestion + C2 dedup for the multi-agent news trading system (baseline v0.5, Phase 1)"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary,pool]>=3.1",
+    "websockets>=12",
+    "httpx>=0.27",
+    "feedparser>=6.0",
+    "pydantic>=2.7",
+    "qdrant-client>=1.9",
+]
+
+[project.optional-dependencies]
+embed = ["sentence-transformers>=3.0"]   # real embedder; install on the Spark
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

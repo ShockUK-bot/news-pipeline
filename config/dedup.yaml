@@ -1,0 +1,9 @@
+# C2 configuration (baseline §4 C2, v0.4 two-collection rule)
+similarity_threshold: 0.90      # >= this cosine sim to an item in trailing 48h -> duplicate
+cluster_threshold: 0.80         # >= this sim -> same story cluster (corroboration), below -> new cluster
+dedup_window_hours: 48
+prune_interval_secs: 3600       # hourly prune of the dedup_48h collection
+collections:
+  dedup: "dedup_48h"
+  retrieval: "retrieval"        # material items only; admission = A1 flag (Phase 2 caller)
+embedding_dim: 384              # bge-small-en-v1.5 and the hash test embedder both emit 384

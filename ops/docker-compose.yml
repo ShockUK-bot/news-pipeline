@@ -1,0 +1,24 @@
+# Dev/Spark infrastructure: PostgreSQL 16 + Qdrant server.
+# On the Spark you may prefer native PG16 (baseline assumes Postgres on NVMe);
+# this compose file is equivalent for development.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader_dev        # dev only; use a real secret on the Spark
+      POSTGRES_DB: trading
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../schema:/docker-entrypoint-initdb.d:ro   # applies both schemas on first boot
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333"]
+    volumes:
+      - qdrantdata:/qdrant/storage
+
+volumes:
+  pgdata:
+  qdrantdata:

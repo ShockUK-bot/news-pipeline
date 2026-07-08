@@ -1,0 +1,40 @@
+# C1 source registry. Trust tiers per baseline v0.2 (§4 C1):
+#   1 = SEC EDGAR / exchange releases
+#   2 = established wires
+#   3 = aggregated / RSS
+# Gap thresholds are per-source "silence means trouble" windows, split by
+# market-hours vs off-hours (the firehose being quiet at 3AM Sunday is normal).
+
+alpaca:
+  enabled: true
+  tier: 2                      # alpaca_benzinga wire content
+  gap_threshold_market_secs: 300      # 5 min silent during RTH -> gap
+  gap_threshold_offhours_secs: 7200   # 2 h silent off-hours -> gap
+  reconnect_base_secs: 1
+  reconnect_max_secs: 60
+
+edgar:
+  enabled: true
+  tier: 1
+  poll_interval_secs: 15       # well under SEC 10 req/s fair-access cap
+  gap_threshold_market_secs: 900
+  gap_threshold_offhours_secs: 14400
+  # current-events Atom feed, 8-K prioritized via channels tag
+  feed_url: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom"
+  extra_feeds:
+    - name: "all-filings"
+      url: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&count=40&output=atom"
+
+rss:
+  enabled: true
+  tier: 3
+  poll_interval_secs: 60
+  gap_threshold_market_secs: 1800
+  gap_threshold_offhours_secs: 21600
+  feeds:
+    - name: "prnewswire-news"
+      url: "https://www.prnewswire.com/rss/news-releases-list.rss"
+    - name: "globenewswire-public"
+      url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
+    - name: "businesswire-all"
+      url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ=="
