@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C6 — Pipeline Console</title>
+<style>
+:root{
+  --bg:#1c2430; --panel:#26303f; --panel-2:#212a38; --line:#3a4759;
+  --text:#f4f7fb; --muted:#b6c1d1; --faint:#8b99ad;
+  --gain:#43d99e; --loss:#f2685f; --amber:#f2b04a;
+  --chip-triage:#6fc7ea; --chip-analyst:#b095ea; --chip-gate:#f2b04a;
+  --chip-risk:#eaa3c9; --chip-order:#43d99e; --chip-guard:#f0b35e;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;padding:14px 18px}
+.micro{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+header{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.brand{font-weight:700;letter-spacing:.06em}
+.pill{border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:12px;font-family:var(--mono)}
+.pill.live{border-color:var(--gain);color:var(--gain)}
+.pill.poll{border-color:var(--amber);color:var(--amber)}
+.pill.dead{border-color:var(--loss);color:var(--loss)}
+.pill.breaker{border-color:var(--loss);color:var(--loss);display:none}
+.spacer{flex:1}
+button{font:inherit;cursor:pointer;border-radius:6px;padding:7px 16px;font-size:12.5px;letter-spacing:.08em}
+#capitalBtn{background:none;border:1.5px solid var(--amber);color:var(--amber)}
+#killBtn{background:var(--loss);border:1.5px solid var(--loss);color:#fff;font-weight:700}
+#killBtn.armed{background:none;color:var(--loss)}
+#killBanner{display:none;background:var(--loss);color:#fff;text-align:center;font-weight:700;
+  letter-spacing:.2em;padding:8px;border-radius:6px;margin-bottom:12px}
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+.stat .v{font-family:var(--mono);font-size:20px;margin-top:4px}
+.tabs{display:flex;gap:2px;margin-bottom:10px}
+.tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--faint);border-radius:0}
+.tabs button.on{color:var(--text);border-bottom-color:var(--amber)}
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+.row2{display:grid;grid-template-columns:1.4fr 1fr;gap:10px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13.5px}
+th{text-align:left;font-family:var(--sans);font-weight:600;font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);padding:4px 8px;border-bottom:1px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid var(--panel-2)}
+.gain{color:var(--gain)} .loss{color:var(--loss)}
+#tape{max-height:420px;overflow:auto;font-size:13px}
+.tape-row{display:flex;gap:10px;padding:5px 2px;border-bottom:1px solid var(--panel-2);
+  font-family:var(--mono);align-items:baseline}
+.tape-row.new{animation:flash 1s ease-out 1}
+@keyframes flash{from{background:rgba(242,176,74,.25)}to{background:none}}
+@media (prefers-reduced-motion: reduce){.tape-row.new{animation:none}}
+.chip{font-size:10px;padding:1px 8px;border-radius:999px;color:#1c2430;font-weight:700;flex:none}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px}
+.dot.OK{background:var(--gain)} .dot.DEGRADED{background:var(--amber)} .dot.DOWN{background:var(--loss)}
+.detail{color:var(--muted)} .lat{color:var(--faint);margin-left:auto;flex:none}
+select{background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:6px;
+  font:inherit;padding:4px 8px}
+h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">C6 · PIPELINE</span>
+  <span id="conn" class="pill dead">CONNECTING</span>
+  <span id="breaker" class="pill breaker">DRAWDOWN BREAKER</span>
+  <span class="spacer"></span>
+  <button id="capitalBtn">CAPITAL</button>
+  <button id="killBtn">KILL SWITCH</button>
+</header>
+<div id="killBanner">KILL SWITCH ARMED — NO NEW ORDERS</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <button id="tabLive" class="on">LIVE</button>
+  <button id="tabHist">HISTORY</button>
+</div>
+
+<div id="live" class="grid">
+  <div class="panel"><h2>Open positions</h2>
+    <table><thead><tr><th>Ticker</th><th>Qty</th><th>Entry</th><th>Last</th><th>Stop</th>
+      <th>Target</th><th>Unrl P&amp;L</th><th>Thesis</th></tr></thead>
+    <tbody id="positions"></tbody></table></div>
+  <div class="row2">
+    <div class="panel"><h2>Decision tape</h2><div id="tape"></div></div>
+    <div>
+      <div class="panel" style="margin-bottom:10px"><h2>System health</h2><div id="health"></div></div>
+      <div class="panel"><h2>Vetoed trades</h2><div id="vetoes"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="hist" class="grid" style="display:none">
+  <div class="panel">
+    <h2>Trade history <select id="gran"><option>day</option><option>week</option>
+      <option>month</option><option>year</option></select></h2>
+    <table><thead><tr><th>Period</th><th>Trades</th><th>Wins</th><th>Win %</th>
+      <th>Realized</th><th>Best</th><th>Worst</th></tr></thead><tbody id="periods"></tbody></table>
+  </div>
+  <div class="panel"><h2>Closed trades</h2>
+    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Qty</th><th>Entry</th><th>Exit</th>
+      <th>Layer</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const CHIP={TRIAGE:'--chip-triage',ANALYST:'--chip-analyst',GATE:'--chip-gate',
+            RISK:'--chip-risk',ORDER:'--chip-order',GUARD:'--chip-guard'};
+const money=v=>(v<0?'-$':'$')+Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0});
+const px=v=>v==null?'—':Number(v).toFixed(2);
+let lastDecisionId=0, histTimer=null;
+
+function setConn(mode){const c=$('conn');
+  c.className='pill '+(mode==='ws'?'live':mode==='poll'?'poll':'dead');
+  c.textContent=mode==='ws'?'LIVE · WS':mode==='poll'?'POLLING':'DISCONNECTED';}
+
+function render(s){
+  const st=s.stats||{}, ctl=s.control||{};
+  $('stats').innerHTML=[
+    ['Trading capital',money(st.trading_capital||0)],
+    ['Open positions',st.open_positions||0],
+    ['Unrealized P&L',money(st.unrealized_pnl||0),st.unrealized_pnl],
+    ['Realized today',money(st.realized_today||0),st.realized_today],
+    ['Fills today',st.fills_today||0],
+    ['Vetoes today',st.vetoes_today||0]]
+    .map(([l,v,pn])=>`<div class="stat"><div class="micro">${l}</div>
+      <div class="v ${pn>0?'gain':pn<0?'loss':''}">${v}</div></div>`).join('');
+  const killed=ctl.kill_switch==='1';
+  $('killBanner').style.display=killed?'block':'none';
+  $('killBtn').textContent=killed?'RESUME':'KILL SWITCH';
+  $('killBtn').className=killed?'armed':'';
+  $('breaker').style.display=ctl.drawdown_breaker==='1'?'inline-block':'none';
+  $('positions').innerHTML=(s.positions||[]).map(p=>{
+    const u=(p.current_price-p.entry_price)*p.qty;
+    return `<tr><td>${p.ticker}</td><td>${p.qty}</td><td>${px(p.entry_price)}</td>
+      <td>${px(p.current_price)}</td><td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
+      <td class="${u>=0?'gain':'loss'}">${money(u)}</td>
+      <td class="detail">${(p.thesis||'').slice(0,80)}</td></tr>`;}).join('')
+    ||'<tr><td colspan="8" class="detail">no open positions</td></tr>';
+  const maxId=(s.decisions||[]).reduce((m,d)=>Math.max(m,d.id),0);
+  $('tape').innerHTML=(s.decisions||[]).map(d=>{
+    const col=getComputedStyle(document.documentElement).getPropertyValue(CHIP[d.stage]||'--faint');
+    const act=/VETO|REJECT|DISCARD/.test(d.action)?'loss':/SIZED|ESCALATE|FILL|OPEN/.test(d.action)?'gain':'';
+    return `<div class="tape-row ${d.id>lastDecisionId?'new':''}">
+      <span class="detail">${new Date(d.ts*1000).toLocaleTimeString()}</span>
+      <span class="chip" style="background:var(${col})">${d.stage}</span>
+      <span>${d.ticker||''}</span><span class="${act}">${d.action}</span>
+      <span class="detail">${(d.detail||'').slice(0,70)}</span>
+      <span class="lat">${d.latency_ms??''}${d.latency_ms!=null?'ms':''}</span></div>`;}).join('');
+  lastDecisionId=maxId;
+  $('health').innerHTML=(s.health||[]).map(h=>
+    `<div style="padding:4px 0"><span class="dot ${h.status}"></span>
+     <span style="font-family:var(--mono)">${h.component}</span>
+     <span class="detail"> ${h.detail||''}</span></div>`).join('');
+  $('vetoes').innerHTML=(s.vetoes||[]).slice(0,12).map(v=>
+    `<div class="tape-row"><span>${v.ticker||''}</span>
+     <span class="detail">${(v.detail||'').slice(0,60)}</span></div>`).join('')
+    ||'<div class="detail">none</div>';
+}
+
+async function api(path,opts){const r=await fetch(path,opts);
+  if(!r.ok)throw Object.assign(new Error('http '+r.status),{status:r.status,body:await r.text()});
+  return r.json();}
+
+async function connectWS(){
+  try{
+    const {token}=await api('/api/ws-token');
+    const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?token='+token);
+    ws.onmessage=e=>{setConn('ws');render(JSON.parse(e.data));};
+    ws.onclose=()=>{setConn('poll');poll();};
+  }catch(e){setConn('poll');poll();}
+}
+async function poll(){
+  try{render(await api('/api/state'));setConn('poll');}
+  catch(e){setConn('dead');}
+  setTimeout(poll,2000);
+}
+
+async function loadHistory(){
+  const g=$('gran').value, h=await api('/api/history?granularity='+g);
+  $('periods').innerHTML=(h.periods||[]).map(p=>
+    `<tr><td>${p.period}</td><td>${p.trades}</td><td>${p.wins}</td><td>${p.win_rate}%</td>
+     <td class="${p.realized>=0?'gain':'loss'}">${money(p.realized)}</td>
+     <td class="gain">${money(p.best)}</td><td class="loss">${money(p.worst)}</td></tr>`).join('')
+    ||'<tr><td colspan="7" class="detail">no closed trades yet</td></tr>';
+  $('closed').innerHTML=(h.closed||[]).map(c=>
+    `<tr><td>${new Date(c.closed_ts*1000).toLocaleString()}</td><td>${c.ticker}</td>
+     <td>${c.qty}</td><td>${px(c.avg_entry)}</td><td>${px(c.avg_exit)}</td><td>${c.exit_layer||''}</td>
+     <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td></tr>`).join('');
+}
+
+$('tabLive').onclick=()=>{ $('live').style.display=''; $('hist').style.display='none';
+  $('tabLive').classList.add('on'); $('tabHist').classList.remove('on');
+  clearInterval(histTimer); };
+$('tabHist').onclick=()=>{ $('live').style.display='none'; $('hist').style.display='';
+  $('tabHist').classList.add('on'); $('tabLive').classList.remove('on');
+  loadHistory(); histTimer=setInterval(loadHistory,5000); };
+$('gran').onchange=loadHistory;
+
+async function guarded(path,extra){
+  const token=prompt('Kill token:'); if(token==null)return;
+  try{await api(path,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign({token},extra||{}))});}
+  catch(e){alert(e.status===403?'Bad kill token':e.status===400?'Rejected: '+e.body:'Error');}
+}
+$('killBtn').onclick=()=>{
+  const killed=$('killBtn').textContent==='RESUME';
+  if(!killed && !confirm('Arm the kill switch? No new orders will be submitted.'))return;
+  guarded(killed?'/api/resume':'/api/kill');};
+$('capitalBtn').onclick=()=>{
+  const raw=prompt('New trading capital (USD):'); if(raw==null)return;
+  guarded('/api/capital',{amount:raw});};
+
+connectWS();
+</script>
+</body>
+</html>

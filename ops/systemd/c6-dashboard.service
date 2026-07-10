@@ -1,0 +1,19 @@
+[Unit]
+Description=C6 Dashboard (operator console, 127.0.0.1:8000 — expose via tailscale serve only)
+After=network-online.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src:/opt/pipeline/dashboard
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

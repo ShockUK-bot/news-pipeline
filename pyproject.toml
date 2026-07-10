@@ -1,6 +1,6 @@
 [project]
 name = "news-pipeline"
-version = "0.4.1"
+version = "0.4.2"
 description = "C1+C2 ingestion/dedup, A1 triage/router, A2 analyst, C3 gate, C8 regime for the multi-agent news trading system (baseline v0.5, Phase 1)"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 embed = ["sentence-transformers>=3.0"]   # real embedder; install on the Spark
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dash = ["fastapi>=0.111", "uvicorn>=0.30"]   # C6 dashboard
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
