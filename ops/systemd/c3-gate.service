@@ -1,5 +1,5 @@
 [Unit]
-Description=C1 News Ingestion Service (trading pipeline)
+Description=c3-gate Service (trading pipeline)
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -9,10 +9,9 @@ User=trader
 WorkingDirectory=/opt/pipeline
 Environment=PYTHONPATH=/opt/pipeline/src
 EnvironmentFile=/etc/pipeline/pipeline.env
-ExecStart=/opt/pipeline/.venv/bin/python -m c1_ingestion.service
+ExecStart=/opt/pipeline/.venv/bin/python -m c3_gate.service
 Restart=always
 RestartSec=5
-# journald captures structured stdout logs
 StandardOutput=journal
 StandardError=journal
 

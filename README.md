@@ -6,7 +6,7 @@ C2 dedup/clustering service, writing to the validated `news` + `queue` Postgres
 schemas and speaking the `news_item/1` / `signal.dedup/1` / `signal.triage/1`
 contracts from `queue-contracts-spec.md`.
 
-**Validated:** 44 unit tests + 21 integration tests (Phases 1+2) against a live PostgreSQL 16
+**Validated:** 97 tests — 45 unit + 52 integration across Phases 1-3 against a live PostgreSQL 16
 instance (the integration suite replays the full news-lifecycle story through the
 actual service code: store → transactional enqueue → dedup → cluster →
 corroboration → DLQ → prune → gap tracking).
@@ -32,14 +32,14 @@ ops/              systemd units, docker-compose (PG16 + Qdrant)
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"           # runtime + pytest
 pip install -e ".[embed]"         # sentence-transformers (Spark; downloads bge model)
-cp .env.example .env              # then edit
+cp env.example .env              # then edit
 ```
 
 Database (either):
 - `docker compose -f ops/docker-compose.yml up -d` — schemas auto-apply on first boot, or
 - native PG16: `psql -f schema/news-store-schema.sql && psql -f schema/journal-schema.sql`
 
-## Environment (see `.env.example`)
+## Environment (see `env.example`)
 
 | Var | Purpose |
 |---|---|
@@ -176,9 +176,76 @@ before journaling a REJECT (models propose, code disposes).
 - Material items are promoted to the `retrieval` collection at triage time
   (idempotent upsert; safe under at-least-once redelivery).
 
+
+## Phase 3 — A2 Analyst + C3 Gate + C8 Regime (observe-only)
+
+Run: `python -m a2_analyst.service`, `python -m c3_gate.service`,
+`python -m c8_regime.service`. Configs: `config/a2.yaml`, `config/gate.yaml`,
+`config/c8.yaml`. Downstream `signal.risk` accumulates until Phase 4's A3.
+
+**Market data (locked decision):** Alpaca Market Data API, free IEX feed,
+behind the `MarketData` protocol (`common/marketdata.py`; `MARKETDATA=fake`
+for dev/tests). ACCEPTED CAVEAT: IEX is ~2-3% of consolidated volume — C3's
+volume multiples run on a biased-but-consistent sample. MUST REVISIT (SIP or
+Polygon) before real capital.
+
+**Analyst slot (locked decision):** Qwen3-32B Q5_K_M, second llama-server:
+
+```bash
+llama-server -m qwen3-32b-q5_k_m.gguf --host 127.0.0.1 --port 8081 -c 16384
+```
+
+**A2** fetches the item's latest revision from the news store (TriagedSignal
+carries only item_ref), builds a code-computed context pack (price action
+since received_ts, related headlines from the retrieval collection, latest C8
+regime features; sector/earnings/short-interest keys present but null until
+their P1 sources land), and produces a strict-typed thesis. The mandatory
+priced-in question is answered against provided numbers. **machine_checkable
+invalidations are validated against the MIP DSL at authoring time** — stdlib
+predicate names or full specs through `invalidation_dsl.validate()`; an
+unmonitorable invalidation is a retry-then-REJECT, never a journal row.
+`related_opportunities` emit SyntheticSignals (§10) on `signal.synthetic`;
+A1's second consumer re-triages them for the sympathy ticker with
+`derived_from` lineage — same gates, no shortcuts.
+
+**C3** rules in order: LONG_ONLY (down-theses journal a veto — information,
+not entries), CREDIBILITY (matrix: required outlets = f(impact bucket, tier);
+Tier-1 alone passes; high source_risk bumps one level), then intraday
+(move/volume/window/extended) or open-handoff (15-min blackout, gap-vs-
+estimate PRICED_IN). Vetoes journal with full numbers and emit NO message
+(§8). PASS journals + enqueues the GatePass with the pricing snapshot A3's
+limit orders will use. `config/gate.yaml` values are PLACEHOLDERS pending the
+§14 threshold design item; the 6% extended-skip is the baseline's own number.
+
+**C8** writes `journal.regime_snapshots` on a market-hours-aware schedule
+from ETF proxies (SPY 50d trend + slope, `realized_vol_20d` — honest naming,
+NOT a fake `vix` — sector-ETF breadth fraction, top/bottom sector RS).
+Every A2 decision references the latest `regime_id`.
+
 ## Known deferred items (by design, per baseline)
 
-- LULD halt feed — arrives with the market-data provider integration (C3/C4);
+- IEX volume bias (SIP/Polygon upgrade) — before real capital.
+- LULD halt feed — Phase 4 with C4;
   the `market.halt` queue contract is already defined.
 - Exchange-calendar precision, dead-man thresholds, C7 alerting jobs — later
   phases per the build order.
+
+## Phase 4: Execution layer (v0.4.0)
+
+A3 risk sizing and C4 execution: the pipeline now trades (paper).
+
+- `src/common/broker.py` — Alpaca paper / FakeBroker behind one protocol
+- `src/a3_risk/` — hard gates -> bounded LLM discretion (band-validated,
+  deterministic fallback) -> sizing chain (risk budget, 7 clips, viability)
+- `src/c4_exec/` — entry flow (idempotent at intent_id AND client_order_id),
+  two-tier stops re-materialized off the actual fill, exit engine
+  (L1 stop/L2 ratchets/L3 time/L4 realization/L5 MIP invalidations),
+  cancel-and-replace with 45s reinstatement, D1 overnight rule,
+  reconciliation (broker is source of truth), drawdown breaker (-2%),
+  dead-man ladder (ALERT -> BLOCK_ENTRIES -> never auto-flatten)
+- `ops/RUNBOOK.md`, `ops/backup.sh` (restore test EXECUTED in validation),
+  systemd units incl. nightly backup timer
+
+Run tests: `pytest tests/` (177). Env: `BROKER=fake|alpaca` added.
+Alpaca paper needs `ALPACA_KEY_ID`/`ALPACA_SECRET_KEY` in `.env`.
+

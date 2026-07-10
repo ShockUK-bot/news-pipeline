@@ -7,3 +7,4 @@ collections:
   dedup: "dedup_48h"
   retrieval: "retrieval"        # material items only; admission = A1 flag (Phase 2 caller)
 embedding_dim: 384              # bge-small-en-v1.5 and the hash test embedder both emit 384
+

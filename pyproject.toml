@@ -1,7 +1,7 @@
 [project]
 name = "news-pipeline"
-version = "0.2.0"
-description = "C1 ingestion + C2 dedup + A1 triage/router for the multi-agent news trading system (baseline v0.5, Phase 1)"
+version = "0.4.1"
+description = "C1+C2 ingestion/dedup, A1 triage/router, A2 analyst, C3 gate, C8 regime for the multi-agent news trading system (baseline v0.5, Phase 1)"
 requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary,pool]>=3.1",
@@ -23,3 +23,4 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+

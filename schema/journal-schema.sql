@@ -428,3 +428,4 @@ CREATE VIEW dash_audit   AS SELECT audit_id AS id, EXTRACT(EPOCH FROM ts) AS ts,
 -- DEFAULT and append to schema_meta; destructive changes forbidden (A9 must
 -- read last month's rows — baseline §11.5).
 -- ============================================================================
+

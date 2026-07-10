@@ -1,0 +1,31 @@
+# Phase 4 exit profiles (phase4-design-v1_0 D6). Practitioner starting points,
+# tuned only through the A9 loop.
+profiles:
+  short_term_v1:
+    initial_stop:   {method: atr, k: 2.0}
+    catastrophe:    {method: atr, k: 3.5}
+    breakeven_at_R: 1.0
+    trail:          {activate_at_R: 1.5, method: atr, k: 2.5}
+    time_stop:      {window: thesis, min_progress_R: 0.5}
+    realization:    {target_fraction: 0.7, action: scale_out_50}
+    earnings_blackout_exit: true
+    overnight_hold: eod_rule_v1
+  long_term_v1:
+    initial_stop:   {method: atr, k: 3.0}
+    catastrophe:    {method: atr, k: 4.5}
+    breakeven_at_R: 1.0
+    trail:          {activate_at_R: 2.0, method: atr_weekly, k: 4.0}
+    time_stop:      null
+    realization:    {target_fraction: 0.7, action: review_flag}
+    earnings_blackout_exit: false
+    overnight_hold: default_hold
+discretion_bands:
+  k: [1.5, 2.5]
+  realization_fraction: [0.5, 0.9]
+  time_window_sessions: [1, 3]
+overnight_rule:                      # D1 thresholds
+  check_time_et: "15:45"
+  hold_min_unrealized_R: 0.3
+  young_max_age_sessions: 1
+  young_max_realized_fraction: 0.5
+

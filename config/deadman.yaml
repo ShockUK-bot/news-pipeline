@@ -1,0 +1,14 @@
+# Dead-man thresholds (phase4-design-v1_0 D4). RTH values; off-hours alert-only.
+# Ladder: ALERT -> BLOCK_ENTRIES -> never auto-flatten.
+components:
+  ingestion:   {alert_min: 3,  block_entries_min: 10}
+  marketdata:  {alert_min: 2,  block_entries_min: 2, exit_engine_suspend_min: 10}
+  triage:      {alert_min: 5}
+  analyst:     {alert_min: 5}
+  gate:        {alert_min: 5}
+c4:
+  reconcile_interval_min: 15
+  exit_unprotected_max_secs: 45      # D3 cancel-and-replace reinstatement window
+  drawdown_breaker_pct: 0.02
+  heartbeat_secs: 60
+

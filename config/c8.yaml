@@ -1,0 +1,4 @@
+# C8 Regime Context Builder (Phase 3).
+interval_market_secs: 1800     # snapshot every 30 min during RTH
+interval_offhours_secs: 3600   # hourly otherwise
+

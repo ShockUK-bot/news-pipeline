@@ -1,0 +1,10 @@
+# A2 Analyst configuration (Phase 3, observe-only).
+model:
+  backend: llamacpp            # llamacpp | stub
+  endpoint: "http://127.0.0.1:8081"   # second llama-server: Analyst slot
+  model_id: "qwen3-32b-q5_k_m"
+  temperature: 0.0
+  max_tokens: 1200
+  timeout_secs: 120            # 32B on the Spark: ~10-15 tok/s; theses are ~400 tokens
+  retries_on_invalid: 1
+

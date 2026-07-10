@@ -1,0 +1,25 @@
+# Phase 4 capital + hard limits (phase4-design-v1_0 D2). Percentages/caps are
+# GIT-ONLY (baseline rule 25 as amended). Operational controls (kill_switch,
+# trading_capital, max_trades_per_day) live in journal.control via dashboard.
+capital:
+  base_mode: static
+  risk_per_trade_pct: 0.005
+  max_position_notional_pct: 0.15
+  max_portfolio_heat_pct: 0.03
+  heat_split: {SHORT: 0.02, LONG: 0.01}
+  max_sector_heat_pct: 0.015
+  min_viable_risk_fraction: 0.5
+limits:
+  max_trades_per_day_default: 5      # control-table override wins if present
+  adv_participation_max: 0.01
+  spread_max_bps: 40
+  entry_blackout_final_min: 15
+model:                               # A3 bounded discretion (Analyst slot)
+  backend: stub                      # llamacpp on the Spark (:8081), stub for dev
+  endpoint: "http://127.0.0.1:8081"
+  model_id: "qwen3-32b-q5_k_m"
+  temperature: 0.0
+  max_tokens: 400
+  timeout_secs: 60
+  retries_on_invalid: 1
+

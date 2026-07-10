@@ -1,0 +1,18 @@
+# C3 Market Confirmation Gate (Phase 3).
+# ALL VALUES ARE PLACEHOLDERS pending the baseline §14 gate-threshold design
+# item ("Concrete gate thresholds — initial values and tuning protocol").
+# The extended-skip 6% is the one number named in the baseline itself.
+gate:
+  intraday_move_pct: 0.015     # X: >= +1.5% from pre-news
+  intraday_vol_mult: 2.5       # Y: >= 2.5x baseline minute volume
+  intraday_window_min: 30      # N: within 30 minutes of publish
+  extended_pct: 0.06           # baseline v0.5: skip if >= +6% from pre-news
+  open_blackout_min: 15        # no entries first 15 min after open (baseline)
+  handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN
+  impact_medium_min: 0.02      # magnitude_est buckets for credibility
+  impact_high_min: 0.05
+  required_outlets:            # independent outlets required: [impact][tier]
+    low:    {2: 1, 3: 1}
+    medium: {2: 1, 3: 2}
+    high:   {2: 2, 3: 3}       # Tier-3 single-source high-impact NEVER passes alone
+

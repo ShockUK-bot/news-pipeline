@@ -29,3 +29,4 @@ router:
   # queue.priority is ascending (0 = most urgent). Overnight enqueue priority:
   # max(0, overnight_base - priority_score)
   overnight_base: 50
+

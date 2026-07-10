@@ -1,0 +1,18 @@
+[Unit]
+Description=Qdrant vector store (docker)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f qdrant
+ExecStart=/usr/bin/docker run --name qdrant --rm \
+  -p 127.0.0.1:6333:6333 \
+  -v /var/lib/qdrant:/qdrant/storage \
+  qdrant/qdrant:latest
+ExecStop=/usr/bin/docker stop qdrant
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
