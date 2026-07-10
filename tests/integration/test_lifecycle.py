@@ -40,7 +40,7 @@ async def env():
             TRUNCATE news.cluster_members, news.clusters, news.news_items,
                      news.quarantine, news.ingestion_gaps, queue.messages
             RESTART IDENTITY CASCADE""")
-    store = VectorStore()
+    store = VectorStore(path="/tmp/qdrant-test")
     deduper = Deduper(store, get_embedder())
     yield {"pool": pool, "store": store, "deduper": deduper}
 
@@ -239,3 +239,4 @@ async def test_11_health_rows_written(env):
     async with env["pool"].connection() as c:
         cur = await c.execute("SELECT status FROM journal.health WHERE component='ingestion'")
         assert (await cur.fetchone())[0] == "OK"
+

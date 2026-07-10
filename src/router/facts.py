@@ -95,3 +95,4 @@ async def compute_facts(tickers: list[str], source_tier: int, urgency: str,
         priority_score=priority_score(source_tier, urgency, novelty,
                                       independent_outlets, router_cfg),
     )
+

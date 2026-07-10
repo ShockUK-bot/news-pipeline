@@ -60,3 +60,4 @@ def route(triage: TriageOutput, facts: RoutingFacts,
         routes.append(Route(OVERNIGHT_QUEUE,
                             max(0, overnight_base - facts.priority_score)))
     return RoutingDecision("ESCALATE", tuple(routes))
+

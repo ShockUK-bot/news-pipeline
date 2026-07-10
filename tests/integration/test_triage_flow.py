@@ -43,10 +43,6 @@ CLOSED_TS = datetime(2026, 7, 7, 1, 0, tzinfo=timezone.utc)    # Mon 21:00 ET
 @pytest_asyncio.fixture(loop_scope="session", scope="session")
 async def env():
     import shutil
-    # Qdrant local mode is single-client-per-path: this suite must not share
-    # the Phase 1 suite's path when both run in one process. Force ours here
-    # (module-level setdefault loses to an exported QDRANT_PATH).
-    os.environ["QDRANT_PATH"] = "/tmp/qdrant-test-p2"
     shutil.rmtree("/tmp/qdrant-test-p2", ignore_errors=True)
     pool = await get_pool()
     async with pool.connection() as c:
@@ -54,7 +50,7 @@ async def env():
             TRUNCATE journal.decisions, journal.config_versions,
                      queue.messages RESTART IDENTITY CASCADE""")
     await register_config_version("phase2 integration test")
-    yield {"pool": pool, "store": VectorStore()}
+    yield {"pool": pool, "store": VectorStore(path="/tmp/qdrant-test-p2")}
 
 
 def deduped(item_id: str, headline: str, *, revision=1, tier=2, symbols=None,
@@ -232,3 +228,4 @@ async def test_10_config_version_stamped(env):
     rows2 = await q(env, """SELECT count(*) FROM journal.config_versions
                             WHERE config_version = %s""", rows[0][0])
     assert rows2[0][0] == 1
+

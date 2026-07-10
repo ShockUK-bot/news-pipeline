@@ -45,3 +45,4 @@ def jb(obj) -> Jsonb:
 
 def as_json(obj) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+

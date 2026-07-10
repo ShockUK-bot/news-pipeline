@@ -191,3 +191,4 @@ def normalize_rss(entry: dict, feed_name: str, tier: int = 3) -> NewsItem:
         published_ts=pub_ts,
         received_ts=utcnow(),
     )
+

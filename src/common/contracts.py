@@ -118,3 +118,4 @@ def envelope(msg_schema: str, producer: str, signal_id: str, item_id: str,
         },
         "body": body,
     }
+

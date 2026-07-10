@@ -188,3 +188,4 @@ def test_payload_is_contract_shaped():
         assert key in p, f"missing contract field {key}"
     assert p["published_ts"].endswith("Z")
     assert "raw" not in p                        # raw stays in the DB, not on the queue
+

@@ -105,3 +105,4 @@ async def wait_for_message(queue_name: str, timeout_secs: float = 5.0) -> None:
             await asyncio.wait_for(gen.__anext__(), timeout=timeout_secs)
         except (asyncio.TimeoutError, StopAsyncIteration):
             pass
+

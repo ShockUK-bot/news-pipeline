@@ -82,8 +82,10 @@ FEW_SHOT: list[tuple[dict, dict]] = [
 
 
 def render_item(item: dict, cluster: dict) -> str:
-    """The user-turn content: item facts + cluster context, compact JSON."""
-    return json.dumps({
+    """The user-turn content: item facts + cluster context, compact JSON.
+    Synthetic (sympathy-lane) signals add a 'sympathy' block: A1 judges
+    materiality FOR THAT TICKER given the parent item and stated relation."""
+    payload = {
         "headline": item.get("headline"),
         "summary": item.get("summary"),
         "source": item.get("source"),
@@ -93,7 +95,10 @@ def render_item(item: dict, cluster: dict) -> str:
         "is_correction": item.get("is_correction", False),
         "is_new_story": cluster.get("is_new_story"),
         "independent_outlets": cluster.get("independent_outlets"),
-    }, ensure_ascii=False)
+    }
+    if item.get("sympathy"):
+        payload["sympathy"] = item["sympathy"]     # {ticker, relation, rationale}
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def build_messages(item: dict, cluster: dict,
@@ -108,3 +113,4 @@ def build_messages(item: dict, cluster: dict,
                  "\nRespond again with ONLY a valid JSON object.")
     messages.append({"role": "user", "content": user})
     return messages
+

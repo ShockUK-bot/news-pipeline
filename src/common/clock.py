@@ -69,3 +69,4 @@ def is_market_hours(dt: datetime | None = None) -> bool:
         return False
     minutes = et.hour * 60 + et.minute
     return (9 * 60 + 30) <= minutes < (16 * 60)
+

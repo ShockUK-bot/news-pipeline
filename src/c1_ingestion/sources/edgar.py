@@ -95,3 +95,4 @@ class EdgarSource:
             log.info("poll stored", extra=kv(feed=feed["name"], new=stored))
         # a successful poll is liveness even with zero new filings
         self.monitor.mark_activity()
+

@@ -158,3 +158,4 @@ def test_prompt_includes_item_and_fewshot():
 def test_prompt_retry_appends_error():
     msgs = build_messages({"headline": "H"}, {}, retry_error="schema violations: material: field required")
     assert "previous response was invalid" in msgs[-1]["content"]
+

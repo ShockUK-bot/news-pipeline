@@ -107,3 +107,4 @@ def get_backend(cfg: dict) -> ModelBackend:
     if kind == "stub":
         return StubBackend()
     raise RuntimeError(f"unknown model backend: {kind!r}")
+

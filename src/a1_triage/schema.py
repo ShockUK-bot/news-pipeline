@@ -61,3 +61,4 @@ def validate_triage(raw_text: str) -> TriageOutput:
         errs = "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}"
                          for x in e.errors()[:4])
         raise TriageValidationError(f"schema violations: {errs}", raw_text)
+

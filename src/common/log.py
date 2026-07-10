@@ -35,3 +35,4 @@ def get_logger(component: str) -> logging.Logger:
 def kv(**kwargs) -> dict:
     """Usage: log.info("stored item", extra=kv(item_id=..., revision=...))"""
     return {"kv": kwargs}
+

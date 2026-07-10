@@ -60,3 +60,4 @@ def embed_text_for(headline: str, summary: str | None) -> str:
     dedup/cluster decision is a story-identity question, which the headline
     and lede carry."""
     return headline if not summary else f"{headline}\n{summary}"
+

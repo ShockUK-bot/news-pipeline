@@ -80,3 +80,4 @@ class RssSource:
         if stored:
             log.info("poll stored", extra=kv(feed=name, new=stored))
         self.monitor.mark_activity()
+

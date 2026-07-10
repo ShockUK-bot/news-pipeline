@@ -48,20 +48,20 @@ def compute_config_version() -> str:
 
 
 async def register_config_version(summary: str = "") -> str:
-    """Idempotent: called once at service startup; returns the active version."""
+    """Idempotent — safe to call at every service startup. The version string
+    is computed once per process, but the INSERT always runs (ON CONFLICT
+    no-op), so the row exists even if the table was reset since the last call."""
     global _config_version
-    if _config_version is not None:
-        return _config_version
-    version = compute_config_version()
+    if _config_version is None:
+        _config_version = compute_config_version()
     pool = await get_pool()
     async with pool.connection() as conn:
         await conn.execute(
             """INSERT INTO journal.config_versions (config_version, summary)
                VALUES (%s, %s) ON CONFLICT (config_version) DO NOTHING""",
-            (version, summary[:200]))
-    _config_version = version
-    log.info("config version active", extra=kv(config_version=version))
-    return version
+            (_config_version, summary[:200]))
+    log.info("config version active", extra=kv(config_version=_config_version))
+    return _config_version
 
 
 def active_config_version() -> str:
@@ -102,3 +102,4 @@ async def write_decision(*, signal_id: str, stage: str, agent: str, action: str,
     async with pool.connection() as c:
         cur = await c.execute(sql, params)
         return (await cur.fetchone())[0]
+

@@ -126,3 +126,4 @@ class Deduper:
         self.store.upsert_dedup(item_id, revision, vector, cluster_id, source)
         outlets, total = await _corroboration(cluster_id)
         return ClusterDecision(cluster_id, is_new, outlets, total, sim)
+

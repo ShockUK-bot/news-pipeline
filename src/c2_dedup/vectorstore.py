@@ -46,13 +46,14 @@ class Neighbor:
 
 class VectorStore:
     def __init__(self, dedup_collection: str = "dedup_48h",
-                 retrieval_collection: str = "retrieval", dim: int = 384):
-        url = os.environ.get("QDRANT_URL") or None
+                 retrieval_collection: str = "retrieval", dim: int = 384,
+                 path: str | None = None, url: str | None = None):
+        url = url or os.environ.get("QDRANT_URL") or None
         if url:
             self.client = QdrantClient(url=url)
             mode = url
         else:
-            path = os.environ.get("QDRANT_PATH", "./qdrant-local")
+            path = path or os.environ.get("QDRANT_PATH", "./qdrant-local")
             self.client = QdrantClient(path=path)
             mode = f"local:{path}"
         self.dedup = dedup_collection
@@ -106,3 +107,4 @@ class VectorStore:
         """Related-headline context for A2 (Phase 3 caller) — retrieval only."""
         hits = self.client.query_points(self.retrieval, query=vector, limit=limit).points
         return [{"score": h.score, **h.payload} for h in hits]
+

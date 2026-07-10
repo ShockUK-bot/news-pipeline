@@ -75,3 +75,4 @@ class GapMonitor:
             log.info("gap closed", extra=kv(source=self.source, gap_id=self.open_gap_id))
             self.open_gap_id = None
             await set_health(f"ingestion:{self.source}", "OK", "recovered")
+

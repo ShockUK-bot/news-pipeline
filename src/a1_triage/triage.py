@@ -57,3 +57,4 @@ async def run_triage(backend: ModelBackend, item: dict, cluster: dict,
     raise TriageRejected(detail=error.detail, raw=error.raw,
                          model_id=reply.model_id, latency_ms=total_latency,
                          attempts=1 + retries_on_invalid)
+

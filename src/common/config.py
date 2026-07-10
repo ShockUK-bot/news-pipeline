@@ -67,14 +67,30 @@ def _tiny_yaml(path: str) -> dict:
                 else:
                     parent.append(_scalar(item_src))
             elif content.endswith(":"):
-                key = content[:-1].strip()
+                key = _scalar(content[:-1].strip())
                 node = _LazyNode()
                 parent[key] = node
                 stack.append((indent, node))
             else:
                 k, v = content.split(":", 1)
-                parent[k.strip()] = _scalar(v.strip())
+                parent[_scalar(k.strip())] = _inline_or_scalar(v.strip())
     return _resolve(root)
+
+
+def _inline_or_scalar(v: str):
+    """PyYAML-consistent handling of inline flow maps: 'low: {2: 1, 3: 1}'
+    yields {2: 1, 3: 1} with typed (int) keys. One level deep — nested flow
+    collections belong in real YAML, install PyYAML for those."""
+    if v.startswith("{") and v.endswith("}"):
+        inner = v[1:-1].strip()
+        if not inner:
+            return {}
+        out = {}
+        for pair in inner.split(","):
+            pk, pv = pair.split(":", 1)
+            out[_scalar(pk.strip())] = _scalar(pv.strip())
+        return out
+    return _scalar(v)
 
 
 def _resolve(node):
@@ -102,3 +118,4 @@ def _scalar(s: str):
     except ValueError:
         pass
     return s
+
