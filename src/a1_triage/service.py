@@ -239,8 +239,14 @@ class A1Service:
 
 
 async def consume_loop(svc: A1Service, stop: asyncio.Event) -> None:
-    await set_health("triage", "OK", f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE}")
+    import time
+    hb_detail = f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE}"
+    await set_health("triage", "OK", hb_detail)
+    last_hb = time.monotonic()
     while not stop.is_set():
+        if time.monotonic() - last_hb >= 60.0:
+            await set_health("triage", "OK", hb_detail)
+            last_hb = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         handler = svc.handle
         if msg is None:
