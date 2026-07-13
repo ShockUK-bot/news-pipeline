@@ -1,7 +1,6 @@
 [Unit]
 Description=llama-server Analyst slot (A2/A3 discretion) — Qwen3-32B Q5_K_M on :8081
 After=network-online.target
-
 [Service]
 Type=simple
 User=trader
@@ -9,11 +8,10 @@ ExecStart=/opt/llama.cpp/build/bin/llama-server \
   -m /opt/models/qwen3-32b-q5_k_m.gguf \
   --host 127.0.0.1 --port 8081 \
   -c 16384 \
-  -ngl 999 --no-mmap
+  -ngl 999 --no-mmap --reasoning-budget 0 --grammar-file /opt/llama.cpp/grammars/json.gbnf
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-
 [Install]
 WantedBy=multi-user.target
