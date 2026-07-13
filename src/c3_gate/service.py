@@ -183,8 +183,14 @@ class C3Service:
 
 
 async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
-    await set_health("gate", "OK", f"consuming {IN_QUEUE}")
+    import time
+    hb_detail = f"consuming {IN_QUEUE}"
+    await set_health("gate", "OK", hb_detail)
+    last_hb = time.monotonic()
     while not stop.is_set():
+        if time.monotonic() - last_hb >= 60.0:
+            await set_health("gate", "OK", hb_detail)
+            last_hb = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:
