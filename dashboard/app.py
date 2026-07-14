@@ -1,8 +1,9 @@
-"""C6 Dashboard backend (spec v1.2, final-build variant: Postgres).
+"""C6 Dashboard backend (spec v1.3, final-build variant: Postgres).
 
-Single-operator, read-only console over the journal DB with exactly two
-token-gated write actions: kill switch and trading capital. The dashboard
-never commands the pipeline; only code enforces flags (baseline C6).
+Single-operator, read-only console over the journal DB with three
+token-gated write actions: kill switch, trading capital, and max trades/day.
+The dashboard never commands the pipeline; only code enforces flags
+(baseline C6).
 
 Run: PYTHONPATH=src:dashboard uvicorn app:app --host 127.0.0.1 --port 8000
 Env: PIPELINE_DSN, DASH_USER, DASH_PASS, DASH_KILL_TOKEN,
@@ -12,6 +13,11 @@ Env: PIPELINE_DSN, DASH_USER, DASH_PASS, DASH_KILL_TOKEN,
 Deltas from the SQLite reference implementation (spec section 10):
 - Postgres via the dash_* views shipped in journal-schema.sql since Phase 1.
 - DASH_DB replaced by PIPELINE_DSN (one DSN convention everywhere).
+
+v1.3 additions:
+- POST /api/max-trades  — third operational control (max_trades_per_day).
+- GET  /api/performance — portfolio vs SPY/QQQ total % change series, read
+  from journal.portfolio_nav_daily (fed nightly by ops/snapshot_nav.py).
 """
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ import json
 import os
 import secrets
 import time
+from datetime import date
 from pathlib import Path
 
 import psycopg
@@ -27,6 +34,8 @@ from psycopg.rows import dict_row
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+from common.marketdata import get_marketdata
 
 app = FastAPI(title="C6 Dashboard", docs_url=None, redoc_url=None)
 basic = HTTPBasic()
@@ -132,6 +141,42 @@ async def api_history(granularity: str = "day", user: str = Depends(_require_use
     return _json({"granularity": granularity, "periods": periods, "closed": closed})
 
 
+@app.get("/api/performance")
+async def api_performance(user: str = Depends(_require_user)):
+    """Portfolio vs SPY/QQQ, total % change since first trade.
+
+    Portfolio % = cumulative (realized + unrealized) P&L / a frozen baseline
+    capital (the trading_capital value in effect on the day of the first
+    trade, stored once in journal.control['performance_baseline_capital']).
+    Freezing the denominator means later CAPITAL top-ups grow the numerator
+    going forward without reshaping the historical curve.
+    """
+    async with await _connect() as conn:
+        rows = [dict(r) for r in await (await conn.execute(
+            "SELECT nav_date, total_pnl FROM journal.portfolio_nav_daily "
+            "ORDER BY nav_date")).fetchall()]
+        baseline = await (await conn.execute(
+            "SELECT value FROM journal.control "
+            "WHERE key='performance_baseline_capital'")).fetchone()
+    if not rows or not baseline:
+        return _json({"first_trade_date": None, "series": {}})
+    base_cap = float(baseline["value"])
+    first_date = rows[0]["nav_date"]
+    portfolio = [{"date": r["nav_date"].isoformat(),
+                  "pct": round(float(r["total_pnl"]) / base_cap * 100, 3)} for r in rows]
+    md = get_marketdata()
+    n_days = (date.today() - first_date).days + 5
+    series = {"portfolio": portfolio}
+    for sym in ("SPY", "QQQ"):
+        bars = [b for b in await md.daily_bars(sym, n_days) if b["ts"].date() >= first_date]
+        if not bars:
+            continue
+        base_close = bars[0]["close"]
+        series[sym] = [{"date": b["ts"].date().isoformat(),
+                         "pct": round((b["close"] / base_close - 1) * 100, 3)} for b in bars]
+    return _json({"first_trade_date": first_date.isoformat(), "series": series})
+
+
 @app.get("/api/ws-token")
 async def api_ws_token(user: str = Depends(_require_user)):
     token = secrets.token_urlsafe(24)
@@ -196,3 +241,16 @@ async def api_capital(body: dict, user: str = Depends(_require_user)):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
     return await _set_control("trading_capital", f"{amount:.0f}", user, "CAPITAL_SET")
+
+
+@app.post("/api/max-trades")
+async def api_max_trades(body: dict, user: str = Depends(_require_user)):
+    _check_kill_token(body.get("token"))
+    raw = str(body.get("amount", "")).strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="amount must be an integer")
+    if n <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    return await _set_control("max_trades_per_day", str(n), user, "MAX_TRADES_SET")
