@@ -19,6 +19,20 @@ edgar:
   poll_interval_secs: 15       # well under SEC 10 req/s fair-access cap
   gap_threshold_market_secs: 900
   gap_threshold_offhours_secs: 14400
+  # Event-class forms that enter the pipeline (prefix match: "8-K" admits
+  # "8-K/A"). Everything else is stored to news_items as a record but never
+  # enqueued (2026-07-14 fix: Form 4 / 424B2 flood was 90%+ of volume).
+  triage_forms:
+    - "8-K"
+    - "6-K"
+    - "S-1"
+    - "425"
+    - "SC 13D"
+    - "SC 13G"
+    - "SCHEDULE 13D"
+    - "SCHEDULE 13G"
+    - "10-K"
+    - "10-Q"
   # current-events Atom feed, 8-K prioritized via channels tag
   feed_url: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom"
   extra_feeds:

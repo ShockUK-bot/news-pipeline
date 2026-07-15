@@ -136,7 +136,13 @@ async def test_05_c2_new_story_cluster(env):
 
 async def test_06_corroboration_across_independent_outlets(env):
     """Same story from a second outlet -> same cluster, independent_outlets=2.
-    This is C3's credibility input (v0.2)."""
+    This is C3's credibility input (v0.2).
+
+    2026-07-14 change: this outlet's text is IDENTICAL to the first (wire
+    copy, sim >= 0.90) so it is a DUPLICATE — corroboration is recorded but
+    the item is dropped, not forwarded (baseline §4 C2; the EDGAR-storm fix).
+    Distinct-wording corroboration (0.80-0.90 band) still forwards — that is
+    test_06b below."""
     rss_entry = {
         "title": "Acme Corp announces $2B buyback",
         "id": "https://wire.example/acme-buyback",
@@ -155,12 +161,39 @@ async def test_06_corroboration_across_independent_outlets(env):
         assert outlets == 2, f"expected 2 independent outlets, got {outlets}"
         assert total == 3                       # 2 alpaca revisions + 1 rss
 
+        # duplicate (sim >= 0.90) must NOT reach triage
+        cur = await c.execute(
+            "SELECT count(*) FROM queue.messages "
+            "WHERE queue_name='signal.triage' AND dedup_key LIKE 'rss:wire%'")
+        assert (await cur.fetchone())[0] == 0
+
+
+async def test_06b_distinct_wording_corroboration_still_forwards(env):
+    """A second outlet with its own wording (0.80 <= sim < 0.90) is
+    corroboration, not a duplicate — it joins the cluster AND forwards."""
+    rss_entry = {
+        # measured at sim 0.866 to the alpaca:1001 text under the hash
+        # embedder — inside the 0.80-0.90 corroboration band
+        "title": "Acme Corp announces $2B buyback",
+        "id": "https://wire2.example/acme-repurchase",
+        "link": "https://wire2.example/acme-repurchase",
+        "published": utcnow().isoformat(),
+        "summary": "Board approves repurchase program, shares to rise.",
+    }
+    item = normalize_rss(rss_entry, feed_name="wire2")
+    await store_item(item)
+    msgs = await drain_and_process(env, 1)
+
+    async with env["pool"].connection() as c:
         cur = await c.execute(
             "SELECT payload->'body'->'cluster' FROM queue.messages "
-            "WHERE queue_name='signal.triage' AND dedup_key LIKE 'rss:wire%'")
-        cluster = (await cur.fetchone())[0]
+            "WHERE queue_name='signal.triage' AND dedup_key LIKE 'rss:wire2%'")
+        row = await cur.fetchone()
+        assert row is not None, "corroboration-band item must forward"
+        cluster = row[0]
         assert cluster["is_new_story"] is False
-        assert cluster["independent_outlets"] == 2
+        assert cluster["cluster_id"] == 1
+        assert cluster["independent_outlets"] == 3
 
 
 async def test_07_unrelated_story_new_cluster(env):

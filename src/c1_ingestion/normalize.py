@@ -98,8 +98,30 @@ def normalize_alpaca(payload: dict, tier: int = 2) -> NewsItem:
 # "8-K - ACME CORP (0001234567) (Filer)"
 # ---------------------------------------------------------------------------
 
-_EDGAR_TITLE = re.compile(r"^\s*([A-Z0-9/\-]+)\s+-\s+(.*?)\s*(?:\((\d{10})\))?\s*(?:\(.*\))?\s*$")
+# Title shape: "FORM - Entity Name (0001234567) (Role)". FORM may contain
+# spaces ("SCHEDULE 13G/A") — the old single-token pattern failed those
+# titles entirely, dropping their form channel (observed as the bare
+# {filing} bucket, 5.5k items/day). Non-greedy up to the first " - ".
+_EDGAR_TITLE = re.compile(
+    r"^\s*(.+?)\s+-\s+(.*?)\s*(?:\((\d{10})\))?\s*(?:\(([^)]*)\))?\s*$")
 _ACCESSION = re.compile(r"accession[-_]?number=([\d\-]+)", re.IGNORECASE)
+
+
+def edgar_accession(entry: dict) -> str | None:
+    """Accession number from an EDGAR Atom entry (id or link), or None."""
+    m = _ACCESSION.search(str(entry.get("id") or "")) or \
+        _ACCESSION.search(str(entry.get("link") or ""))
+    return m.group(1) if m else None
+
+
+def edgar_title_parts(title: str) -> tuple[str | None, str | None, str | None, str | None]:
+    """(form, entity_name, cik, role) from an EDGAR index title, best-effort."""
+    m = _EDGAR_TITLE.match(title)
+    if not m:
+        return None, None, None, None
+    form = m.group(1).upper().strip()
+    return form, (m.group(2) or "").strip() or None, m.group(3), \
+        (m.group(4) or "").strip() or None
 
 
 def normalize_edgar(entry: dict, tier: int = 1) -> NewsItem:
@@ -121,9 +143,8 @@ def normalize_edgar(entry: dict, tier: int = 1) -> NewsItem:
     updated = _ts_or_quarantine(entry, _require(entry, "updated"), "updated")
 
     channels = ["filing"]
-    form_match = _EDGAR_TITLE.match(title)
-    if form_match:
-        form = form_match.group(1).upper()
+    form, entity_name, cik, role = edgar_title_parts(title)
+    if form:
         channels.append(f"form:{form}")
         if form.startswith("8-K"):
             channels.append("8-K")
@@ -144,8 +165,16 @@ def normalize_edgar(entry: dict, tier: int = 1) -> NewsItem:
         headline=title,
         summary=summary,
         content_hash=content_hash(title, summary),
-        raw={k: str(v)[:2000] for k, v in entry.items() if isinstance(v, (str, int, float, bool))},
-        symbols=[],            # EDGAR entries carry CIK, not ticker; mapping is A1/symbol_map territory
+        raw={
+            **{k: str(v)[:2000] for k, v in entry.items()
+               if isinstance(v, (str, int, float, bool))},
+            "form": form or "",
+            # entities: filled by the poller when merging multi-entity index
+            # rows for one accession; single-entry fallback here.
+            "entities": [{"name": entity_name or "", "cik": cik or "",
+                          "role": role or ""}],
+        },
+        symbols=[],            # EDGAR entries carry CIK, not ticker; CIK->ticker mapping is the next fix
         channels=channels,
         published_ts=updated,
         received_ts=utcnow(),

@@ -42,6 +42,17 @@ async def handle_message(msg, deduper: Deduper) -> None:
 
     decision = await deduper.process(body)
 
+    # Baseline §4 C2: >= 0.90 similarity to something already seen -> drop.
+    # Corroboration/membership were recorded in process(); the anti-
+    # overtrading requirement (principle 8) means the duplicate must not
+    # re-trigger triage. (Fix 2026-07-14: was forwarding after detection.)
+    if decision.is_duplicate:
+        log.info("duplicate dropped",
+                 extra=kv(item_id=item_id, rev=revision,
+                          cluster=decision.cluster_id,
+                          sim=round(decision.similarity_to_canonical, 3)))
+        return
+
     ds = DedupedSignal(item=body, cluster=ClusterInfo(
         cluster_id=decision.cluster_id,
         is_new_story=decision.is_new_story,

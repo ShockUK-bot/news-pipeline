@@ -40,6 +40,11 @@ class ClusterDecision:
     independent_outlets: int
     total_items: int
     similarity_to_canonical: float
+    # >= similarity_threshold to an existing DIFFERENT item: baseline §4 C2
+    # says drop. Membership + corroboration are still recorded (C3 reads the
+    # view); the signal just doesn't re-enter the pipeline. Fixed 2026-07-14 —
+    # C2 previously computed this verdict, logged it, and forwarded anyway.
+    is_duplicate: bool = False
 
 
 async def _existing_cluster_of(item_id: str) -> int | None:
@@ -106,16 +111,19 @@ class Deduper:
             outlets, total = await _corroboration(existing)
             log.info("revision joined own cluster",
                      extra=kv(item_id=item_id, rev=revision, cluster=existing))
-            return ClusterDecision(existing, False, outlets, total, 1.0)
+            return ClusterDecision(existing, False, outlets, total, 1.0,
+                                   is_duplicate=False)
 
         neighbors = [n for n in self.store.nearest(vector, limit=3)
                      if not (n.item_id == item_id)]
         best = neighbors[0] if neighbors else None
 
+        is_dup = False
         if best is not None and best.score >= self.cluster_threshold and best.cluster_id:
             cluster_id, is_new = best.cluster_id, False
             sim = float(best.score)
-            kind = "duplicate" if best.score >= self.sim_threshold else "corroboration"
+            is_dup = best.score >= self.sim_threshold
+            kind = "duplicate" if is_dup else "corroboration"
             log.info(f"joined cluster ({kind})",
                      extra=kv(item_id=item_id, cluster=cluster_id, sim=round(sim, 3)))
         else:
@@ -125,5 +133,6 @@ class Deduper:
         await _add_member(cluster_id, item_id, revision, source, sim)
         self.store.upsert_dedup(item_id, revision, vector, cluster_id, source)
         outlets, total = await _corroboration(cluster_id)
-        return ClusterDecision(cluster_id, is_new, outlets, total, sim)
+        return ClusterDecision(cluster_id, is_new, outlets, total, sim,
+                               is_duplicate=is_dup)
 
