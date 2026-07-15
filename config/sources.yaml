@@ -33,6 +33,13 @@ edgar:
     - "SCHEDULE 13G"
     - "10-K"
     - "10-Q"
+  # CIK->ticker mapping (v0.4.6): SEC company_tickers.json cached on disk,
+  # refreshed daily. skip_unmapped: whitelisted filings whose entities map
+  # to no listed ticker are archived without triage (fail-safe: ignored if
+  # the map is empty/unfetchable).
+  cik_map_path: "/opt/pipeline/var/cik_map.json"
+  cik_map_refresh_hours: 24
+  skip_unmapped: true
   # current-events Atom feed, 8-K prioritized via channels tag
   feed_url: "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom"
   extra_feeds:

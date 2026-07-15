@@ -21,6 +21,14 @@ Dedup across polls (fixed 2026-07-14 — the revision-storm incident):
     enter the pipeline. Everything else is stored as a record with
     enqueue=False — kept for the archive, never costs dedup or triage
     inference. Matching is by form prefix so "8-K" admits "8-K/A".
+  * CIK->ticker symbols (v0.4.6): every item's entity CIKs are mapped
+    through SEC's company_tickers.json (cik_map.py) and stamped into
+    symbols deterministically — code disposes; A1 no longer infers tickers
+    for EDGAR items. With edgar.skip_unmapped true (default), whitelisted
+    filings whose entities map to NO listed ticker (trusts, funds, private
+    filers) are archived without triage — they cannot produce a long-only
+    US equity trade. If the map is empty/unfetchable, skip_unmapped is
+    ignored (fail-safe: items flow to A1, whose inference is the fallback).
 """
 from __future__ import annotations
 
@@ -32,6 +40,7 @@ import httpx
 
 from common.log import get_logger, kv
 from c1_ingestion.heartbeat import GapMonitor, set_health
+from c1_ingestion.cik_map import CikMap
 from c1_ingestion.normalize import (NormalizeError, edgar_accession,
                                     edgar_title_parts, normalize_edgar)
 from c1_ingestion.store import quarantine, store_item
@@ -82,6 +91,10 @@ class EdgarSource:
         self.feeds = [{"name": "8-K-current", "url": cfg["feed_url"]}]
         self.feeds += list(cfg.get("extra_feeds", []))
         self.triage_forms = list(cfg.get("triage_forms", DEFAULT_TRIAGE_FORMS))
+        self.skip_unmapped = bool(cfg.get("skip_unmapped", True))
+        self.cik_map = CikMap(
+            cfg.get("cik_map_path", "/opt/pipeline/var/cik_map.json"),
+            refresh_hours=float(cfg.get("cik_map_refresh_hours", 24)))
         self.monitor = monitor
         self.ua = user_agent()
 
@@ -90,8 +103,12 @@ class EdgarSource:
             headers={"User-Agent": self.ua, "Accept-Encoding": "gzip, deflate"},
             timeout=20.0, follow_redirects=True,
         ) as client:
-            await set_health(COMPONENT, "OK", f"polling every {self.interval}s")
+            await self.cik_map.ensure_fresh(client)
+            await set_health(COMPONENT, "OK",
+                             f"polling every {self.interval}s; "
+                             f"cik map: {self.cik_map.known()} entities")
             while True:
+                await self.cik_map.ensure_fresh(client)   # no-op unless stale
                 for feed in self.feeds:
                     try:
                         await self._poll(client, feed)
@@ -134,7 +151,7 @@ class EdgarSource:
         for acc, entries in groups.items():
             try:
                 item = self._merge_group(entries)
-                allow = form_whitelisted((item.raw or {}).get("form"), self.triage_forms)
+                allow = self._admit(item)
                 result = await store_item(item, immutable=True, enqueue=allow)
                 if result.stored:
                     stored += 1
@@ -146,7 +163,8 @@ class EdgarSource:
         for e in ungrouped:
             try:
                 item = normalize_edgar(e, tier=self.tier)
-                allow = form_whitelisted((item.raw or {}).get("form"), self.triage_forms)
+                self._stamp_symbols(item)
+                allow = self._admit(item)
                 result = await store_item(item, immutable=True, enqueue=allow)
                 if result.stored:
                     stored += 1
@@ -174,5 +192,24 @@ class EdgarSource:
                 entities.append(ent)
         if item.raw is not None:
             item.raw["entities"] = entities
+        self._stamp_symbols(item)
         return item
+
+    def _stamp_symbols(self, item) -> None:
+        """Deterministic ticker stamping from entity CIKs (v0.4.6)."""
+        ents = (item.raw or {}).get("entities") or []
+        tickers = self.cik_map.tickers_for([e.get("cik") for e in ents if e.get("cik")])
+        if tickers:
+            item.symbols = tickers
+
+    def _admit(self, item) -> bool:
+        """Should this filing enter the pipeline (enqueue to dedup)?
+        Form whitelist first; then, if skip_unmapped and the map is usable,
+        require at least one mapped ticker — an entity with no listed
+        security cannot produce a long-only US equity trade."""
+        if not form_whitelisted((item.raw or {}).get("form"), self.triage_forms):
+            return False
+        if self.skip_unmapped and self.cik_map.known() > 0 and not item.symbols:
+            return False
+        return True
 
