@@ -15,6 +15,12 @@ For each incoming item revision:
 
 A *revision* of an item already in a cluster stays in its cluster (the story
 identity didn't change; the text did) — membership rows are per revision.
+v0.4.7 revision policy: the new revision's vector is compared against its
+predecessor's; >= similarity_threshold means the edit is COSMETIC — the same
+0.90 semantics as inter-item dedup ("would have been dropped as a duplicate
+had it arrived as a separate item"). The service drops cosmetic revisions
+from the triage path (unless a held ticker is touched — A12 mandate); a
+revision with semantically changed text still forwards.
 
 Corroboration counting (independent outlets) is the cluster_corroboration
 view in Postgres; we read it back after every membership write so the
@@ -45,6 +51,10 @@ class ClusterDecision:
     # view); the signal just doesn't re-enter the pipeline. Fixed 2026-07-14 —
     # C2 previously computed this verdict, logged it, and forwarded anyway.
     is_duplicate: bool = False
+    # v0.4.7 revision policy inputs (own-revision branch only)
+    is_own_revision: bool = False
+    revision_similarity: float | None = None   # vs the predecessor revision
+    is_cosmetic_revision: bool = False          # revision_similarity >= 0.90
 
 
 async def _existing_cluster_of(item_id: str) -> int | None:
@@ -103,16 +113,25 @@ class Deduper:
         source = item["source"]
         vector = self.embedder.embed(embed_text_for(item["headline"], item.get("summary")))
 
-        # A revision of a clustered item stays in its cluster.
+        # A revision of a clustered item stays in its cluster. v0.4.7: compare
+        # against the predecessor revision's vector to classify the edit.
         existing = await _existing_cluster_of(item_id)
         if existing is not None:
+            prev_vec = self.store.get_vector(item_id, revision - 1)
+            rev_sim = (sum(a * b for a, b in zip(vector, prev_vec))
+                       if prev_vec is not None else None)
+            cosmetic = rev_sim is not None and rev_sim >= self.sim_threshold
             await _add_member(existing, item_id, revision, source, 1.0)
             self.store.upsert_dedup(item_id, revision, vector, existing, source)
             outlets, total = await _corroboration(existing)
             log.info("revision joined own cluster",
-                     extra=kv(item_id=item_id, rev=revision, cluster=existing))
+                     extra=kv(item_id=item_id, rev=revision, cluster=existing,
+                              rev_sim=round(rev_sim, 3) if rev_sim is not None else None,
+                              cosmetic=cosmetic))
             return ClusterDecision(existing, False, outlets, total, 1.0,
-                                   is_duplicate=False)
+                                   is_duplicate=False, is_own_revision=True,
+                                   revision_similarity=rev_sim,
+                                   is_cosmetic_revision=cosmetic)
 
         neighbors = [n for n in self.store.nearest(vector, limit=3)
                      if not (n.item_id == item_id)]

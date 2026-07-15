@@ -68,10 +68,11 @@ def deduped(item_id: str, headline: str, *, revision=1, tier=2, symbols=None,
                                  "similarity_to_canonical": 1.0}}}
 
 
-def stub_reply(material, tickers, urgency="high", novelty=0.9):
+def stub_reply(material, tickers, urgency="high", novelty=0.9, confidence=0.9):
     return json.dumps({"material": material, "tickers": tickers,
                        "direction_hint": "up", "urgency": urgency,
-                       "novelty_score": novelty, "reason": "scripted"})
+                       "novelty_score": novelty, "confidence": confidence,
+                       "reason": "scripted"})
 
 
 async def run_one(env, payload: dict, scripted: list[str], now, key: str):

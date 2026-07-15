@@ -95,6 +95,7 @@ class StubBackend:
             "direction_hint": "unclear",
             "urgency": "medium" if material else "low",
             "novelty_score": 0.8 if item.get("is_new_story") else 0.3,
+            "confidence": 0.9 if material else 0.8,
             "reason": "stub rule: trigger word match" if material else "stub rule: no trigger",
         }
         return ModelReply(json.dumps(out), latency_ms=1, model_id=self.model_id)

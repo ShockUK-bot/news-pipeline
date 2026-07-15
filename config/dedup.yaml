@@ -1,5 +1,8 @@
 # C2 configuration (baseline §4 C2, v0.4 two-collection rule)
 similarity_threshold: 0.90      # >= this cosine sim to an item in trailing 48h -> duplicate
+                                # v0.4.7: same threshold classifies a revision as COSMETIC
+                                # vs its predecessor (dropped from triage unless a held
+                                # ticker is touched — A12 override)
 cluster_threshold: 0.80         # >= this sim -> same story cluster (corroboration), below -> new cluster
 dedup_window_hours: 48
 prune_interval_secs: 3600       # hourly prune of the dedup_48h collection

@@ -284,7 +284,7 @@ async def test_07_sympathy_lane_round_trip(env):
     # A1 consumes it via handle_synthetic
     a1 = A1Service(A1_CFG, backend=StubBackend(
         [json.dumps({"material": True, "tickers": ["SUPL"], "direction_hint": "up",
-                     "urgency": "medium", "novelty_score": 0.6,
+                     "urgency": "medium", "novelty_score": 0.6, "confidence": 0.7,
                      "reason": "supplier exposure to confirmed deal"})]),
         store=env["store"])
     msg = await claim("signal.synthetic", "test-a1")

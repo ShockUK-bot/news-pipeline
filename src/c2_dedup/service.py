@@ -14,7 +14,7 @@ import os
 import signal as _signal
 
 from common.contracts import (CONTRACT_TRIAGE, ClusterInfo, DedupedSignal, envelope)
-from common.db import close_pool
+from common.db import close_pool, get_pool
 from common.log import get_logger, kv
 from common.queue import ack, claim, enqueue, fail, wait_for_message
 from c1_ingestion.heartbeat import set_health
@@ -30,6 +30,19 @@ TRIAGE_QUEUE = "signal.triage"
 CONSUMER = f"c2-{os.getpid()}"
 PRUNE_INTERVAL = 3600.0
 WINDOW_HOURS = 48
+
+
+async def _held_tickers(symbols: list[str]) -> list[str]:
+    """Feed-tagged symbols intersecting open positions (A12 override for the
+    v0.4.7 revision policy)."""
+    if not symbols:
+        return []
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT DISTINCT ticker FROM journal.positions
+               WHERE ticker = ANY(%s) AND status = 'OPEN'""", (symbols,))
+        return [r[0] for r in await cur.fetchall()]
 
 
 async def handle_message(msg, deduper: Deduper) -> None:
@@ -52,6 +65,26 @@ async def handle_message(msg, deduper: Deduper) -> None:
                           cluster=decision.cluster_id,
                           sim=round(decision.similarity_to_canonical, 3)))
         return
+
+    # v0.4.7 revision policy: a COSMETIC revision (>= 0.90 similar to its own
+    # predecessor — the same threshold that defines a duplicate between items)
+    # carries no new information and does not re-enter triage. Exception: any
+    # revision touching a held ticker forwards regardless — corrections on
+    # held names must reach A12 (baseline §4 v0.2/v0.4). Every stored revision
+    # is flagged is_correction by store semantics, so the correction path IS
+    # the revision path; semantic change is the discriminator, positions the
+    # override.
+    if decision.is_cosmetic_revision:
+        held = await _held_tickers(body.get("symbols") or [])
+        if not held:
+            log.info("cosmetic revision dropped",
+                     extra=kv(item_id=item_id, rev=revision,
+                              cluster=decision.cluster_id,
+                              rev_sim=round(decision.revision_similarity, 3)))
+            return
+        log.info("cosmetic revision forwarded (held ticker)",
+                 extra=kv(item_id=item_id, rev=revision,
+                          held=",".join(held)))
 
     ds = DedupedSignal(item=body, cluster=ClusterInfo(
         cluster_id=decision.cluster_id,

@@ -26,8 +26,9 @@ def test_valid_triage_parses():
     t = validate_triage(json.dumps({
         "material": True, "tickers": ["acme", "ACME", "TOOLONGSYM"],
         "direction_hint": "up", "urgency": "high",
-        "novelty_score": 0.9, "reason": "M&A approach"}))
+        "novelty_score": 0.9, "confidence": 0.8, "reason": "M&A approach"}))
     assert t.tickers == ["ACME"]           # uppercased, deduped, implausible dropped
+    assert t.confidence == 0.8
 
 
 def test_not_json_raises():
@@ -57,14 +58,18 @@ def test_json_schema_generates():
     s = triage_json_schema()
     assert s["properties"]["material"]["type"] == "boolean"
     assert "reason" in s["required"]
+    # v0.4.7: confidence is REQUIRED so the model-side grammar forces emission
+    assert "confidence" in s["required"]
 
 
 # ---- routing rules matrix -----------------------------------------------------------
 
-def _t(material=True, tickers=("ACME",), urgency="medium", novelty=0.8):
+def _t(material=True, tickers=("ACME",), urgency="medium", novelty=0.8,
+       confidence=0.9):
     return TriageOutput(material=material, tickers=list(tickers),
                         direction_hint="up", urgency=urgency,
-                        novelty_score=novelty, reason="test")
+                        novelty_score=novelty, confidence=confidence,
+                        reason="test")
 
 
 def _f(market_open=True, position_ids=(), score=10):
@@ -151,7 +156,8 @@ def test_prompt_includes_item_and_fewshot():
                            "source_tier": 1, "symbols": [], "channels": ["8-K"]},
                           {"is_new_story": True, "independent_outlets": 1})
     assert msgs[0]["role"] == "system"
-    assert len(msgs) == 1 + 3 * 2 + 1              # system + 3 shots + user
+    from a1_triage.prompt import FEW_SHOT
+    assert len(msgs) == 1 + len(FEW_SHOT) * 2 + 1  # system + shots + user
     assert '"headline": "H"' in msgs[-1]["content"]
 
 

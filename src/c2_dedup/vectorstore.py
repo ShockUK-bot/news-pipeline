@@ -82,6 +82,14 @@ class VectorStore:
                      "ts": utcnow().timestamp()},
         )])
 
+    def get_vector(self, item_id: str, revision: int) -> Optional[list[float]]:
+        """Stored vector for a specific revision, or None if absent/pruned.
+        v0.4.7 caller: the C2 revision policy compares a new revision's vector
+        against its predecessor's to classify cosmetic edits."""
+        pts = self.client.retrieve(self.dedup, ids=[_pid(item_id, revision)],
+                                   with_vectors=True)
+        return list(pts[0].vector) if pts else None
+
     def prune_dedup(self, window_hours: int = 48) -> int:
         """Trailing-window prune — keeps the collection small and fast forever."""
         cutoff = (utcnow() - timedelta(hours=window_hours)).timestamp()

@@ -22,6 +22,10 @@ class TriageOutput(BaseModel):
     direction_hint: Literal["up", "down", "unclear"] = "unclear"
     urgency: Literal["high", "medium", "low"] = "low"
     novelty_score: float = Field(ge=0.0, le=1.0, default=0.0)
+    # v0.4.7: A1's confidence in the material verdict itself. REQUIRED (no
+    # default) so the model-side grammar forces emission and the journal's
+    # confidence column is populated on every TRIAGE row (baseline rule 6).
+    confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=400)
 
     @field_validator("tickers")

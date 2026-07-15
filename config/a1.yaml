@@ -29,4 +29,18 @@ router:
   # queue.priority is ascending (0 = most urgent). Overnight enqueue priority:
   # max(0, overnight_base - priority_score)
   overnight_base: 50
+  # v0.4.7 confidence floor: a material verdict with confidence below this is
+  # DISCARDed. Ships at 0.0 = INACTIVE — observe the journaled confidence
+  # distribution for a trading day before setting a value (baseline §14
+  # config-values discipline). The lever exists; it does nothing yet.
+  min_confidence: 0.0
+
+# v0.4.7 story-level repeat suppression (see src/a1_triage/suppression.py).
+# One story cluster = at most one analysis per window unless materially new
+# information arrives (revision with semantic change passes C2, corroboration
+# crossing the threshold, or a held-ticker touch — those always re-triage).
+suppression:
+  enabled: true
+  window_hours: 24                        # session-scoped: one verdict per story
+  corroboration_reescalate_threshold: 3   # outlets crossing this => re-triage
 

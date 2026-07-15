@@ -31,10 +31,12 @@ from common.queue import ack, claim, enqueue, fail, wait_for_message
 from c1_ingestion.heartbeat import set_health
 from c2_dedup.embedder import embed_text_for, get_embedder
 from c2_dedup.vectorstore import VectorStore
-from router.facts import compute_facts
+from router.facts import compute_facts, open_position_ids
 from router.rules import route
 
 from .backends import get_backend
+from .suppression import DEFAULTS as SUPP_DEFAULTS
+from .suppression import corroboration_bypass, find_prior_verdict
 from .triage import TriageRejected, run_triage
 
 log = get_logger("a1.service")
@@ -82,8 +84,52 @@ class A1Service:
         self.backend = backend or get_backend(cfg["model"])
         self.retries = int(cfg["model"].get("retries_on_invalid", 1))
         self.router_cfg = cfg["router"]
+        self.min_confidence = float(cfg["router"].get("min_confidence", 0.0))
+        self.supp_cfg = {**SUPP_DEFAULTS, **(cfg.get("suppression") or {})}
         self.store = store or VectorStore()
         self.embedder = get_embedder()
+
+    async def _suppress_repeat(self, item: dict, cluster: dict,
+                               signal_id: str, revision: int) -> bool:
+        """v0.4.7 story-level repeat suppression (see suppression.py).
+        Returns True if the item was journaled as SUPPRESS (caller stops)."""
+        if not self.supp_cfg.get("enabled", True):
+            return False
+        cluster_id = cluster.get("cluster_id")
+        if not cluster_id or cluster.get("is_new_story"):
+            return False
+        if item.get("is_correction"):
+            return False                       # corrections always re-triage
+        prior = await find_prior_verdict(
+            cluster_id, float(self.supp_cfg["window_hours"]))
+        if prior is None:
+            return False
+        outlets_now = int(cluster.get("independent_outlets", 1))
+        if corroboration_bypass(
+                outlets_now, prior.independent_outlets,
+                int(self.supp_cfg["corroboration_reescalate_threshold"])):
+            return False                       # newly corroborated: re-triage
+        # A12 mandate: anything touching a held name gets the full path.
+        tickers = sorted({*(item.get("symbols") or []), *prior.tickers})
+        if tickers and await open_position_ids(tickers):
+            return False
+        await write_decision(
+            signal_id=signal_id, item_id=item["item_id"], item_revision=revision,
+            ticker=prior.tickers[0] if prior.tickers else None,
+            stage="TRIAGE", agent="A1", action="SUPPRESS",
+            payload={"suppressed_by": prior.decision_id,
+                     "prior_action": prior.action,
+                     "cluster": {"cluster_id": cluster_id,
+                                 "is_new_story": False,
+                                 "independent_outlets": outlets_now}},
+            reason=(f"story cluster {cluster_id} already triaged "
+                    f"(decision {prior.decision_id}, {prior.action}) within "
+                    f"{self.supp_cfg['window_hours']}h"),
+            model_id=None, latency_ms=None)
+        log.info("repeat suppressed", extra=kv(
+            item_id=item["item_id"], rev=revision, cluster=cluster_id,
+            prior_decision=prior.decision_id, prior_action=prior.action))
+        return True
 
     async def handle(self, msg) -> None:
         body = msg.payload.get("body") or {}
@@ -94,6 +140,11 @@ class A1Service:
         if not item_id or not item.get("headline"):
             raise ValueError(f"malformed DedupedSignal ({msg.dedup_key})")
         signal_id = item_id                       # news-origin signals: signal_id = item_id
+
+        # v0.4.7 — story-level repeat suppression BEFORE the model call:
+        # a repeat costs one SQL lookup, zero tokens, zero A2 escalations.
+        if await self._suppress_repeat(item, cluster, signal_id, revision):
+            return
 
         try:
             result = await run_triage(self.backend, item, cluster, self.retries)
@@ -115,7 +166,8 @@ class A1Service:
             independent_outlets=int(cluster.get("independent_outlets", 1)),
             router_cfg=self.router_cfg)
         decision = route(triage, facts,
-                         overnight_base=int(self.router_cfg.get("overnight_base", 50)))
+                         overnight_base=int(self.router_cfg.get("overnight_base", 50)),
+                         min_confidence=self.min_confidence)
 
         triaged_body = {
             "item_ref": {"item_id": item_id, "revision": revision,
@@ -133,8 +185,15 @@ class A1Service:
                     stage="TRIAGE", agent="A1", action=decision.action,
                     payload={"triage": triage.model_dump(),
                              "routing": facts.payload(),
-                             "routes": [r.queue for r in decision.routes]},
-                    reason=triage.reason,
+                             "routes": [r.queue for r in decision.routes],
+                             # cluster state at decision time — read back by
+                             # the suppression corroboration bypass (v0.4.7)
+                             "cluster": {
+                                 "cluster_id": cluster.get("cluster_id"),
+                                 "is_new_story": cluster.get("is_new_story"),
+                                 "independent_outlets":
+                                     int(cluster.get("independent_outlets", 1))}},
+                    reason=triage.reason, confidence=triage.confidence,
                     model_id=result.model_id, latency_ms=result.latency_ms,
                     conn=conn)
                 msg_out = envelope(CONTRACT_TRIAGED, "A1", signal_id, item_id,
@@ -200,7 +259,8 @@ class A1Service:
             independent_outlets=int(cluster.get("independent_outlets", 1)),
             router_cfg=self.router_cfg)
         decision = route(triage, facts,
-                         overnight_base=int(self.router_cfg.get("overnight_base", 50)))
+                         overnight_base=int(self.router_cfg.get("overnight_base", 50)),
+                         min_confidence=self.min_confidence)
 
         triaged_body = {
             "item_ref": {"item_id": parent["item_id"],
@@ -219,7 +279,8 @@ class A1Service:
                     payload={"triage": triage.model_dump(),
                              "routing": facts.payload(), "synthetic": True,
                              "relation": body.get("relation")},
-                    reason=triage.reason, model_id=result.model_id,
+                    reason=triage.reason, confidence=triage.confidence,
+                    model_id=result.model_id,
                     latency_ms=result.latency_ms,
                     derived_from=body.get("derived_from_decision"), conn=conn)
                 out = envelope(CONTRACT_TRIAGED, "A1", syn_id,
@@ -239,14 +300,8 @@ class A1Service:
 
 
 async def consume_loop(svc: A1Service, stop: asyncio.Event) -> None:
-    import time
-    hb_detail = f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE}"
-    await set_health("triage", "OK", hb_detail)
-    last_hb = time.monotonic()
+    await set_health("triage", "OK", f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE}")
     while not stop.is_set():
-        if time.monotonic() - last_hb >= 60.0:
-            await set_health("triage", "OK", hb_detail)
-            last_hb = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         handler = svc.handle
         if msg is None:
