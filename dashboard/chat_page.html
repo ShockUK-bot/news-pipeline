@@ -215,7 +215,17 @@ a.back:hover{border-color:var(--amber)}
     healthEl.textContent = "NEW SESSION — send a message to start";
   });
 
-  setInterval(poll, 2000);   // standalone page: always visible, always polling
+  // Embedded mode (v0.5.2): when shown inside the console's CHAT tab iframe,
+  // drop the page chrome so it reads as a native tab panel.
+  if (window.self !== window.top) {
+    document.body.style.padding = "6px";
+    const back = document.querySelector("a.back");
+    if (back) back.style.display = "none";
+    const wrap = document.querySelector(".chat-wrap");
+    if (wrap) wrap.style.height = "calc(100vh - 60px)";
+  }
+
+  setInterval(poll, 2000);   // always visible (page or tab), always polling
   poll();
   input.focus();
 })();
