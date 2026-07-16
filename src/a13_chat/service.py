@@ -32,6 +32,7 @@ from a1_triage.backends import get_backend
 
 from .filing import FilingRejected, file_for_evaluation
 from .prompt import build_answer_messages, build_planner_messages
+from .wake import ensure_awake
 from .retrieval import run_queries, truncate_fact_sheet
 from .schema import (AnswerOutput, ChatValidationError, FilingProposal,
                      PlannedQuery, PlannerOutput, answer_json_schema,
@@ -61,6 +62,7 @@ class A13Service:
         self.backend = backend or get_backend(cfg["model"])
         self.retries = int(cfg["model"].get("retries_on_invalid", 1))
         self.slot_cfg = cfg.get("slot") or {}
+        self.wake_cfg = cfg.get("wake") or {}
         self.max_context = int((cfg.get("answer") or {}).get("max_context_chars", 24000))
         self.md = md
 
@@ -104,6 +106,18 @@ class A13Service:
                     (req_status, req["message_id"]))
         return reply_id
 
+    async def _system_note(self, req: dict, content: str) -> None:
+        """Interim SYSTEM row (e.g. 'waking the analyst') — informational only;
+        it does NOT resolve the request (status stays PENDING) and is excluded
+        from the reply-exists idempotency check."""
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO journal.chat_messages
+                   (session_id, role, kind, content, reply_to, status)
+                   VALUES (%s,'SYSTEM','ANSWER',%s,%s,'DONE')""",
+                (req["session_id"], content, req["message_id"]))
+
     # -- model calls ----------------------------------------------------------
 
     async def _plan(self, question: str) -> tuple[PlannerOutput, int]:
@@ -145,6 +159,22 @@ class A13Service:
     async def handle_ask(self, req: dict) -> None:
         question = req["content"]
         notes: list[str] = []
+
+        # v0.5.3 — wake the analyst model if it's asleep (off-hours slot swap)
+        async def _announce_wake():
+            await self._system_note(
+                req, "Analyst model is asleep — waking it now; your answer "
+                     "may take a couple of minutes while it loads.")
+
+        alive, wake_note = await ensure_awake(
+            self.cfg["model"], self.wake_cfg, on_wake_start=_announce_wake)
+        if not alive:
+            await self._reply(req, "ERROR",
+                              f"analyst model unavailable: {wake_note}",
+                              req_status="ERROR")
+            return
+        if wake_note:
+            notes.append(wake_note)
 
         waited, contended = await yield_to_pipeline(self.slot_cfg)
         if contended:
@@ -226,11 +256,13 @@ class A13Service:
         req = await self._fetch_message(int(message_id))
         if req is None:
             raise ValueError(f"chat message not found: {message_id}")
-        # at-least-once idempotency: if a reply already exists, we're done
+        # at-least-once idempotency: if a REAL reply already exists, we're done
+        # (SYSTEM interim notes — e.g. 'waking the analyst' — don't count)
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT 1 FROM journal.chat_messages WHERE reply_to = %s LIMIT 1",
+                """SELECT 1 FROM journal.chat_messages
+                   WHERE reply_to = %s AND role <> 'SYSTEM' LIMIT 1""",
                 (req["message_id"],))
             if await cur.fetchone():
                 log.info("duplicate delivery ignored", extra=kv(message_id=message_id))

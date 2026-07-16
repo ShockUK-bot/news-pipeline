@@ -1,0 +1,23 @@
+[Unit]
+Description=llama-server — Analyst slot (:8081, Qwen3-32B) for A2/A12/A13
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+# ============================================================================
+# EDIT ExecStart BEFORE ENABLING: it must match exactly how you launch the
+# analyst llama-server today. While your current server is running, run:
+#     ps aux | grep llama-server
+# and copy the full command line (binary path, -m model path, --port 8081,
+# context size, -ngl, etc.) over the placeholder below.
+# ============================================================================
+ExecStart=/opt/llama.cpp/build/bin/llama-server -m /models/qwen3-32b-q5_k_m.gguf --host 127.0.0.1 --port 8081 -ngl 99 -c 16384
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -36,5 +36,16 @@ filing:
   anchor_max_age_hours: 72     # a filed ticker must anchor to a news item this
                                # fresh — the system trades news, not hunches
 
+wake:
+  # v0.5.3 — wake the analyst llama-server on demand when a chat arrives
+  # off-hours and :8081 is down. Requires the llama-analyst systemd unit and
+  # the /etc/sudoers.d/a13-wake rule (see ops/). Probe-first: if the server is
+  # already up, no command ever runs.
+  enabled: true
+  command: "sudo -n /usr/bin/systemctl start llama-analyst.service"
+  health_path: "/health"
+  ready_timeout_secs: 240      # 32B load time on the Spark + margin
+  poll_secs: 3
+
 answer:
   max_context_chars: 24000     # fact-sheet budget handed to the answer call
