@@ -1,14 +1,17 @@
-"""C6 dashboard — CHAT tab backend (spec v1.3 §4b/§5).
+"""C6 dashboard — chat backend + standalone /chat page (spec v1.3, rev v0.5.1).
 
-Drop-in FastAPI router for the final-build (Postgres) dashboard. The demo
-SQLite dashboard cannot host chat: chat needs the pipeline's Postgres queue
-and a running a13-chat service. Integration into app.py:
+FastAPI router for the final-build (Postgres) dashboard. The demo SQLite
+dashboard cannot host chat: chat needs the pipeline's Postgres queue and a
+running a13-chat service.
 
-    from chat_api import make_chat_router
-    app.include_router(make_chat_router(require_basic_auth))
+v0.5.1 zero-edit integration (preferred): the router also serves a complete
+standalone chat page at GET /chat (chat_page.html, next to this file), and
+`app_chat.py` mounts everything without touching app.py — point uvicorn at
+`app_chat:app`. The v1.3 in-page CHAT tab (chat_tab.html) remains available
+as an optional manual integration.
 
-where `require_basic_auth` is the existing Basic-auth dependency. The kill
-token for /api/chat/file is read from DASH_KILL_TOKEN, same as /api/kill.
+The kill token for /api/chat/file is read from DASH_KILL_TOKEN, same as
+/api/kill.
 
 Write surface (posture): the dashboard writes ONLY journal.chat_sessions,
 journal.chat_messages, journal.audit, and enqueues chat.request. The pipeline
@@ -19,8 +22,10 @@ from __future__ import annotations
 
 import os
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from common.db import get_pool, jb
@@ -48,6 +53,15 @@ def _check_kill_token(token: str) -> None:
 
 def make_chat_router(auth_dep) -> APIRouter:
     router = APIRouter(dependencies=[Depends(auth_dep)])
+
+    @router.get("/chat", response_class=HTMLResponse)
+    async def chat_page():
+        """Standalone operator-chat page (v0.5.1) — no index.html edits."""
+        page = Path(__file__).parent / "chat_page.html"
+        if not page.exists():
+            raise HTTPException(status_code=500,
+                                detail="chat_page.html missing next to chat_api.py")
+        return page.read_text(encoding="utf-8")
 
     @router.get("/api/chat/state")
     async def chat_state(session_id: int | None = None, after_id: int = 0):
