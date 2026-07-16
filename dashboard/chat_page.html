@@ -1,0 +1,224 @@
+<!doctype html>
+<!-- ======================================================================
+C6 dashboard — A13 Operator Chat, standalone page (v0.5.1).
+Served by chat_api.py at GET /chat (Basic auth, same session as the console).
+No edits to index.html required; "← CONSOLE" links back to the main page.
+Self-contained: no external assets, works inside the tailnet offline.
+====================================================================== -->
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C6 — Operator Chat (A13)</title>
+<style>
+:root{
+  --bg:#1c2430; --panel:#26303f; --panel-2:#212a38; --line:#3a4759;
+  --text:#f4f7fb; --muted:#b6c1d1; --faint:#8b99ad;
+  --gain:#43d99e; --loss:#f2685f; --amber:#f2b04a;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;padding:14px 18px}
+.micro{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+header{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.brand{font-weight:700;letter-spacing:.06em}
+a.back{color:var(--amber);text-decoration:none;font-size:12px;letter-spacing:.08em;
+  border:1px solid var(--line);border-radius:6px;padding:5px 12px}
+a.back:hover{border-color:var(--amber)}
+.spacer{flex:1}
+
+.chat-wrap{display:flex;flex-direction:column;height:calc(100vh - 90px);min-height:420px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.chat-head{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+#chat-health{margin-left:auto;color:var(--amber)}
+.btn-ghost{background:none;border:1px solid var(--line);color:var(--muted);font:inherit;
+  font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;margin-left:12px}
+.btn-ghost:hover{border-color:var(--amber);color:var(--amber)}
+
+.chat-log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.chat-msg{max-width:82%;padding:9px 12px;border-radius:10px;font-size:13.5px;line-height:1.5;
+  white-space:pre-wrap;word-break:break-word;font-family:var(--mono)}
+.chat-msg.operator{align-self:flex-end;background:#2c3a4e;color:var(--text);border:1px solid var(--line)}
+.chat-msg.assistant{align-self:flex-start;background:var(--panel-2);color:var(--text);border:1px solid var(--line)}
+.chat-msg.error{border-color:var(--loss);color:var(--loss)}
+.chat-msg.pending{color:var(--faint);font-style:italic}
+.chat-msg .meta{display:block;margin-top:6px;font-size:10.5px;color:var(--faint)}
+
+.chat-proposal{display:block;margin-top:8px;padding:8px 10px;border:1px dashed var(--amber);border-radius:8px}
+.chat-proposal .micro{color:var(--amber);font-size:10px}
+.chat-proposal button{margin-top:6px;background:none;border:1px solid var(--amber);color:var(--amber);
+  font:inherit;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer}
+.chat-proposal button:disabled{opacity:.45;cursor:default}
+
+.chat-form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
+#chat-input{flex:1;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;
+  padding:9px 12px;font-size:13.5px;font-family:var(--mono)}
+#chat-input:focus{outline:none;border-color:var(--amber)}
+#chat-send{background:var(--amber);color:#1c2430;border:none;border-radius:8px;padding:0 18px;
+  font-weight:700;font-size:12px;letter-spacing:.06em;cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">C6 · OPERATOR CHAT</span>
+  <span class="micro">A13 · ADVISORY ONLY · ANSWERS FROM THE JOURNAL</span>
+  <span class="spacer"></span>
+  <a class="back" href="/">&larr; CONSOLE</a>
+</header>
+
+<div class="chat-wrap">
+  <div class="chat-head">
+    <span class="micro">ASK ABOUT TRADES, VETOES, OR A TICKER</span>
+    <span id="chat-health" class="micro"></span>
+    <button id="chat-new" class="btn-ghost" title="Start a new session">NEW SESSION</button>
+  </div>
+  <div id="chat-log" class="chat-log" aria-live="polite"></div>
+  <form id="chat-form" class="chat-form" autocomplete="off">
+    <input id="chat-input" maxlength="2000" spellcheck="false"
+           placeholder='Ask about trades, vetoes, or a ticker… (e.g. "why was NVDA vetoed today?")' />
+    <button id="chat-send" type="submit">SEND</button>
+  </form>
+</div>
+
+<script>
+(function () {
+  const log = document.getElementById("chat-log");
+  const form = document.getElementById("chat-form");
+  const input = document.getElementById("chat-input");
+  const send = document.getElementById("chat-send");
+  const newBtn = document.getElementById("chat-new");
+  const healthEl = document.getElementById("chat-health");
+
+  let sessionId = null;            // null -> server returns latest session
+  let awaitingNewSession = false;  // NEW SESSION pressed; created on next send
+  let lastId = 0;
+  const seen = new Set();
+  let pendingAsk = false;
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g,
+      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function render(m) {
+    const div = document.createElement("div");
+    const isOp = m.role === "OPERATOR";
+    div.className = "chat-msg " + (isOp ? "operator" : "assistant") +
+      (m.kind === "ERROR" ? " error" : "") +
+      (m.status === "PENDING" && isOp ? " pending" : "");
+    div.dataset.id = m.id;
+    let html = esc(m.content);
+    if (m.proposal && m.role === "ASSISTANT" && m.kind === "ANSWER") {
+      html += `<span class="chat-proposal"><span class="micro">FILING PROPOSAL — ` +
+        `${esc(m.proposal.ticker)} · anchor ${esc(m.proposal.anchor_item_id)}</span><br>` +
+        `${esc(m.proposal.rationale)}<br>` +
+        `<button data-file="${m.id}">FILE FOR EVALUATION (token required)</button></span>`;
+    }
+    const t = m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : "";
+    html += `<span class="meta">${esc(m.kind)} · ${t}` +
+      (m.latency_ms ? ` · ${m.latency_ms} ms` : "") +
+      (m.decision_id ? ` · decision ${m.decision_id}` : "") + `</span>`;
+    div.innerHTML = html;
+    log.appendChild(div);
+  }
+
+  async function poll() {
+    if (awaitingNewSession) return;
+    try {
+      const q = new URLSearchParams({ after_id: lastId });
+      if (sessionId !== null) q.set("session_id", sessionId);
+      const r = await fetch("/api/chat/state?" + q, { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      const data = await r.json();
+      if (sessionId === null) sessionId = data.session_id;
+      let appended = false;
+      for (const m of data.messages || []) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        lastId = Math.max(lastId, m.id);
+        if (pendingAsk && m.role === "OPERATOR") {
+          const ghost = log.querySelector('[data-id="ghost"]');
+          if (ghost) ghost.remove();
+          pendingAsk = false;
+        }
+        render(m);
+        appended = true;
+      }
+      if (appended) log.scrollTop = log.scrollHeight;
+      healthEl.textContent = "";
+    } catch (e) {
+      healthEl.textContent = "CHAT API UNREACHABLE";
+    }
+  }
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const content = input.value.trim();
+    if (!content) return;
+    send.disabled = true;
+    try {
+      const r = await fetch("/api/chat/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content,
+          session_id: awaitingNewSession ? null : sessionId }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      const data = await r.json();
+      sessionId = data.session_id;
+      awaitingNewSession = false;
+      input.value = "";
+      const ghost = document.createElement("div");
+      ghost.className = "chat-msg operator pending";
+      ghost.dataset.id = "ghost";
+      ghost.textContent = content;
+      log.appendChild(ghost);
+      log.scrollTop = log.scrollHeight;
+      pendingAsk = true;
+      poll();
+    } catch (e) {
+      healthEl.textContent = "SEND FAILED (" + e.message + ")";
+    } finally {
+      send.disabled = false;
+    }
+  });
+
+  log.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button[data-file]");
+    if (!btn) return;
+    const token = prompt("Filing sends this ticker through the FULL pipeline " +
+                         "(triage → analyst → gate → risk). Enter the kill token to confirm:");
+    if (!token) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/chat/file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: Number(btn.dataset.file), token }),
+      });
+      if (r.status === 403) { alert("Bad token."); btn.disabled = false; return; }
+      if (r.status === 409) { alert("Already filed."); return; }
+      if (!r.ok) throw new Error(r.status);
+      poll();
+    } catch (e) {
+      alert("Filing request failed: " + e.message);
+      btn.disabled = false;
+    }
+  });
+
+  newBtn.addEventListener("click", () => {
+    awaitingNewSession = true;
+    log.innerHTML = "";
+    seen.clear();
+    lastId = 0;
+    pendingAsk = false;
+    healthEl.textContent = "NEW SESSION — send a message to start";
+  });
+
+  setInterval(poll, 2000);   // standalone page: always visible, always polling
+  poll();
+  input.focus();
+})();
+</script>
+</body>
+</html>
