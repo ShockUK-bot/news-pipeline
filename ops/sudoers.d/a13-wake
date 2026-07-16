@@ -3,4 +3,4 @@
 # Install:  sudo cp ops/sudoers.d/a13-wake /etc/sudoers.d/a13-wake
 #           sudo chmod 440 /etc/sudoers.d/a13-wake
 #           sudo visudo -c        # must print "parsed OK"
-trader ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-analyst.service
+trader ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-a2.service
