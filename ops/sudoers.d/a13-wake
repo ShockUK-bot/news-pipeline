@@ -1,0 +1,6 @@
+# A13 wake-on-demand (v0.5.3): let the pipeline user start ONLY the analyst
+# model service, passwordless, so chat can wake the model off-hours.
+# Install:  sudo cp ops/sudoers.d/a13-wake /etc/sudoers.d/a13-wake
+#           sudo chmod 440 /etc/sudoers.d/a13-wake
+#           sudo visudo -c        # must print "parsed OK"
+trader ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-analyst.service
