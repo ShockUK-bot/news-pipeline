@@ -1,0 +1,40 @@
+# A13 Operator Chat configuration.
+#
+# A13 answers operator questions over the journal (trades placed/closed, why
+# vetoed, decision traces) and gives ADVISORY ticker reviews against recent
+# news. Its one pipeline-affecting act — filing a ticker for evaluation — is
+# operator-confirmed, token-gated at the dashboard, and journaled as a CHAT
+# decision before the synthetic signal is enqueued.
+
+model:
+  backend: llamacpp            # llamacpp | stub
+  endpoint: "http://127.0.0.1:8081"   # Analyst slot — SHARED with A2/A12
+  model_id: "qwen3-32b-q5_k_m"
+  temperature: 0.0
+  max_tokens: 900              # answers are prose; keep generations short so a
+                               # chat turn can't hog the slot for long
+  timeout_secs: 120
+  retries_on_invalid: 1
+
+slot:
+  # A13 is the lowest-priority tenant of the Analyst slot. Before EVERY model
+  # call it checks the pipeline's ready work and yields: A2 escalations and
+  # A12 guard checks always go first (protecting capital outranks chat).
+  yield_to_queues: ["signal.analyst", "signal.guard"]
+  poll_secs: 2.0
+  max_wait_secs: 90            # a human is waiting; after this, proceed anyway
+                               # and flag the contention in the reply
+
+retrieval:
+  max_queries: 5               # planner may request at most this many packs
+  default_days: 30
+  max_rows: 40                 # per query pack
+  news_days: 5                 # ticker_news lookback
+
+filing:
+  enabled: true
+  anchor_max_age_hours: 72     # a filed ticker must anchor to a news item this
+                               # fresh — the system trades news, not hunches
+
+answer:
+  max_context_chars: 24000     # fact-sheet budget handed to the answer call
