@@ -24,6 +24,10 @@ slot:
   poll_secs: 2.0
   max_wait_secs: 90            # a human is waiting; after this, proceed anyway
                                # and flag the contention in the reply
+  ignore_older_than_secs: 900  # v0.5.4 — don't yield to ORPHANED messages: a
+                               # live consumer drains in seconds; signal.guard
+                               # has no consumer until A12 ships (Phase 5), so
+                               # its stale fan-outs must not block chat
 
 retrieval:
   max_queries: 5               # planner may request at most this many packs
@@ -42,7 +46,7 @@ wake:
   # the /etc/sudoers.d/a13-wake rule (see ops/). Probe-first: if the server is
   # already up, no command ever runs.
   enabled: true
-  command: "sudo -n /usr/bin/systemctl start llama-a2.service"
+  command: "sudo -n /usr/bin/systemctl start llama-analyst.service"
   health_path: "/health"
   ready_timeout_secs: 240      # 32B load time on the Spark + margin
   poll_secs: 3
