@@ -86,11 +86,26 @@ def test_answer_rejects_bad_stance():
 
 
 def test_answer_schema_grammar_safe():
-    """v0.5.5 regression: the Spark's llama-server rejects grammars from
-    schemas with nullable ('anyOf' + null) constructs — keep them out."""
+    """Probe-bisected on the Spark (v0.5.5/v0.5.6): this llama.cpp build's
+    grammar parser rejects (a) nullable sub-objects on this schema shape and
+    (b) large string maxLength bounds (600 works, 4000 fails). Keep both out
+    of the ANSWER schema; run ops/a13-schema-probe.py before any deploy."""
     from a13_chat.schema import answer_json_schema
-    s = json.dumps(answer_json_schema())
-    assert "anyOf" not in s and '"null"' not in s
+    schema = answer_json_schema()
+    s = json.dumps(schema)
+    assert "anyOf" not in s
+
+    def max_lengths(node):
+        if isinstance(node, dict):
+            if "maxLength" in node:
+                yield node["maxLength"]
+            for v in node.values():
+                yield from max_lengths(v)
+        elif isinstance(node, list):
+            for v in node:
+                yield from max_lengths(v)
+
+    assert all(m <= 600 for m in max_lengths(schema))
 
 
 # ---------------------------------------------------------------------------
