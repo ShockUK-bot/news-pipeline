@@ -88,7 +88,7 @@ class FilingProposal(BaseModel):
 class AnswerOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    answer: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(min_length=1)   # v0.5.6: no maxLength - 4000-bound repetition breaks the llama.cpp grammar parser (probe-bisected)
     recommendation: Recommendation                  # required; no_view = none
     filing_proposal: FilingProposal                 # required; ticker "" = none
     caveats: list[str] = Field(default_factory=list, max_length=4)
