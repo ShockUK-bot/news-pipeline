@@ -1,0 +1,17 @@
+[Unit]
+Description=llama-server Heavy slot (off-hours batch) — Qwen3.5-122B-A10B Q4_K_M on :8084. MANUAL START ONLY; never during market hours.
+After=network-online.target
+[Service]
+Type=simple
+User=trader
+ExecStart=/opt/llama.cpp/build/bin/llama-server \
+  -m /opt/models/qwen3.5-122b-a10b-q4_k_m.gguf \
+  --host 127.0.0.1 --port 8084 \
+  -c 32768 \
+  -ngl 999 --no-mmap --reasoning-budget 0 --grammar-file /opt/llama.cpp/grammars/json.gbnf
+Restart=no
+StandardOutput=journal
+StandardError=journal
+# NOTE: deliberately NO [Install] section — this unit is started by hand
+# (sudo systemctl start llama-heavy) for off-hours work and does not survive
+# reboot. Enabling it at boot would let it collide with market-hours memory.

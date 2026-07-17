@@ -1,13 +1,16 @@
 # A1 Triage + Router configuration (Phase 2, observe-only).
 #
+# v0.4.8: model slot upgraded Qwen3 8B -> Qwen3.5-9B (in place on :8080).
+# ROLLBACK: model_id "qwen3-8b-q6_k" + restore the old llama-a1.service.
+#
 # NOTE ON VALUES: priority weights and the corroboration bonus are PLACEHOLDER
 # starting points. Config starting values are a deferred design item gating
 # Phase 4 (baseline §14); the formula SHAPE is fixed here, the numbers are not.
 
 model:
   backend: llamacpp            # llamacpp | stub
-  endpoint: "http://127.0.0.1:8080"   # llama-server on the Spark
-  model_id: "qwen3-8b-q6_k"    # journal provenance string (decisions.model_id)
+  endpoint: "http://127.0.0.1:8080"   # llama-server on the Spark (Qwen3.5-9B)
+  model_id: "qwen3.5-9b-q6_k"  # journal provenance string (decisions.model_id)
   temperature: 0.0             # deterministic gates deserve deterministic proposals
   max_tokens: 512
   timeout_secs: 30
@@ -43,4 +46,3 @@ suppression:
   enabled: true
   window_hours: 24                        # session-scoped: one verdict per story
   corroboration_reescalate_threshold: 3   # outlets crossing this => re-triage
-

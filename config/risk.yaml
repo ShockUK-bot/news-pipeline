@@ -1,6 +1,9 @@
 # Phase 4 capital + hard limits (phase4-design-v1_0 D2). Percentages/caps are
 # GIT-ONLY (baseline rule 25 as amended). Operational controls (kill_switch,
 # trading_capital, max_trades_per_day) live in journal.control via dashboard.
+#
+# v0.4.8: A3 discretion follows the Analyst slot upgrade to Qwen3.6-27B
+# (in place on :8081). ROLLBACK: model_id "qwen3-32b-q5_k_m".
 capital:
   base_mode: static
   risk_per_trade_pct: 0.005
@@ -17,9 +20,8 @@ limits:
 model:                               # A3 bounded discretion (Analyst slot)
   backend: stub                      # llamacpp on the Spark (:8081), stub for dev
   endpoint: "http://127.0.0.1:8081"
-  model_id: "qwen3-32b-q5_k_m"
+  model_id: "qwen3.6-27b-q5_k_m"
   temperature: 0.0
   max_tokens: 400
   timeout_secs: 60
   retries_on_invalid: 1
-

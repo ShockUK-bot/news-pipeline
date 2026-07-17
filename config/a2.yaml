@@ -1,10 +1,13 @@
 # A2 Analyst configuration (Phase 3, observe-only).
+#
+# v0.4.8: model slot upgraded Qwen3 32B -> Qwen3.6-27B (in place on :8081).
+# ROLLBACK: model_id "qwen3-32b-q5_k_m" + restore the old llama-a2.service.
 model:
   backend: llamacpp            # llamacpp | stub
-  endpoint: "http://127.0.0.1:8081"   # second llama-server: Analyst slot
-  model_id: "qwen3-32b-q5_k_m"
+  endpoint: "http://127.0.0.1:8081"   # second llama-server: Analyst slot (Qwen3.6-27B)
+  model_id: "qwen3.6-27b-q5_k_m"
   temperature: 0.0
   max_tokens: 1200
-  timeout_secs: 120            # 32B on the Spark: ~10-15 tok/s; theses are ~400 tokens
+  timeout_secs: 120            # 27B is smaller than the old 32B: expect equal or
+                               # better tok/s; keep the generous timeout anyway
   retries_on_invalid: 1
-
