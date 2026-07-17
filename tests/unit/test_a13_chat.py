@@ -54,9 +54,16 @@ def test_planner_caps_at_five_queries():
 # Answer contract
 # ---------------------------------------------------------------------------
 
-def test_answer_minimal():
-    ans = validate_answer(json.dumps({"answer": "No open positions."}))
-    assert ans.recommendation is None and ans.filing_proposal is None
+NO_REC = {"stance": "no_view", "rationale": ""}
+NO_PROP = {"ticker": "", "anchor_item_id": "", "rationale": ""}
+
+
+def test_answer_minimal_with_sentinels():
+    ans = validate_answer(json.dumps({
+        "answer": "No open positions.",
+        "recommendation": NO_REC, "filing_proposal": NO_PROP}))
+    assert ans.effective_recommendation() is None
+    assert ans.effective_proposal() is None
 
 
 def test_answer_with_recommendation_and_proposal():
@@ -67,15 +74,23 @@ def test_answer_with_recommendation_and_proposal():
                             "rationale": "operator asked; fresh 8-K"},
         "caveats": ["ATR unavailable"],
     }))
-    assert ans.filing_proposal.ticker == "ACME"
-    assert ans.recommendation.stance == "consider_long"
+    assert ans.effective_proposal().ticker == "ACME"
+    assert ans.effective_recommendation().stance == "consider_long"
 
 
 def test_answer_rejects_bad_stance():
     with pytest.raises(ChatValidationError):
         validate_answer(json.dumps({
-            "answer": "x",
+            "answer": "x", "filing_proposal": NO_PROP,
             "recommendation": {"stance": "yolo_long", "rationale": "no"}}))
+
+
+def test_answer_schema_grammar_safe():
+    """v0.5.5 regression: the Spark's llama-server rejects grammars from
+    schemas with nullable ('anyOf' + null) constructs — keep them out."""
+    from a13_chat.schema import answer_json_schema
+    s = json.dumps(answer_json_schema())
+    assert "anyOf" not in s and '"null"' not in s
 
 
 # ---------------------------------------------------------------------------

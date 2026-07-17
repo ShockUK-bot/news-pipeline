@@ -202,13 +202,15 @@ class A13Service:
             return
 
         content = answer.answer
-        if answer.recommendation:
-            content += (f"\n\nRECOMMENDATION [{answer.recommendation.stance}] "
-                        f"(advisory only): {answer.recommendation.rationale}")
+        rec = answer.effective_recommendation()
+        if rec:
+            content += (f"\n\nRECOMMENDATION [{rec.stance}] "
+                        f"(advisory only): {rec.rationale}")
         if answer.caveats:
             content += "\n\nCaveats: " + "; ".join(answer.caveats)
 
-        proposal = answer.filing_proposal.model_dump() if answer.filing_proposal else None
+        prop = answer.effective_proposal()
+        proposal = prop.model_dump() if prop else None
         await self._reply(req, "ANSWER", content, fact_sheet=fact_sheet,
                           proposal=proposal, model_id=self.backend.model_id,
                           latency_ms=plan_latency + ans_latency)
