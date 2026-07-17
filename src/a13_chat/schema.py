@@ -60,32 +60,44 @@ class PlannerOutput(BaseModel):
 
 
 class Recommendation(BaseModel):
+    """Always present in AnswerOutput (v0.5.5 — nullable sub-objects produce a
+    grammar the Spark's llama-server build rejects). stance='no_view' with an
+    empty rationale is the explicit 'no recommendation' sentinel."""
     model_config = ConfigDict(extra="forbid", strict=True)
 
     stance: Literal["consider_long", "watch", "avoid", "no_view"]
-    rationale: str = Field(min_length=1, max_length=600)
+    rationale: str = Field(max_length=600)          # may be "" when no_view
 
 
 class FilingProposal(BaseModel):
+    """Always present in AnswerOutput (v0.5.5). ticker='' (all fields empty)
+    is the explicit 'no filing proposed' sentinel."""
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    ticker: str = Field(min_length=1, max_length=7)
-    anchor_item_id: str = Field(min_length=1, max_length=120)
-    rationale: str = Field(min_length=1, max_length=300)
+    ticker: str = Field(max_length=7)               # "" = no proposal
+    anchor_item_id: str = Field(max_length=120)
+    rationale: str = Field(max_length=300)
 
     @field_validator("ticker")
     @classmethod
     def _ticker(cls, v: str) -> str:
-        return _sym(v)
+        v = v.strip()
+        return _sym(v) if v else ""
 
 
 class AnswerOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     answer: str = Field(min_length=1, max_length=4000)
-    recommendation: Optional[Recommendation] = None
-    filing_proposal: Optional[FilingProposal] = None
+    recommendation: Recommendation                  # required; no_view = none
+    filing_proposal: FilingProposal                 # required; ticker "" = none
     caveats: list[str] = Field(default_factory=list, max_length=4)
+
+    def effective_recommendation(self) -> Optional[Recommendation]:
+        return self.recommendation if self.recommendation.stance != "no_view" else None
+
+    def effective_proposal(self) -> Optional[FilingProposal]:
+        return self.filing_proposal if self.filing_proposal.ticker else None
 
 
 def planner_json_schema() -> dict:
