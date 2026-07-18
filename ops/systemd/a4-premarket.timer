@@ -1,0 +1,10 @@
+[Unit]
+Description=Fire the A4 pre-market review on weekdays at 07:00 ET
+
+[Timer]
+# Holidays are caught in-code (NYSE calendar -> SKIPPED_NO_SESSION).
+OnCalendar=Mon..Fri 07:00 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,39 @@
+# A4 Pre-Market Review configuration (Phase 7).
+report:
+  send_on_nonsession: false    # holidays: journal SKIPPED_NO_SESSION, exit
+
+sheet:
+  max_age_hours: 72            # older overnight messages bulk-expire (covers
+                               # a full weekend; also the backlog drain)
+  top_k: 15                    # candidates the model ranks in one call
+  fallback_open_k: 5           # deterministic fallback: top-K -> open lane
+  blackout_min: 15             # entries allowed from open + blackout (§4 C3)
+  batch_max: 300               # safety cap per run
+
+narrative:                     # model-call parameters (SlotManager contract)
+  max_tokens: 1400
+  temperature: 0.0
+  timeout_secs: 420
+  retries_on_invalid: 1
+
+heavy:
+  endpoint: "http://127.0.0.1:8084"
+  model_id: "qwen3.5-122b-a10b-q4_k_m"
+  autostart: true              # 07:00 ET is pre-open; stopped again after
+  stop_after_use: true
+  start_command: "sudo systemctl start llama-heavy.service"
+  stop_command: "sudo systemctl stop llama-heavy.service"
+  probe_timeout_secs: 5
+  ready_timeout_secs: 420
+  poll_secs: 10
+
+analyst_fallback:
+  enabled: true
+  endpoint: "http://127.0.0.1:8081"
+  model_id: "qwen3.6-27b-q5_k_m"
+  wake:
+    enabled: true
+    command: "sudo systemctl start llama-a2.service"
+    probe_timeout_secs: 3
+    ready_timeout_secs: 240
+    poll_secs: 5
