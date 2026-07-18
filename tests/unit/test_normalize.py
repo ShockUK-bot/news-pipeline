@@ -26,6 +26,23 @@ def test_parse_ts_rejects_naive():
         parse_ts("2026-07-07T14:32:11")
 
 
+def test_parse_ts_rfc822_gmt_no_seconds():
+    # v0.5.9: globenewswire RSS style — was quarantined as BAD_TIMESTAMP
+    dt = parse_ts("Fri, 17 Jul 2026 22:30 GMT")
+    assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (2026, 7, 17, 22, 30)
+    assert dt.utcoffset().total_seconds() == 0
+
+
+def test_parse_ts_rfc822_with_seconds_and_offset():
+    dt = parse_ts("Thu, 16 Jul 2026 09:15:42 -0400")
+    assert dt.hour == 13 and dt.minute == 15 and dt.second == 42
+
+
+def test_parse_ts_rfc822_naive_still_rejected():
+    with pytest.raises(ValueError):
+        parse_ts("Fri, 17 Jul 2026 22:30")     # no zone -> naive -> reject
+
+
 def test_parse_ts_rejects_garbage():
     for bad in ("", "0000-00-00", "not a date", None):
         with pytest.raises((ValueError, TypeError)):

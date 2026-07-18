@@ -140,6 +140,13 @@ class C3Service:
 
         now = self.now_fn()
         state = await self.build_state(thesis, item_id, published_ts, now)
+        if state.vol_mult is not None:
+            # v0.5.9: C3 is the natural marketdata heartbeat during market
+            # hours — every successful volume computation refreshes it, so a
+            # stale heartbeat now genuinely means data trouble (the old one
+            # froze whenever no positions were open and confused deadman).
+            await set_health("marketdata", "OK",
+                             f"volume bars ok ({thesis['ticker']})")
         verdict = evaluate(thesis, state, self.cfg)
 
         if verdict.verdict == "VETO":
@@ -153,6 +160,14 @@ class C3Service:
             log.info("gate VETO", extra=kv(signal_id=signal_id,
                                            reason=verdict.veto_reason,
                                            rule=verdict.rule))
+            if verdict.veto_reason == "MARKETDATA_MISSING":
+                # v0.5.9: surface data starvation on the dashboard/deadman
+                # instead of hiding it inside a normal-looking veto.
+                await set_health(
+                    "marketdata", "DEGRADED",
+                    f"no volume bars for {thesis['ticker']} ({item_id})")
+                log.warning("volume bars missing", extra=kv(
+                    ticker=thesis["ticker"], item_id=item_id))
             return
 
         quote = await self.md.snapshot(thesis["ticker"])
@@ -183,14 +198,8 @@ class C3Service:
 
 
 async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
-    import time
-    hb_detail = f"consuming {IN_QUEUE}"
-    await set_health("gate", "OK", hb_detail)
-    last_hb = time.monotonic()
+    await set_health("gate", "OK", f"consuming {IN_QUEUE}")
     while not stop.is_set():
-        if time.monotonic() - last_hb >= 60.0:
-            await set_health("gate", "OK", hb_detail)
-            last_hb = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:

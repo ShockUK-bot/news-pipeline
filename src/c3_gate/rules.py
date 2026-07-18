@@ -9,6 +9,10 @@ Check order (cheapest first, all journaled on veto):
   3. intraday vs open-handoff branch on whether the news arrived in-session:
      intraday:  GATE_WINDOW    minutes_since_publish > N
                 GATE_EXTENDED  already >= extended_pct from pre-news
+                MARKETDATA_MISSING (v0.5.9) vol_mult is None — no volume bars
+                came back, so the gate CANNOT evaluate confirmation. Still a
+                veto (fail safe), but journaled distinctly so a starved data
+                feed can never masquerade as "the market didn't confirm".
                 GATE_NO_CONFIRM pct_move < X or vol_mult < Y
      handoff:   GATE_OPEN_WINDOW first 15 minutes after open
                 PRICED_IN      gap >= gap_ratio * magnitude_est
@@ -92,7 +96,10 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
             return GateVerdict("VETO", rule, "GATE_WINDOW", numbers)
         if pct_move >= cfg["extended_pct"]:
             return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
-        if pct_move < cfg["intraday_move_pct"] or not state.vol_mult \
+        if state.vol_mult is None:
+            # v0.5.9: no volume data is NOT the same as no confirmation.
+            return GateVerdict("VETO", rule, "MARKETDATA_MISSING", numbers)
+        if pct_move < cfg["intraday_move_pct"] \
                 or state.vol_mult < cfg["intraday_vol_mult"]:
             return GateVerdict("VETO", rule, "GATE_NO_CONFIRM", numbers)
         return GateVerdict("PASS", rule, None, numbers)

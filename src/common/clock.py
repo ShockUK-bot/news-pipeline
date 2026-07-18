@@ -10,6 +10,7 @@ we tolerate in Phase 1, not a trading error.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo("America/New_York")
@@ -54,8 +55,14 @@ def parse_ts(raw: str | int | float | datetime) -> datetime:
             s = s[:-1] + "+00:00"
         try:
             dt = datetime.fromisoformat(s)
-        except ValueError as e:
-            raise ValueError(f"unparseable timestamp: {raw!r}") from e
+        except ValueError:
+            # v0.5.9: RFC-822/RSS-style dates ("Fri, 17 Jul 2026 22:30 GMT").
+            # Some feeds (globenewswire) omit the seconds, which fromisoformat
+            # cannot read; the email date parser handles the whole family.
+            try:
+                dt = parsedate_to_datetime(s)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"unparseable timestamp: {raw!r}") from e
         if dt.tzinfo is None:
             raise ValueError(f"naive timestamp: {raw!r}")
         return dt.astimezone(timezone.utc)

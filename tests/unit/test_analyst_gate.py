@@ -148,6 +148,22 @@ def test_no_confirm_low_volume():
     assert v.veto_reason == "GATE_NO_CONFIRM"
 
 
+def test_marketdata_missing_distinct_veto():
+    # v0.5.9: absent volume data is journaled as MARKETDATA_MISSING, never
+    # as GATE_NO_CONFIRM — a starved feed must be visible as such.
+    v = evaluate(thesis_d(), state(vol_mult=None), GATE_CFG)
+    assert (v.verdict, v.veto_reason) == ("VETO", "MARKETDATA_MISSING")
+    assert v.numbers["vol_mult"] is None
+
+
+def test_marketdata_missing_not_in_handoff_path():
+    # open-handoff rule never used vol_mult; missing volume must not veto it
+    v = evaluate(thesis_d(), state(news_in_session=False, minutes_since_open=30,
+                                   gap_pct=0.01, last_price=101.0,
+                                   vol_mult=None), GATE_CFG)
+    assert v.verdict == "PASS" and v.rule == "open_handoff"
+
+
 def test_no_confirm_small_move():
     v = evaluate(thesis_d(), state(last_price=100.5), GATE_CFG)
     assert v.veto_reason == "GATE_NO_CONFIRM"

@@ -1,15 +1,18 @@
-"""Market data layer (Phase 3 decision: Alpaca Market Data API, free IEX feed,
-behind a provider abstraction).
+"""Market data layer (Phase 3 decision: Alpaca Market Data API, behind a
+provider abstraction).
 
-KNOWN CAVEAT (accepted, deferred-list item): the free feed is IEX-only —
-roughly 2-3% of consolidated volume. C3's volume-multiple check computes on a
-biased-but-consistent sample; directionally meaningful, absolutely wrong.
-Must revisit (SIP feed or Polygon) before real capital.
+FEED SELECTION (v0.5.9): the Alpaca feed is chosen by ALPACA_FEED in the
+environment — "sip" (full consolidated market, requires the Algo Trader Plus
+subscription; the DEFAULT) or "iex" (free tier, ~2-3% of consolidated volume).
+The July 2026 no-trade review showed the IEX feed frequently has ZERO minute
+bars in the short since-news windows C3 evaluates, which silently starved the
+volume-confirmation gate (every signal vetoed GATE_NO_CONFIRM with
+vol_mult=None). The old caveat ("directionally meaningful, absolutely wrong")
+applies only if you deliberately set ALPACA_FEED=iex.
 
 Providers:
-  AlpacaData — httpx against https://data.alpaca.markets (feed=iex).
-               Code-complete; smoke test on the Spark (host unreachable from
-               the build environment).
+  AlpacaData — httpx against https://data.alpaca.markets (feed from
+               ALPACA_FEED, default sip). Smoke-tested on the Spark.
   FakeData   — deterministic fixture provider for tests/dev. Bars are
                programmable per symbol; unprogrammed symbols get a flat tape.
 
@@ -100,7 +103,7 @@ def avg_minute_volume(minute: list[dict]) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Alpaca (IEX feed)
+# Alpaca (feed from ALPACA_FEED: sip default, iex fallback)
 # ---------------------------------------------------------------------------
 
 class AlpacaData:
@@ -112,6 +115,11 @@ class AlpacaData:
         if not key or not secret:
             raise RuntimeError("ALPACA_KEY_ID / ALPACA_SECRET_KEY not set")
         self._headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+        self._feed = os.environ.get("ALPACA_FEED", "sip").strip().lower()
+        if self._feed not in ("sip", "iex"):
+            raise RuntimeError(
+                f"ALPACA_FEED={self._feed!r} invalid (expected 'sip' or 'iex')")
+        log.info("alpaca marketdata using feed=%s", self._feed)
 
     @staticmethod
     def _bar(b: dict) -> dict:
@@ -121,7 +129,7 @@ class AlpacaData:
                 "vwap": float(b.get("vw") or b["c"])}
 
     async def _get(self, path: str, params: dict) -> dict:
-        params = {**params, "feed": "iex"}
+        params = {**params, "feed": self._feed}
         async with httpx.AsyncClient(timeout=15.0, headers=self._headers) as client:
             resp = await client.get(f"{self.BASE}{path}", params=params)
             resp.raise_for_status()
