@@ -1,0 +1,27 @@
+# A12 Position Guard configuration (Phase 5, verdict-only).
+model:
+  backend: llamacpp            # llamacpp | stub
+  endpoint: "http://127.0.0.1:8081"   # Analyst slot (shared with A2/A3/A13)
+  model_id: "qwen3.6-27b-q5_k_m"
+  temperature: 0.0
+  max_tokens: 700              # verdicts are small; keeps slot contention low
+  timeout_secs: 120
+  retries_on_invalid: 1
+
+guard:
+  # Items older than this journal GUARD/EXPIRED instead of being evaluated
+  # (no tokens). Also how the pre-Phase-5 signal.guard backlog drains on
+  # first start. Config-values discipline (baseline §14): placeholder,
+  # tuned through the A9 channel.
+  max_age_minutes: 240
+
+wake:
+  # Off-hours the analyst server may be stopped (heavy slot owns the
+  # memory). Probe-first wake, same discipline + sudoers rule as A13
+  # (/etc/sudoers.d/a13-wake). Wake failure -> ALERT_ONLY, never a stuck
+  # queue.
+  enabled: true
+  probe_timeout_secs: 3
+  command: "sudo systemctl start llama-a2.service"
+  ready_timeout_secs: 240
+  poll_secs: 5
