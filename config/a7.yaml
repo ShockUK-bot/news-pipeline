@@ -1,0 +1,33 @@
+# A7 End-of-Day Report configuration (Phase 6).
+report:
+  send_on_nonsession: false    # holidays: journal SKIPPED_NO_SESSION, no email
+
+narrative:
+  max_tokens: 900
+  temperature: 0.0
+  timeout_secs: 300            # heavy slot decodes slowly; the report is batch
+  retries_on_invalid: 1
+
+# Narrative model resolution order: heavy -> analyst fallback -> none.
+# The report ALWAYS ships; only the narrative section degrades.
+heavy:
+  endpoint: "http://127.0.0.1:8084"
+  model_id: "qwen3.5-122b-a10b-q4_k_m"
+  autostart: true              # A7 may start llama-heavy (after-close oneshot)
+  stop_after_use: true         # ...and stops it ONLY if A7 started it
+  start_command: "sudo systemctl start llama-heavy.service"
+  stop_command: "sudo systemctl stop llama-heavy.service"
+  probe_timeout_secs: 5
+  ready_timeout_secs: 420      # ~77GB of weights; loading takes minutes
+  poll_secs: 10
+
+analyst_fallback:
+  enabled: true
+  endpoint: "http://127.0.0.1:8081"
+  model_id: "qwen3.6-27b-q5_k_m"
+  wake:
+    enabled: true
+    command: "sudo systemctl start llama-a2.service"
+    probe_timeout_secs: 3
+    ready_timeout_secs: 240
+    poll_secs: 5

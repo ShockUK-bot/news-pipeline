@@ -1,0 +1,11 @@
+[Unit]
+Description=Fire the A7 EOD report on trading weekdays at 16:35 ET
+
+[Timer]
+# 16:35 America/New_York = 15:35 Chicago; after the C4 session-close pass.
+# Holidays are caught in-code (calendar check journals SKIPPED_NO_SESSION).
+OnCalendar=Mon..Fri 16:35 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=c5-mailer outbox sender (oneshot, fired by c5-mailer.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src
+EnvironmentFile=/etc/pipeline/pipeline.env
+EnvironmentFile=-/etc/pipeline/mailer.env
+ExecStart=/opt/pipeline/.venv/bin/python -m c5_mailer.service
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal

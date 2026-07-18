@@ -1,0 +1,6 @@
+# A7 EOD report: allow the pipeline user to start/stop the heavy model slot
+# (config-driven, probe-first — the command never fires while the server is
+# up, and stop fires only when A7 itself did the start). Install:
+#   sudo cp /opt/pipeline/ops/sudoers.d/a7-heavy /etc/sudoers.d/a7-heavy
+#   sudo chmod 440 /etc/sudoers.d/a7-heavy
+trader ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-heavy.service, /usr/bin/systemctl stop llama-heavy.service
