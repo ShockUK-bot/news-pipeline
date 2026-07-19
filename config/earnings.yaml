@@ -1,0 +1,11 @@
+# Earnings-calendar source configuration (v0.10.0, closes D7 P1 deferral).
+# The API key is NOT here — secrets live in the environment only
+# (ALPHAVANTAGE_KEY in /etc/pipeline/pipeline.env, rule 22).
+provider:
+  name: alphavantage
+  key_env: ALPHAVANTAGE_KEY
+  horizon: 3month              # one CSV call covers the whole US market
+  timeout_secs: 60
+
+store:
+  prune_days: 7                # drop report dates older than a week

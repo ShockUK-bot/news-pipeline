@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the earnings calendar daily at 05:15 ET (before A4)
+
+[Timer]
+# Daily including weekends — one Alpha Vantage call per day (free tier
+# allows 25). A failed run degrades health and A3 flags EARNINGS_UNKNOWN;
+# nothing downstream breaks.
+OnCalendar=*-*-* 05:15 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -9,7 +9,10 @@ Included in Phase 3:
   related_headlines top-k from the retrieval collection (material items only)
   regime            latest C8 snapshot features
 Deferred (P1 sources not yet integrated; keys present, value null, so the
-prompt shape is stable): sector, earnings_date, short_interest, thesis_matches.
+prompt shape is stable): sector, short_interest.
+Live since v0.10.0 (same keys, real values, defensive — errors degrade back
+to the null/empty shape): earnings_date (+ earnings_next_sessions, from
+news.earnings_calendar) and thesis_matches (Phase 8 store watchlist).
 """
 from __future__ import annotations
 
@@ -85,11 +88,41 @@ async def build_context(md: MarketData, store: VectorStore, embedder,
         },
         "related_headlines": related[:5],
         "regime": regime,
-        # P1 sources, deferred — stable keys, null values:
+        # P1 sources — sector/short_interest still deferred (stable null
+        # keys); earnings + thesis matches live since v0.10.0/v0.9.0:
         "sector": None,
-        "earnings_date": None,
+        "earnings_date": await _earnings_date(ticker),
+        "earnings_next_sessions": await _earnings_sessions(ticker),
         "short_interest": None,
-        "thesis_matches": [],
+        "thesis_matches": await _thesis_matches(ticker),
     }
     return context, regime_id
+
+
+async def _earnings_date(ticker: str) -> str | None:
+    """Next confirmed report date (ISO) — defensive, degrades to None."""
+    try:
+        from c1_ingestion.earnings import next_report
+        nxt = await next_report(ticker)
+        return nxt[0].isoformat() if nxt else None
+    except Exception:
+        return None
+
+
+async def _earnings_sessions(ticker: str) -> int | None:
+    try:
+        from c1_ingestion.earnings import earnings_next_sessions
+        return await earnings_next_sessions(ticker)
+    except Exception:
+        return None
+
+
+async def _thesis_matches(ticker: str) -> list[str]:
+    """Standing Phase-8 theses naming this ticker — defensive, degrades
+    to the pre-Phase-8 empty list."""
+    try:
+        from router.facts import thesis_matches
+        return await thesis_matches([ticker])
+    except Exception:
+        return []
 

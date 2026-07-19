@@ -159,9 +159,13 @@ def minutes_to_close(now: datetime) -> Optional[int]:
 
 
 async def earnings_next_sessions(ticker: str) -> Optional[int]:
-    """D7 deferred: no earnings-calendar source yet. Always None (unknown) —
-    A3 journals the EARNINGS_UNKNOWN flag. Replace when the P1 source lands."""
-    return None
+    """v0.10.0: live lookup against news.earnings_calendar (D7 P1 source
+    landed). Defensive by contract — any error degrades to None, which
+    journals the EARNINGS_UNKNOWN flag exactly as before the source
+    existed. The sizing gate is unchanged: <= blackout sessions -> VETO
+    EARNINGS_BLACKOUT for profiles with earnings_blackout_exit."""
+    from c1_ingestion.earnings import earnings_next_sessions as _lookup
+    return await _lookup(ticker)
 
 
 async def thesis_decision_id(signal_id: str) -> Optional[int]:
