@@ -1,0 +1,12 @@
+[Unit]
+Description=Fire the A8 morning briefing on weekdays at 07:35 ET (after A4)
+
+[Timer]
+# Holidays are caught in-code (NYSE calendar -> SKIPPED_NO_SESSION).
+# 07:35 ET: A4 (07:00) has finished and stopped the heavy slot; A8 embeds
+# A4's sheet and the C5 mailer sends the ONE morning email minutes later.
+OnCalendar=Mon..Fri 07:35 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

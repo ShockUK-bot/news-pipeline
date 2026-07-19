@@ -211,7 +211,9 @@ async def rank_with_model(backend, candidates: list[dict], retries: int):
 
 async def run_premarket(cfg: dict, backend_override=None,
                         now: datetime | None = None) -> int | None:
-    """Returns the briefing's outbox message_id, or None when skipped."""
+    """Returns the sheet email's outbox message_id — None when skipped OR
+    when report.email is false (the v0.11.0 default: A8 sends the ONE
+    consolidated morning email; the SHEET decision is still written)."""
     now = now or utcnow()
     session_date = now.astimezone(ET).strftime("%Y-%m-%d")
     scfg = cfg.get("sheet") or {}
@@ -414,6 +416,13 @@ async def run_premarket(cfg: dict, backend_override=None,
                                 routed_guard,
                                 routed_thesis + thesis_from_model,
                                 stats, slot_name)
+    # v0.11.0: report.email gates the standalone sheet email. Default False —
+    # A8 (Phase 9, 07:35 ET) embeds this sheet in the ONE consolidated
+    # morning briefing. The SHEET decision (A8's source, and the idempotency
+    # anchor) is written regardless. Set report.email: true to restore the
+    # pre-Phase-9 separate email.
+    send_email = bool((cfg.get("report") or {}).get("email", False))
+    outbox_id = None
     async with pool.connection() as conn:
         async with conn.transaction():
             decision_id = await write_decision(
@@ -426,13 +435,14 @@ async def run_premarket(cfg: dict, backend_override=None,
                              for c in open_forwarded]},
                 reason=sheet.summary, model_id=model_id, latency_ms=latency,
                 conn=conn)
-            cur = await conn.execute(
-                """INSERT INTO journal.outbox
-                     (kind, subject, body, fact_sheet, decision_id)
-                   VALUES ('MORNING_BRIEFING',%s,%s,%s,%s)
-                   RETURNING message_id""",
-                (subject, body_text, jb(stats), decision_id))
-            outbox_id = (await cur.fetchone())[0]
+            if send_email:
+                cur = await conn.execute(
+                    """INSERT INTO journal.outbox
+                         (kind, subject, body, fact_sheet, decision_id)
+                       VALUES ('MORNING_BRIEFING',%s,%s,%s,%s)
+                       RETURNING message_id""",
+                    (subject, body_text, jb(stats), decision_id))
+                outbox_id = (await cur.fetchone())[0]
 
     log.info("premarket sheet done", extra=kv(**{**stats,
                                                  "outbox_id": outbox_id}))

@@ -28,7 +28,7 @@ from a4_premarket.service import next_entry_ts, run_premarket
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-CFG = {"report": {"send_on_nonsession": True},
+CFG = {"report": {"send_on_nonsession": True, "email": True},
        "sheet": {"max_age_hours": 72, "top_k": 15, "fallback_open_k": 2,
                  "blackout_min": 15, "batch_max": 300},
        "narrative": {"retries_on_invalid": 1}}

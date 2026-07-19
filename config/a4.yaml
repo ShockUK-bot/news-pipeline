@@ -1,6 +1,9 @@
 # A4 Pre-Market Review configuration (Phase 7).
 report:
   send_on_nonsession: false    # holidays: journal SKIPPED_NO_SESSION, exit
+  email: false                 # v0.11.0: A8 (07:35 ET) embeds this sheet in
+                               # the ONE consolidated morning briefing; set
+                               # true to restore the separate sheet email
 
 sheet:
   max_age_hours: 72            # older overnight messages bulk-expire (covers
