@@ -1,0 +1,15 @@
+[Unit]
+Description=a5-thematic thesis-store update (oneshot, fired by a5-thematic.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/.venv/bin/python -m a5_thematic.service
+TimeoutStartSec=2700
+StandardOutput=journal
+StandardError=journal

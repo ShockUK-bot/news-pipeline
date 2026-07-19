@@ -1,0 +1,42 @@
+# A5 Macro/Thematic configuration (Phase 8).
+lane:
+  max_age_hours: 168           # thesis-lane messages older than a week
+                               # bulk-expire (also the backlog drain)
+  top_k: 25                    # items claimed + modeled per nightly run
+  deep_top_k: 60               # ...on the Sunday deep pass
+  force_deep: false            # manual override: treat tonight as deep
+
+store:
+  stale_weeks: 6               # ACTIVE thesis with no evidence in N weeks
+                               # -> EXPIRED (code rule, model cannot veto)
+
+digest:
+  email: true                  # nightly digest via journal.outbox (C5 mails)
+
+narrative:                     # model-call parameters (SlotManager contract)
+  max_tokens: 3000             # one call carries all ops for the night
+  temperature: 0.0
+  timeout_secs: 600
+  retries_on_invalid: 1
+
+heavy:
+  endpoint: "http://127.0.0.1:8084"
+  model_id: "qwen3.5-122b-a10b-q4_k_m"
+  autostart: true              # 21:30 ET is off-hours; stopped again after
+  stop_after_use: true
+  start_command: "sudo systemctl start llama-heavy.service"
+  stop_command: "sudo systemctl stop llama-heavy.service"
+  probe_timeout_secs: 5
+  ready_timeout_secs: 420
+  poll_secs: 10
+
+analyst_fallback:
+  enabled: true
+  endpoint: "http://127.0.0.1:8081"
+  model_id: "qwen3.6-27b-q5_k_m"
+  wake:
+    enabled: true
+    command: "sudo systemctl start llama-a2.service"
+    probe_timeout_secs: 3
+    ready_timeout_secs: 240
+    poll_secs: 5

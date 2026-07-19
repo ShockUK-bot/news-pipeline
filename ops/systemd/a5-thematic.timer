@@ -1,0 +1,11 @@
+[Unit]
+Description=Fire the A5 thematic pass nightly at 21:30 ET (Sunday = deep pass)
+
+[Timer]
+# Every night including weekends — thesis-lane news accrues seven days a
+# week, and the Sunday firing is the baseline deep pass.
+OnCalendar=*-*-* 21:30 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

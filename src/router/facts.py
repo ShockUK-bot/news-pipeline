@@ -4,7 +4,10 @@ market_open: pandas-market-calendars NYSE schedule (adopted in Phase 2 by
   decision — holiday-correct from day one). Schedules are cached per day.
 position_ids: open positions in journal.positions intersecting the tickers.
   Correct code that returns [] until Phase 4 creates positions.
-thesis_matches: STUB returning [] until the Phase 8 thesis store exists.
+thesis_matches: ACTIVE theses (Phase 8 store) whose beneficiary tickers
+  intersect the signal's tickers — read from the journal.thesis_watchlist
+  view. Defensive: any store error degrades to [] so the intraday path
+  never depends on the Phase-8 tables.
 priority_score: deterministic formula; weights from config/a1.yaml are
   PLACEHOLDERS pending the Phase-4-gating config-values design item.
 """
@@ -57,9 +60,24 @@ async def open_position_ids(tickers: list[str]) -> list[int]:
 
 
 async def thesis_matches(tickers: list[str]) -> list[str]:
-    """STUB: the thesis store arrives in Phase 8 (A5). Until then no signal
-    matches a standing thesis."""
-    return []
+    """ACTIVE standing theses (Phase 8 store) matching the tickers, ranked
+    by confidence. Journaled in the TRIAGE payload and read by A2's context
+    pack and A4. Degrades to [] on any store error — routing rules never
+    depend on this fact, so the intraday path is protected."""
+    if not tickers:
+        return []
+    try:
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT DISTINCT thesis_id, max(confidence) AS conf
+                   FROM journal.thesis_watchlist WHERE ticker = ANY(%s)
+                   GROUP BY thesis_id ORDER BY conf DESC""",
+                (tickers,))
+            return [r[0] for r in await cur.fetchall()]
+    except Exception as e:                       # store missing/unmigrated
+        log.warning("thesis_matches degraded to []: %s", repr(e)[:150])
+        return []
 
 
 def priority_score(source_tier: int, urgency: str, novelty: float,

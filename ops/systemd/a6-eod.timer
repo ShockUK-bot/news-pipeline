@@ -1,0 +1,11 @@
+[Unit]
+Description=Fire the A6 overnight-hold check on weekdays at 15:45 ET
+
+[Timer]
+# Holidays are caught in-code (NYSE calendar -> SKIPPED_NO_SESSION).
+# 15:45 ET: after C4's 15:45 overnight pass window opens, before the close.
+OnCalendar=Mon..Fri 15:45 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

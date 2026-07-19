@@ -1,0 +1,12 @@
+[Unit]
+Description=Fire the A6 nightly position review on weekdays at 20:00 ET
+
+[Timer]
+# Holidays caught in-code. 20:00 ET is off-hours: heavy slot allowed, and
+# finished well before A5's 21:30 firing (each run start/stops the heavy
+# slot under the ownership rule).
+OnCalendar=Mon..Fri 20:00 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target
