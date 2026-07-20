@@ -97,11 +97,19 @@ class EdgarSource:
             refresh_hours=float(cfg.get("cik_map_refresh_hours", 24)))
         self.monitor = monitor
         self.ua = user_agent()
+        # v0.11.7: tolerate transient SEC slowness. Larger HTTP timeout for the
+        # big index feeds, and DEGRADE health only after N consecutive failures
+        # of the same feed — a single ReadTimeout no longer paints the dashboard
+        # yellow. Both tunable via config.
+        self.http_timeout = float(cfg.get("http_timeout_secs", 45.0))
+        self.degrade_after = int(cfg.get("degrade_after_failures", 3))
+        self._fail_streak: dict[str, int] = {}
+        self._last_error: dict[str, str] = {}
 
     async def run(self) -> None:
         async with httpx.AsyncClient(
             headers={"User-Agent": self.ua, "Accept-Encoding": "gzip, deflate"},
-            timeout=20.0, follow_redirects=True,
+            timeout=self.http_timeout, follow_redirects=True,
         ) as client:
             await self.cik_map.ensure_fresh(client)
             await set_health(COMPONENT, "OK",
@@ -110,14 +118,30 @@ class EdgarSource:
             while True:
                 await self.cik_map.ensure_fresh(client)   # no-op unless stale
                 for feed in self.feeds:
+                    name = feed["name"]
                     try:
                         await self._poll(client, feed)
+                        self._fail_streak[name] = 0        # recovered
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
-                        log.error("poll failed", extra=kv(feed=feed["name"], error=repr(e)[:200]))
-                        await set_health(COMPONENT, "DEGRADED", f"{feed['name']}: {e!r}"[:200])
+                        self._fail_streak[name] = self._fail_streak.get(name, 0) + 1
+                        self._last_error[name] = f"{name}: {e!r} (x{self._fail_streak[name]})"
+                        log.warning("poll failed", extra=kv(
+                            feed=name, streak=self._fail_streak[name], error=repr(e)[:200]))
                     await asyncio.sleep(1.0)      # spacing between feeds within a cycle
+                # Aggregate health once per cycle: DEGRADED only for feeds that
+                # have failed >= degrade_after consecutive cycles (a transient
+                # SEC ReadTimeout self-heals before then).
+                degraded = [n for n, s in self._fail_streak.items()
+                            if s >= self.degrade_after]
+                if degraded:
+                    await set_health(COMPONENT, "DEGRADED",
+                                     "; ".join(self._last_error[n] for n in degraded)[:200])
+                else:
+                    await set_health(COMPONENT, "OK",
+                                     f"polling every {self.interval}s; "
+                                     f"cik map: {self.cik_map.known()} entities")
                 await asyncio.sleep(self.interval)
 
     async def _poll(self, client: httpx.AsyncClient, feed: dict) -> None:

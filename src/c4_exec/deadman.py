@@ -24,8 +24,12 @@ from .flags import get_flag, set_flag
 
 log = get_logger("monitor.deadman")
 
+# Maps deadman.yaml component names -> journal.health component names. A1/A2/C3
+# write their heartbeats under 'triage'/'analyst'/'gate'. (Fixed 2026-07-20 in
+# v0.11.7: the old 'triage_model'/'analyst_model' names matched no health row,
+# so the dead-man silently skipped triage and analyst — never monitoring them.)
 COMPONENT_MAP = {"ingestion": "ingestion", "marketdata": "marketdata",
-                 "triage": "triage_model", "analyst": "analyst_model",
+                 "triage": "triage", "analyst": "analyst",
                  "gate": "gate"}
 
 
