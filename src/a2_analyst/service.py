@@ -150,24 +150,37 @@ class A2Service:
                 out["envelope"]["trace"]["decision_id"] = decision_id
                 await enqueue(GATE_QUEUE, f"{signal_id}:{revision}", out, conn=conn)
 
-                for opp in thesis.related_opportunities:
-                    syn_id = f"syn-{decision_id}-{opp.ticker}"
-                    syn = envelope(CONTRACT_SYNTHETIC, "A2", syn_id, item_id,
-                                   revision, {
-                                       "synthetic_id": syn_id,
-                                       "derived_from_decision": decision_id,
-                                       "derived_from_item": {"item_id": item_id,
-                                                             "revision": revision},
-                                       "ticker": opp.ticker,
-                                       "relation": opp.relation,
-                                       "rationale": opp.rationale,
-                                   })
-                    await enqueue(SYNTHETIC_QUEUE, syn_id, syn, conn=conn)
+                # Sympathy fan-out (spec §10): ONLY a primary thesis — one
+                # derived directly from a real news item — may spawn synthetic
+                # sympathy signals. A synthetic-derived thesis must NOT fan out
+                # again, or a single story naming several tickers becomes a
+                # self-sustaining A2->synthetic->A1->A2 loop, each name
+                # re-triggering the others without end (2026-07-20 incident: a
+                # 3-restaurant food-safety story re-analyzed ~90x/hour, all
+                # LONG_ONLY-vetoed, saturating the analyst slot). `derived_from`
+                # is None on primary analyst signals and set on synthetic-origin
+                # ones (A1.handle_synthetic stamps the trace), so it is exactly
+                # the depth guard: sympathy stays one hop from real news.
+                if derived_from is None:
+                    for opp in thesis.related_opportunities:
+                        syn_id = f"syn-{decision_id}-{opp.ticker}"
+                        syn = envelope(CONTRACT_SYNTHETIC, "A2", syn_id, item_id,
+                                       revision, {
+                                           "synthetic_id": syn_id,
+                                           "derived_from_decision": decision_id,
+                                           "derived_from_item": {"item_id": item_id,
+                                                                 "revision": revision},
+                                           "ticker": opp.ticker,
+                                           "relation": opp.relation,
+                                           "rationale": opp.rationale,
+                                       })
+                        await enqueue(SYNTHETIC_QUEUE, syn_id, syn, conn=conn)
 
         log.info("thesis", extra=kv(
             signal_id=signal_id, ticker=thesis.ticker, dir=thesis.direction,
             mag=thesis.magnitude_est, conf=thesis.confidence,
-            synthetics=len(thesis.related_opportunities),
+            synthetics=(len(thesis.related_opportunities)
+                        if derived_from is None else 0),
             latency_ms=total_latency))
 
 

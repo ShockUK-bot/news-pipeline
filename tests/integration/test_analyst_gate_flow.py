@@ -307,6 +307,44 @@ async def test_07_sympathy_lane_round_trip(env):
     assert rows[0][0] == "SUPL"                  # A2 will analyze the sympathy name
 
 
+async def test_09_synthetic_thesis_does_not_refan_out(env):
+    """Regression (2026-07-20 incident): a synthetic-derived thesis must NOT
+    spawn further synthetics. Otherwise a story naming several tickers becomes
+    a self-sustaining A2->synthetic->A1->A2 loop (a 3-restaurant food-safety
+    story was re-analyzed ~90x/hour, all LONG_ONLY-vetoed, saturating A2).
+    Sympathy fan-out is capped at ONE hop from real news. test_07 proves a
+    PRIMARY thesis still fans out (SUPL); this proves a synthetic one does not.
+    """
+    await seed_item(env, "alpaca:7009", "Sector outbreak hits multiple chains")
+    # A thesis that WOULD fan out (it has a related opportunity)...
+    reply = thesis_reply(related_opportunities=[
+        {"ticker": "OTHR", "relation": "competitor",
+         "rationale": "same outbreak exposure"}])
+    a2 = A2Service(A2_CFG, backend=StubBackend([reply]),
+                   md=hot_market(), store=env["store"])
+    # ...but arriving on a SYNTHETIC-derived analyst signal. derived_from must
+    # reference a real decision (FK), so borrow the most recent one.
+    parent_dec = (await q(env, "SELECT decision_id FROM journal.decisions "
+                               "ORDER BY decision_id DESC LIMIT 1"))[0][0]
+    msg = triaged_msg("alpaca:7009", signal_id="syn-p-ACME")
+    msg["envelope"]["trace"]["derived_from_decision"] = parent_dec
+    msg["envelope"]["trace"]["ticker"] = "ACME"
+    await process("signal.analyst", "syn-p-ACME", msg, a2)
+
+    # The sympathy analysis is still real work: THESIS journaled + gated.
+    rows = await q(env, """SELECT action, derived_from FROM journal.decisions
+                           WHERE signal_id='syn-p-ACME' AND stage='ANALYST'""")
+    assert rows[0][0] == "THESIS" and rows[0][1] == parent_dec
+    rows = await q(env, """SELECT count(*) FROM queue.messages
+                           WHERE queue_name='signal.gate' AND dedup_key='syn-p-ACME:1'""")
+    assert rows[0][0] == 1
+    # ...but the loop is broken here: NO second-generation synthetic.
+    rows = await q(env, """SELECT count(*) FROM queue.messages
+                           WHERE queue_name='signal.synthetic' AND dedup_key LIKE %s""",
+                   "%-OTHR")
+    assert rows[0][0] == 0
+
+
 async def test_08_gate_and_thesis_share_config_version(env):
     rows = await q(env, """SELECT count(DISTINCT config_version) FROM journal.decisions""")
     assert rows[0][0] == 1
