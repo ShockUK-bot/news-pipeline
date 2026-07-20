@@ -183,18 +183,30 @@ function renderLoad(s){
   (L.queues||[]).forEach(q=>byQ[q.queue_name]=q);
   const extras=(L.queues||[]).map(q=>q.queue_name).filter(n=>!QORDER.includes(n));
   const names=QORDER.concat(extras);
-  const rBand=r=>r>=200?'loss':r>=50?'amber':'';        // ready thresholds
-  const aBand=a=>a>=300?'loss':a>=60?'amber':'';         // oldest-wait thresholds
+  // signal.overnight (A4, ~07:00 ET) and signal.thesis (A5, ~21:30 ET) are
+  // drained by DAILY batch jobs, so a big standing backlog and a multi-hour
+  // oldest-wait are NORMAL between runs. They only go amber/red if a scheduled
+  // drain was actually MISSED (age past a full day). Real-time queues keep the
+  // tight thresholds. (v0.11.6d — stops these two false-alarming every day.)
+  const BATCH={'signal.overnight':1,'signal.thesis':1};
+  const H=3600;
+  const rBand=(n,r)=> BATCH[n] ? (r>=3000?'loss':r>=1000?'amber':'')
+                               : (r>=200?'loss':r>=50?'amber':'');
+  const aBand=(n,a)=> BATCH[n] ? (a>=30*H?'loss':a>=25*H?'amber':'')
+                               : (a>=300?'loss':a>=60?'amber':'');
+  const dotFor=c=> c==='loss'?'DOWN':c==='amber'?'DEGRADED':'OK';
   const rows=names.map(n=>{
     const q=byQ[n]||{ready:0,in_flight:0,oldest_age_s:0};
     const meta=QCONSUMER[n]||['--',n];
+    const rcls=rBand(n,q.ready|0), acls=aBand(n,q.oldest_age_s|0);
     const idle=(q.ready|0)===0&&(q.in_flight|0)===0;
+    const worst=(rcls==='loss'||acls==='loss')?'loss':(rcls==='amber'||acls==='amber')?'amber':'';
     return `<tr>
-      <td><span class="dot ${idle?'OK':(q.ready>=200?'DOWN':q.ready>=50?'DEGRADED':'OK')}"></span>${meta[0]} · ${meta[1]}</td>
-      <td class="detail">${n}</td>
-      <td class="ld-num ${rBand(q.ready|0)}">${q.ready|0}</td>
+      <td><span class="dot ${idle?'OK':dotFor(worst)}"></span>${meta[0]} · ${meta[1]}</td>
+      <td class="detail">${n}${BATCH[n]?' <span class="micro" style="opacity:.65">· scheduled</span>':''}</td>
+      <td class="ld-num ${rcls}">${q.ready|0}</td>
       <td class="ld-num">${q.in_flight|0}</td>
-      <td class="ld-num ${aBand(q.oldest_age_s|0)}">${fmtAge(q.oldest_age_s)}</td></tr>`;}).join('');
+      <td class="ld-num ${acls}">${fmtAge(q.oldest_age_s)}</td></tr>`;}).join('');
   const hot=L.hot_tickers||[];
   const hotHtml=hot.length
     ? hot.map(h=>`<span class="chip" style="background:var(${h.analyses>=10?'--loss':'--amber'})">${h.ticker} ×${h.analyses}</span>`).join(' ')
