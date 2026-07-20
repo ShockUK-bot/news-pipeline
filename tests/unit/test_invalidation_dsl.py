@@ -1,5 +1,5 @@
 """MIP v1 test suite — run with: python test_invalidation_dsl.py"""
-from invalidation_dsl import (ArmContext, Bar, MIPError, STDLIB,
+from common.invalidation_dsl import (ArmContext, Bar, MIPError, STDLIB,
                               compile_predicate, validate)
  
 CTX = ArmContext(entry_price=100.0, initial_stop=95.0, r_unit=5.0,
