@@ -18,10 +18,28 @@ class TriageOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     material: bool
-    tickers: list[str] = Field(default_factory=list, max_length=8)
-    direction_hint: Literal["up", "down", "unclear"] = "unclear"
-    urgency: Literal["high", "medium", "low"] = "low"
-    novelty_score: float = Field(ge=0.0, le=1.0, default=0.0)
+    # v0.11.3: tickers/direction_hint/urgency/novelty_score used to carry
+    # Python-side defaults, which meant pydantic's model_json_schema() left
+    # them OUT of the grammar's "required" list sent to llama-server. That
+    # was harmless while the model happened to fill every field anyway, but
+    # confirmed live on the Spark (2026-07-20) that the current model +
+    # llama.cpp build will skip these four fields ENTIRELY on harder items
+    # (no feed-tagged symbol to lean on) rather than reasoning through them —
+    # and because they had defaults, the omission was never treated as
+    # invalid output; Python just silently filled in tickers=[] /
+    # direction_hint="unclear" / etc. as if the model had decided that.
+    # Removing the defaults forces the grammar to require the KEY's
+    # presence for every field, the same technique already used for
+    # `confidence` in v0.4.7. An empty ticker list / "unclear" / low
+    # novelty are still perfectly legal values — this does not force the
+    # model to guess a ticker — it only forces it to actually engage with
+    # (and commit to) an answer for that field instead of dropping it, and
+    # it makes the existing one-retry-then-REJECT path in triage.py
+    # actually fire when a field is missing, instead of being bypassed.
+    tickers: list[str] = Field(max_length=8)
+    direction_hint: Literal["up", "down", "unclear"]
+    urgency: Literal["high", "medium", "low"]
+    novelty_score: float = Field(ge=0.0, le=1.0)
     # v0.4.7: A1's confidence in the material verdict itself. REQUIRED (no
     # default) so the model-side grammar forces emission and the journal's
     # confidence column is populated on every TRIAGE row (baseline rule 6).
@@ -65,4 +83,3 @@ def validate_triage(raw_text: str) -> TriageOutput:
         errs = "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}"
                          for x in e.errors()[:4])
         raise TriageValidationError(f"schema violations: {errs}", raw_text)
-
