@@ -1,0 +1,12 @@
+[Unit]
+Description=Prune completed queue rows daily at 03:10 ET
+
+[Timer]
+# Off-hours daily; retention is QUEUE_PRUNE_KEEP_DAYS (default 7d) in
+# /etc/pipeline/pipeline.env. A missed run just prunes more the next night;
+# nothing downstream depends on it.
+OnCalendar=*-*-* 03:10 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

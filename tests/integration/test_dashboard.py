@@ -54,6 +54,27 @@ async def test_state_shape(client):
         assert key in s["stats"]
 
 
+async def test_state_load_panel(client, db):
+    """Pipeline-load panel: per-queue depth + repeat-analysis watch."""
+    # a ready message and an in-flight (claimed) one on distinct queues
+    db.execute("INSERT INTO queue.messages (queue_name, dedup_key, payload) "
+               "VALUES ('signal.analyst','load-test:1','{}') "
+               "ON CONFLICT DO NOTHING")
+    db.execute("INSERT INTO queue.messages (queue_name, dedup_key, payload, claimed_by, claimed_ts) "
+               "VALUES ('signal.gate','load-test:2','{}','x',now()) "
+               "ON CONFLICT DO NOTHING")
+    r = await client.get("/api/state", auth=AUTH)
+    s = r.json()
+    assert "load" in s and "queues" in s["load"] and "hot_tickers" in s["load"]
+    byq = {q["queue_name"]: q for q in s["load"]["queues"]}
+    for f in ("ready", "in_flight", "oldest_age_s"):
+        assert f in byq["signal.analyst"]
+    assert byq["signal.analyst"]["ready"] >= 1
+    assert byq["signal.gate"]["in_flight"] >= 1
+    # cleanup
+    db.execute("DELETE FROM queue.messages WHERE dedup_key LIKE 'load-test:%'")
+
+
 async def test_history_granularities_and_validation(client):
     for g in ("day", "week", "month", "year"):
         r = await client.get(f"/api/history?granularity={g}", auth=AUTH)

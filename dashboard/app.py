@@ -81,6 +81,27 @@ async def _state() -> dict:
             "SELECT * FROM journal.dash_health ORDER BY component")).fetchall()]
         control = {r["key"]: r["value"] for r in await (await conn.execute(
             "SELECT key, value FROM journal.dash_control")).fetchall()}
+        # Pipeline load — per-queue pending depth (the direct agent-overload
+        # signal: signal.analyst backing up = A2 overloaded, etc.). Only scans
+        # not-done rows (small, index-backed), so it's cheap on every push.
+        load_queues = [dict(r) for r in await (await conn.execute("""
+            SELECT queue_name,
+                   count(*) FILTER (WHERE claimed_ts IS NULL AND available_ts <= now()) AS ready,
+                   count(*) FILTER (WHERE claimed_ts IS NOT NULL)                        AS in_flight,
+                   COALESCE(EXTRACT(EPOCH FROM now() - min(enqueued_ts)
+                     FILTER (WHERE claimed_ts IS NULL AND available_ts <= now())), 0)::int AS oldest_age_s
+            FROM queue.messages
+            WHERE done_ts IS NULL
+            GROUP BY queue_name""")).fetchall()]
+        # Repeat-analysis watch: any ticker analyzed unusually often recently
+        # is the fingerprint of a loop (e.g. the sympathy-lane cascade).
+        hot_tickers = [dict(r) for r in await (await conn.execute("""
+            SELECT ticker, count(*) AS analyses
+            FROM journal.decisions
+            WHERE stage='ANALYST' AND ticker IS NOT NULL
+              AND ts > now() - interval '30 minutes'
+            GROUP BY ticker HAVING count(*) > 3
+            ORDER BY analyses DESC LIMIT 8""")).fetchall()]
         stats = dict((await (await conn.execute("""
             SELECT
               (SELECT value::numeric FROM journal.control WHERE key='trading_capital') AS trading_capital,
@@ -95,6 +116,7 @@ async def _state() -> dict:
         """)).fetchone()))
     return {"ts": time.time(), "positions": positions, "decisions": decisions,
             "vetoes": vetoes, "health": health, "control": control,
+            "load": {"queues": load_queues, "hot_tickers": hot_tickers},
             "stats": {k: (float(v) if v is not None and k != "open_positions" else
                           int(v) if v is not None else 0) for k, v in stats.items()}}
 

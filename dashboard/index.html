@@ -43,7 +43,9 @@ table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13.5
 th{text-align:left;font-family:var(--sans);font-weight:600;font-size:10.5px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint);padding:4px 8px;border-bottom:1px solid var(--line)}
 td{padding:6px 8px;border-bottom:1px solid var(--panel-2)}
-.gain{color:var(--gain)} .loss{color:var(--loss)}
+.gain{color:var(--gain)} .loss{color:var(--loss)} .amber{color:var(--amber)}
+.ld-num{font-family:var(--mono);text-align:right}
+#load table{font-size:13px} #load td,#load th{padding:4px 8px}
 #tape{max-height:420px;overflow:auto;font-size:13px}
 .tape-row{display:flex;flex-wrap:wrap;gap:4px 10px;padding:6px 2px;border-bottom:1px solid var(--panel-2);
   font-family:var(--mono);align-items:baseline}
@@ -90,6 +92,9 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
       <div class="panel"><h2>Vetoed trades</h2><div id="vetoes"></div></div>
     </div>
   </div>
+  <div class="panel"><h2>Pipeline load
+    <span class="micro" style="margin-left:8px">queue depth per agent · repeat-analysis watch</span></h2>
+    <div id="load"></div></div>
 </div>
 
 <div id="hist" class="grid" style="display:none">
@@ -108,6 +113,17 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 const $=id=>document.getElementById(id);
 const CHIP={TRIAGE:'--chip-triage',ANALYST:'--chip-analyst',GATE:'--chip-gate',
             RISK:'--chip-risk',ORDER:'--chip-order',GUARD:'--chip-guard'};
+// queue -> the agent that consumes it, so a backed-up queue reads as an
+// overloaded agent. Order is the pipeline flow.
+const QCONSUMER={
+  'signal.dedup':['C2','dedup'], 'signal.triage':['A1','triage'],
+  'signal.synthetic':['A1','sympathy'], 'signal.analyst':['A2','analyst'],
+  'signal.gate':['C3','gate'], 'signal.risk':['A3','risk'],
+  'signal.overnight':['A1','overnight'], 'signal.guard':['A12','guard'],
+  'signal.thesis':['--','thesis store'], 'chat.request':['A13','chat']};
+const QORDER=['signal.dedup','signal.triage','signal.synthetic','signal.analyst',
+              'signal.gate','signal.risk','signal.overnight','signal.guard',
+              'signal.thesis','chat.request'];
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0});
 const px=v=>v==null?'—':Number(v).toFixed(2);
 let lastDecisionId=0, histTimer=null;
@@ -158,6 +174,36 @@ function render(s){
     `<div class="tape-row"><span>${v.ticker||''}</span>
      <span class="detail">${(v.detail||'').slice(0,60)}</span></div>`).join('')
     ||'<div class="detail">none</div>';
+  renderLoad(s);
+}
+
+const fmtAge=s=>{s=Number(s)||0; return s<1?'—':s<90?s+'s':s<5400?Math.round(s/60)+'m':Math.round(s/3600)+'h';};
+function renderLoad(s){
+  const L=s.load||{}, byQ={};
+  (L.queues||[]).forEach(q=>byQ[q.queue_name]=q);
+  const extras=(L.queues||[]).map(q=>q.queue_name).filter(n=>!QORDER.includes(n));
+  const names=QORDER.concat(extras);
+  const rBand=r=>r>=200?'loss':r>=50?'amber':'';        // ready thresholds
+  const aBand=a=>a>=300?'loss':a>=60?'amber':'';         // oldest-wait thresholds
+  const rows=names.map(n=>{
+    const q=byQ[n]||{ready:0,in_flight:0,oldest_age_s:0};
+    const meta=QCONSUMER[n]||['--',n];
+    const idle=(q.ready|0)===0&&(q.in_flight|0)===0;
+    return `<tr>
+      <td><span class="dot ${idle?'OK':(q.ready>=200?'DOWN':q.ready>=50?'DEGRADED':'OK')}"></span>${meta[0]} · ${meta[1]}</td>
+      <td class="detail">${n}</td>
+      <td class="ld-num ${rBand(q.ready|0)}">${q.ready|0}</td>
+      <td class="ld-num">${q.in_flight|0}</td>
+      <td class="ld-num ${aBand(q.oldest_age_s|0)}">${fmtAge(q.oldest_age_s)}</td></tr>`;}).join('');
+  const hot=L.hot_tickers||[];
+  const hotHtml=hot.length
+    ? hot.map(h=>`<span class="chip" style="background:var(${h.analyses>=10?'--loss':'--amber'})">${h.ticker} ×${h.analyses}</span>`).join(' ')
+    : '<span class="detail">none — no ticker analyzed &gt;3× in 30 min</span>';
+  $('load').innerHTML=
+    `<table><thead><tr><th>Consumer</th><th>Queue</th><th>Ready</th><th>In-flight</th><th>Oldest wait</th></tr></thead>
+       <tbody>${rows}</tbody></table>
+     <div style="margin-top:10px"><span class="micro">Repeat-analysis watch · 30 min</span>
+       <div style="margin-top:5px;line-height:1.9">${hotHtml}</div></div>`;
 }
 
 async function api(path,opts){const r=await fetch(path,opts);

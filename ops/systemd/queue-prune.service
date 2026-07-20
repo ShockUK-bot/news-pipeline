@@ -1,0 +1,14 @@
+[Unit]
+Description=Prune completed queue.messages rows (oneshot, fired by queue-prune.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/bin/bash /opt/pipeline/ops/prune-queue.sh
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
