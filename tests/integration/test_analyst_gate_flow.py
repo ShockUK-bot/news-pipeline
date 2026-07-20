@@ -316,6 +316,11 @@ async def test_09_synthetic_thesis_does_not_refan_out(env):
     PRIMARY thesis still fans out (SUPL); this proves a synthetic one does not.
     """
     await seed_item(env, "alpaca:7009", "Sector outbreak hits multiple chains")
+    # Isolate from earlier tests' leftover queue messages (test_07 leaves an
+    # unconsumed synthetic on signal.analyst) so process() claims OUR message.
+    async with env["pool"].connection() as c:
+        await c.execute("DELETE FROM queue.messages "
+                        "WHERE queue_name IN ('signal.analyst', 'signal.synthetic')")
     # A thesis that WOULD fan out (it has a related opportunity)...
     reply = thesis_reply(related_opportunities=[
         {"ticker": "OTHR", "relation": "competitor",

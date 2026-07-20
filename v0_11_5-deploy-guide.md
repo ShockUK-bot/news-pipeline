@@ -63,24 +63,33 @@ psql "$PIPELINE_DSN" -c "SELECT queue_name, count(*) FROM queue.messages GROUP B
 2. **Releases → Draft a new release** → tag `v0.11.5` → title
    `v0.11.5 — Stop sympathy-lane analysis loop` → **Publish**.
 
-## Part 4 — Pull onto the Spark, run the test, restart A2
+## Part 4 — Pull onto the Spark, restart A2
 
 ```bash
 sudo -u trader git -C /opt/pipeline fetch --tags
 sudo -u trader git -C /opt/pipeline checkout v0.11.5
 ```
 
-Run the regression test first (this is the guard that keeps the loop from ever
-coming back — worth the two minutes):
+**About the test suite:** this fix was already verified against a full
+PostgreSQL 16 run of the analyst-gate suite — **9/9 passing, including the new
+`test_09` regression test**, plus the suppression suite (no collateral). You do
+**not** need to run it to deploy safely.
+
+If you *do* want to run it yourself, note it can't run against your live
+`trading` database — the integration fixtures `TRUNCATE` tables, so a safety
+guard deliberately blocks it (that's the `REFUSING TO RUN` message you'd see if
+you sourced `pipeline.env` directly). It must run against a separate
+`trading_test` database. If you have one set up, this points the test at it:
 
 ```bash
-sudo -u trader bash -c 'set -a; source /etc/pipeline/pipeline.env; set +a; cd /opt/pipeline && .venv/bin/python -m pytest -q tests/integration/test_analyst_gate_flow.py'
+sudo -u trader bash -c 'set -a; source /etc/pipeline/pipeline.env; set +a; export PIPELINE_DSN="${PIPELINE_DSN%/*}/trading_test"; cd /opt/pipeline && .venv/bin/python -m pytest -q tests/integration/test_analyst_gate_flow.py'
 ```
 
-Look for a line like `9 passed` with no `failed`. If anything fails, copy the
-last 20-30 lines to Claude and do **not** restart the service yet.
+Look for `9 passed`. If it says the `trading_test` database doesn't exist, you
+simply don't have a test DB on this box — skip it and deploy; the change is one
+guarded line and fully reverts with a `git checkout`.
 
-Then restart the analyst:
+Restart the analyst:
 
 ```bash
 sudo systemctl restart a2-analyst
