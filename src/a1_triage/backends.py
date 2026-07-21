@@ -31,6 +31,32 @@ class ModelReply:
     model_id: str
 
 
+def _extract_text(message: dict) -> str:
+    """Pull the model's answer out of an OpenAI-compatible chat message.
+
+    Normally it's in ``content``. But a reasoning model served by llama.cpp can
+    route the *entire* answer into ``reasoning_content`` and leave ``content``
+    empty — this is what the heavy off-hours slot (Qwen3.5-122B-A10B on :8084)
+    does: the thinking template opens an implicit ``<think>`` block, the
+    schema-constrained JSON is generated inside it, and because the grammar
+    never lets the model emit a closing ``</think>``, llama.cpp's deepseek-style
+    reasoning parser classifies the whole (still perfectly valid) JSON as
+    thinking and hands back ``content == ""``. A4/A5 then saw an empty string,
+    failed schema validation, and fell back to deterministic ranking with the
+    "primary model unavailable" briefing line.
+
+    Since ``response_format`` is ``strict``, whatever the server returns is
+    schema-valid JSON no matter which field it lands in, so we prefer
+    ``content`` and fall back to ``reasoning_content`` when content is blank.
+    Downstream ``validate_*`` still guards against anything malformed, so a bad
+    read degrades to exactly the old behaviour rather than misparsing. (v0.11.9)
+    """
+    text = (message.get("content") or "").strip()
+    if text:
+        return text
+    return (message.get("reasoning_content") or "").strip()
+
+
 class ModelBackend(Protocol):
     model_id: str
     async def complete(self, messages: list[dict], json_schema: dict) -> ModelReply: ...
@@ -63,7 +89,7 @@ class LlamaCppBackend:
             resp.raise_for_status()
             data = resp.json()
         latency = int((time.monotonic() - t0) * 1000)
-        text = data["choices"][0]["message"]["content"]
+        text = _extract_text(data["choices"][0]["message"])
         return ModelReply(text=text, latency_ms=latency, model_id=self.model_id)
 
 
