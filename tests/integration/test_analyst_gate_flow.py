@@ -354,3 +354,97 @@ async def test_08_gate_and_thesis_share_config_version(env):
     rows = await q(env, """SELECT count(DISTINCT config_version) FROM journal.decisions""")
     assert rows[0][0] == 1
 
+
+
+async def test_10_gate_defers_immature_window(env):
+    """v0.11.10 regression (GM/EMBJ, 2026-07-21): in-session news published
+    seconds ago must be DEFERRED, not vetoed MARKETDATA_MISSING — the
+    since-window cannot contain a completed minute bar yet, for ANY ticker.
+    Full round trip: defer -> invisible until mature -> re-claim -> PASS."""
+    from common.queue import defer
+    from c3_gate.service import DeferEvaluation
+
+    pub = PIN - timedelta(seconds=45)
+    await seed_item(env, "alpaca:7010", "Acme guidance raised", published=pub,
+                    outlets_sources=[("rss:wire:7010", "rss:wire")])
+    # leftover unconsumed gate messages from earlier tests would win the claim
+    async with env["pool"].connection() as c:
+        await c.execute("DELETE FROM queue.messages WHERE queue_name='signal.gate'")
+
+    gate_msg = {"envelope": {"msg_schema": "signal.gate/1", "producer": "A2",
+                             "trace": {"signal_id": "alpaca:7010",
+                                       "item_id": "alpaca:7010", "revision": 1}},
+                "body": {"item_ref": {"item_id": "alpaca:7010", "revision": 1},
+                         "thesis": json.loads(thesis_reply()),
+                         "regime_id": 1}}
+    await enqueue("signal.gate", "gate:7010:1", gate_msg)
+    svc = C3Service(GATE_CFG, md=hot_market(), now_fn=lambda: PIN)
+    msg = await claim("signal.gate", "test-c3")
+    assert msg is not None and msg.dedup_key == "gate:7010:1"
+
+    with pytest.raises(DeferEvaluation) as exc:
+        await svc.handle(msg)
+    # published 45s before PIN -> mature at publish-minute+1 + 3 bars
+    assert 60 < exc.value.delay_secs <= 300
+    await defer(msg.msg_id, exc.value.delay_secs)
+
+    # a defer journals NO decision (it is scheduling, not an outcome)
+    rows = await q(env, "SELECT count(*) FROM journal.decisions "
+                        "WHERE item_id='alpaca:7010'")
+    assert rows[0][0] == 0
+    # released (not done), scheduled in the future, claim attempt refunded
+    rows = await q(env, """SELECT claimed_by, done_ts, attempts,
+                                  available_ts > now()
+                           FROM queue.messages WHERE dedup_key='gate:7010:1'""")
+    claimed_by, done_ts, attempts, in_future = rows[0]
+    assert claimed_by is None and done_ts is None and in_future
+    assert attempts == 0                       # defer must not eat the DLQ budget
+    # invisible while deferred
+    assert await claim("signal.gate", "test-c3") is None
+
+    # simulate the delay elapsing, then evaluate on a mature hot tape -> PASS
+    async with env["pool"].connection() as c:
+        await c.execute("UPDATE queue.messages SET available_ts = now() "
+                        "WHERE dedup_key='gate:7010:1'")
+    now2 = PIN + timedelta(minutes=4)
+    md = FakeData()
+    md.set_daily("ACME", FakeData.flat_daily(30, close=100.0, volume=5_000_000))
+    md.set_prev_close("ACME", 100.0)
+    baseline = FakeData.ramp_minute(pub - timedelta(days=1), 60, 100.0, 100.0, 10_000)
+    since = FakeData.ramp_minute(pub, 5, 100.0, 103.0, 30_000)
+    md.set_minute("ACME", baseline + since)
+    md.set_quote("ACME", Quote(price=103.0, bid=102.98, ask=103.02, ts=now2))
+
+    msg2 = await claim("signal.gate", "test-c3")
+    assert msg2 is not None and msg2.dedup_key == "gate:7010:1"
+    svc2 = C3Service(GATE_CFG, md=md, now_fn=lambda: now2)
+    await svc2.handle(msg2)
+    await ack(msg2.msg_id)
+
+    rows = await q(env, """SELECT action, veto_reason FROM journal.decisions
+                           WHERE item_id='alpaca:7010' AND stage='GATE'""")
+    assert tuple(rows[0]) == ("PASS", None)
+
+
+async def test_11_mature_empty_window_still_vetoes_marketdata_missing(env):
+    """The fail-safe is retained: a MATURE window that is genuinely empty
+    (trading halt, data outage) still vetoes MARKETDATA_MISSING — v0.11.10
+    only removes the false positives from immature windows."""
+    await seed_item(env, "alpaca:7011", "Acme halted pending news",
+                    published=PIN - timedelta(minutes=10),
+                    outlets_sources=[("rss:wire:7011", "rss:wire")])
+    md = FakeData()
+    md.set_minute("ACME", [])                  # mature window, zero bars
+    md.set_daily("ACME", FakeData.flat_daily(30, close=100.0, volume=5_000_000))
+    md.set_prev_close("ACME", 100.0)
+    svc = C3Service(GATE_CFG, md=md, now_fn=lambda: PIN)
+    gate_msg = {"envelope": {"msg_schema": "signal.gate/1", "producer": "A2",
+                             "trace": {"signal_id": "alpaca:7011",
+                                       "item_id": "alpaca:7011", "revision": 1}},
+                "body": {"item_ref": {"item_id": "alpaca:7011", "revision": 1},
+                         "thesis": json.loads(thesis_reply()),
+                         "regime_id": 1}}
+    await process("signal.gate", "gate:7011:1", gate_msg, svc)
+    rows = await q(env, """SELECT veto_reason FROM journal.decisions
+                           WHERE item_id='alpaca:7011' AND stage='GATE'""")
+    assert rows[0][0] == "MARKETDATA_MISSING"

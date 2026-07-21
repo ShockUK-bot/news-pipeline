@@ -14,6 +14,7 @@ import asyncio
 import os
 import signal as _signal
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from common.clock import parse_ts, utcnow
 from common.config import config_path, load_yaml
@@ -22,7 +23,7 @@ from common.db import close_pool, get_pool
 from common.journal import register_config_version, write_decision
 from common.log import get_logger, kv
 from common.marketdata import adv20, atr14, avg_minute_volume, get_marketdata
-from common.queue import ack, claim, enqueue, fail, wait_for_message
+from common.queue import ack, claim, defer, enqueue, fail, wait_for_message
 from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
@@ -70,6 +71,48 @@ async def _corroboration(item_id: str) -> tuple[int, int]:
                GROUP BY c.independent_outlets""", (cluster_id,))
         row = await cur.fetchone()
         return (row[0], row[1]) if row else (1, 3)
+
+
+class DeferEvaluation(Exception):
+    """Raised by handle() when the since-news window cannot yet contain enough
+    COMPLETED minute bars to evaluate volume confirmation. The consume loop
+    responds by deferring the message (queue.defer) instead of acking or
+    failing it. Deferral is scheduling, not an error."""
+
+    def __init__(self, delay_secs: float, mature_ts: datetime):
+        self.delay_secs = delay_secs
+        self.mature_ts = mature_ts
+        super().__init__(f"since-window immature until {mature_ts.isoformat()}")
+
+
+def bars_mature_ts(published_ts: datetime, min_bars: int) -> datetime:
+    """Earliest instant the window [published_ts, now] can hold min_bars
+    COMPLETED minute bars.
+
+    Minute bars are stamped on minute boundaries and only exist once their
+    minute closes: for news published 10:00:12 the first bar the window can
+    contain is stamped 10:01 and completes at 10:02. Evaluating before then
+    returns ZERO bars for ANY ticker — which is how fast Alpaca-news items
+    (GM, EMBJ, 2026-07-21) were terminally vetoed MARKETDATA_MISSING ~60s
+    after publish. Boundary-published news is treated one minute
+    conservatively (its own minute's bar is ignored) to keep the arithmetic
+    obvious."""
+    first_boundary = (published_ts.replace(second=0, microsecond=0)
+                      + timedelta(minutes=1))
+    return first_boundary + timedelta(minutes=min_bars)
+
+
+def defer_delay(published_ts: datetime, now: datetime,
+                min_bars: int) -> Optional[float]:
+    """Seconds to defer before the window is evaluable, or None if mature.
+    Floored at 5s (a near-mature message must not busy-loop re-claims) and
+    capped at 300s (a grossly future-skewed published_ts must not park a
+    message for hours — repeated capped defers cost nothing because defer
+    refunds the claim attempt)."""
+    mature = bars_mature_ts(published_ts, min_bars)
+    if now >= mature:
+        return None
+    return min(max((mature - now).total_seconds() + 1.0, 5.0), 300.0)
 
 
 class C3Service:
@@ -139,6 +182,24 @@ class C3Service:
         published_ts = row[0]
 
         now = self.now_fn()
+
+        # v0.11.10: in-session news feeds the intraday volume rule, which
+        # needs COMPLETED minute bars. A fast item can reach C3 ~60s after
+        # publish, when the since-window physically cannot contain one yet —
+        # that is missing time, not missing data, so DEFER instead of vetoing
+        # MARKETDATA_MISSING. Off-session news takes the open-handoff rule
+        # (gap-based, no vol_mult) and is never deferred.
+        pub_session = _session_window(published_ts)
+        if pub_session and pub_session[0] <= published_ts < pub_session[1]:
+            min_bars = int(self.cfg.get("min_confirm_bars", 3))
+            delay = defer_delay(published_ts, now, min_bars)
+            if delay is not None:
+                mature = bars_mature_ts(published_ts, min_bars)
+                log.info("gate DEFER", extra=kv(
+                    signal_id=signal_id, ticker=thesis["ticker"],
+                    delay_secs=round(delay, 1), mature_ts=mature.isoformat()))
+                raise DeferEvaluation(delay, mature)
+
         state = await self.build_state(thesis, item_id, published_ts, now)
         if state.vol_mult is not None:
             # v0.5.9: C3 is the natural marketdata heartbeat during market
@@ -218,6 +279,10 @@ async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
         try:
             await svc.handle(msg)
             await ack(msg.msg_id)
+        except DeferEvaluation as d:
+            # v0.11.10: not a failure — release the message back to the queue
+            # with a delay; it re-arrives once minute bars can exist.
+            await defer(msg.msg_id, d.delay_secs)
         except Exception as e:
             log.error("message failed", extra=kv(msg_id=msg.msg_id, error=repr(e)[:300]))
             await fail(msg.msg_id, repr(e))

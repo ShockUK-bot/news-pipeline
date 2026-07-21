@@ -92,6 +92,27 @@ async def fail(msg_id: int, error: str) -> None:
         await c.execute("SELECT queue.fail(%s, %s)", (msg_id, error[:500]))
 
 
+async def defer(msg_id: int, delay_secs: float) -> None:
+    """Release a claimed message back to its queue, visible again after
+    delay_secs — queue-native delayed delivery via available_ts (the same
+    mechanism A4 uses to schedule open-handoff entries).
+
+    Deferral is scheduling, NOT failure (v0.11.10): the attempt the claim
+    consumed is refunded, so repeated defers can never push a healthy message
+    toward max_attempts / the DLQ, and last_error is left untouched. Used by
+    C3 to wait until a news item's since-window can physically contain
+    completed minute bars before evaluating volume confirmation."""
+    pool = await get_pool()
+    async with pool.connection() as c:
+        await c.execute(
+            """UPDATE queue.messages
+               SET claimed_by = NULL, claimed_ts = NULL,
+                   attempts = GREATEST(attempts - 1, 0),
+                   available_ts = now() + (%s * interval '1 second')
+               WHERE msg_id = %s AND done_ts IS NULL""",
+            (delay_secs, msg_id))
+
+
 async def wait_for_message(queue_name: str, timeout_secs: float = 5.0) -> None:
     """Block until a NOTIFY on the queue's channel or timeout. Dedicated
     connection per call site (LISTEN state is per-connection)."""

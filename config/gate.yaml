@@ -6,6 +6,11 @@ gate:
   intraday_move_pct: 0.015     # X: >= +1.5% from pre-news
   intraday_vol_mult: 2.5       # Y: >= 2.5x baseline minute volume
   intraday_window_min: 30      # N: within 30 minutes of publish
+  min_confirm_bars: 3          # v0.11.10: completed minute bars the since-news
+                               # window must be able to contain before the
+                               # intraday volume check is evaluated; younger
+                               # in-session signals are DEFERRED (requeued
+                               # ~3-4 min after publish), never vetoed
   extended_pct: 0.06           # baseline v0.5: skip if >= +6% from pre-news
   open_blackout_min: 15        # no entries first 15 min after open (baseline)
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN

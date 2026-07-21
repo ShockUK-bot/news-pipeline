@@ -13,6 +13,10 @@ Check order (cheapest first, all journaled on veto):
                 came back, so the gate CANNOT evaluate confirmation. Still a
                 veto (fail safe), but journaled distinctly so a starved data
                 feed can never masquerade as "the market didn't confirm".
+                (v0.11.10: the service now DEFERS evaluation until the
+                since-window can contain min_confirm_bars completed minute
+                bars, so this veto only fires when a MATURE window is empty —
+                a trading halt or a genuine data outage, not a fast signal.)
                 GATE_NO_CONFIRM pct_move < X or vol_mult < Y
      handoff:   GATE_OPEN_WINDOW first 15 minutes after open
                 PRICED_IN      gap >= gap_ratio * magnitude_est
