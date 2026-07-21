@@ -60,6 +60,12 @@ async def check(cfg: dict, now: datetime, in_session: bool) -> dict:
         age = ages.get(component)
         if age is None:
             continue                      # component never started — cold start
+        # marketdata is only expected fresh during RTH — no live quotes flow
+        # off-hours, so its staleness then is normal and not actionable. Skip
+        # it entirely out of session (v0.11.8); every other component runs 24/7
+        # and should still alert. (Escalations were already in_session-gated.)
+        if name == "marketdata" and not in_session:
+            continue
         if age > thresholds["alert_min"]:
             actions["alerts"].append((component, round(age, 1)))
         if in_session and "block_entries_min" in thresholds \
