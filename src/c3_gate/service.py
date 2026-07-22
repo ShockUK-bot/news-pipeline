@@ -115,6 +115,39 @@ def defer_delay(published_ts: datetime, now: datetime,
     return min(max((mature - now).total_seconds() + 1.0, 5.0), 300.0)
 
 
+PROBE_DEFAULT_SYMBOL = "SPY"
+
+
+async def probe_marketdata(md, symbol: str = PROBE_DEFAULT_SYMBOL) -> bool:
+    """One liveness probe against the market-data provider (v0.11.12).
+
+    Incident (2026-07-22): the 'marketdata' heartbeat was only refreshed when
+    a signal happened to reach C3 (v0.5.9 wrote it on each successful volume
+    computation). During any >2-minute lull in gate traffic the row aged past
+    deadman's block_entries_min and the dead-man blocked ALL entries — the
+    switch flapped block/unblock all session and vetoed the day's only PASS
+    (PSKY 12:43 CT) via A3 BLOCK_ENTRIES, 18 seconds before the unblock. The
+    heartbeat measured news flow; it must measure data-provider liveness.
+
+    Success = the provider answered with a positive price for a liquid
+    reference symbol. On success the 'marketdata' health row is refreshed OK.
+    On failure NOTHING is written — deadman reads the row's AGE, so writing a
+    fresh DEGRADED row would reset the age and blind the very monitor this
+    heartbeat feeds. Silence is the alarm."""
+    try:
+        quote = await md.snapshot(symbol)
+        ok = quote is not None and quote.price is not None and quote.price > 0
+    except Exception as e:                                  # noqa: BLE001
+        log.warning("marketdata probe failed",
+                    extra=kv(symbol=symbol, error=repr(e)[:200]))
+        return False
+    if not ok:
+        log.warning("marketdata probe returned no price", extra=kv(symbol=symbol))
+        return False
+    await set_health("marketdata", "OK", f"probe ok ({symbol})")
+    return True
+
+
 class C3Service:
     def __init__(self, cfg: dict, md=None, now_fn=None):
         self.cfg = cfg["gate"]
@@ -263,12 +296,26 @@ async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
     hb_detail = f"consuming {IN_QUEUE}"
     await set_health("gate", "OK", hb_detail)
     last_hb = time.monotonic()
+    # v0.11.12: periodic marketdata liveness probe. probe_secs <= 0 disables
+    # (heartbeat then falls back to v0.5.9 volume-computation refreshes only).
+    probe_symbol = str(svc.cfg.get("marketdata_probe_symbol",
+                                   PROBE_DEFAULT_SYMBOL))
+    probe_secs = float(svc.cfg.get("marketdata_probe_secs", 60))
+    if probe_secs > 0:
+        await probe_marketdata(svc.md, probe_symbol)   # clear staleness at boot
+    last_probe = time.monotonic()
     while not stop.is_set():
         # Periodic heartbeat (v0.11.7) — C3 used to write health only at
         # startup, so the dead-man flagged 'stale: gate' forever after 5 min.
         if time.monotonic() - last_hb >= 60.0:
             await set_health("gate", "OK", hb_detail)
             last_hb = time.monotonic()
+        # Periodic marketdata probe (v0.11.12) — refreshes the 'marketdata'
+        # heartbeat on provider liveness, independent of news flow, so the
+        # dead-man stops reading quiet tape as a data outage.
+        if probe_secs > 0 and time.monotonic() - last_probe >= probe_secs:
+            await probe_marketdata(svc.md, probe_symbol)
+            last_probe = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:
