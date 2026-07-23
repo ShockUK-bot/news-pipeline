@@ -77,3 +77,14 @@ def is_market_hours(dt: datetime | None = None) -> bool:
     minutes = et.hour * 60 + et.minute
     return (9 * 60 + 30) <= minutes < (16 * 60)
 
+
+def session_open(dt: datetime | None = None) -> datetime | None:
+    """UTC timestamp of the 9:30 ET session open for dt's ET calendar date,
+    or None on weekends. Same coarseness contract as is_market_hours (no
+    holiday calendar); consumers treat 'no bars' as the ground truth."""
+    et = (dt or utcnow()).astimezone(_ET)
+    if et.weekday() >= 5:
+        return None
+    return et.replace(hour=9, minute=30, second=0,
+                      microsecond=0).astimezone(timezone.utc)
+

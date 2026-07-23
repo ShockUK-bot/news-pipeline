@@ -8,6 +8,10 @@ Included in Phase 3:
   daily_context     prev close, ATR(14), ADV(20)
   related_headlines top-k from the retrieval collection (material items only)
   regime            latest C8 snapshot features
+  ta                (v0.12.0) technical pack — intraday (VWAP distance,
+                    ATR-5m, relative volume, day-range position, gap) +
+                    daily (RSI-14, SMA20/50 distance, trend, distance from
+                    52-week high, 5-day return). Null-safe, stable keys.
 Deferred (P1 sources not yet integrated; keys present, value null, so the
 prompt shape is stable): sector, short_interest.
 Live since v0.10.0 (same keys, real values, defensive — errors degrade back
@@ -22,6 +26,7 @@ from common.clock import parse_ts, utcnow
 from common.db import get_pool
 from common.log import get_logger
 from common.marketdata import MarketData, adv20, atr14, avg_minute_volume
+from common.ta import NULL_DAILY, NULL_INTRADAY, build_ta_pack
 from c2_dedup.embedder import embed_text_for
 from c2_dedup.vectorstore import VectorStore
 
@@ -88,6 +93,7 @@ async def build_context(md: MarketData, store: VectorStore, embedder,
         },
         "related_headlines": related[:5],
         "regime": regime,
+        "ta": await _ta(md, ticker),
         # P1 sources — sector/short_interest still deferred (stable null
         # keys); earnings + thesis matches live since v0.10.0/v0.9.0:
         "sector": None,
@@ -97,6 +103,16 @@ async def build_context(md: MarketData, store: VectorStore, embedder,
         "thesis_matches": await _thesis_matches(ticker),
     }
     return context, regime_id
+
+
+async def _ta(md: MarketData, ticker: str) -> dict:
+    """TA pack (v0.12.0) — defensive like every other context source: any
+    failure degrades to the stable null shape, never a missing key."""
+    try:
+        return await build_ta_pack(md, ticker)
+    except Exception as e:                       # pragma: no cover — belt+braces
+        log.warning("ta pack unavailable for %s: %r", ticker, e)
+        return {"intraday": dict(NULL_INTRADAY), "daily": dict(NULL_DAILY)}
 
 
 async def _earnings_date(ticker: str) -> str | None:

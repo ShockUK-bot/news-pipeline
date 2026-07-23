@@ -153,7 +153,7 @@ async def api_history(granularity: str = "day", user: str = Depends(_require_use
             GROUP BY 1 ORDER BY 1 DESC LIMIT 60""")).fetchall()]
         closed = [dict(r) for r in await (await conn.execute("""
             SELECT EXTRACT(EPOCH FROM p.closed_ts) AS closed_ts, p.ticker,
-                   p.qty_initial AS qty, p.avg_entry,
+                   p.origin, p.qty_initial AS qty, p.avg_entry,
                    round(p.avg_entry + p.realized_pnl / NULLIF(p.qty_initial,0), 4) AS avg_exit,
                    (SELECT e.exit_layer FROM journal.exits e
                      WHERE e.position_id = p.position_id ORDER BY e.ts DESC LIMIT 1) AS exit_layer,

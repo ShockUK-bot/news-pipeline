@@ -16,6 +16,7 @@ from common.clock import parse_ts, utcnow
 from common.db import get_pool
 from common.log import get_logger
 from common.marketdata import MarketData
+from common.ta import NULL_INTRADAY, build_ta_pack
 
 log = get_logger("a12.context")
 
@@ -94,6 +95,15 @@ async def build_guard_context(md: MarketData, item: dict, pos: dict) -> dict:
     pct_since_news = (round((last - prenews) / prenews, 5)
                       if (last and prenews) else None)
 
+    # TA (v0.12.0): intraday-only — the guard's question is "is the thesis
+    # broken NOW", so it gets VWAP/ATR-5m/range position but not the daily
+    # trend stack (that stays A2's). Defensive: degrades to the null shape.
+    try:
+        ta = (await build_ta_pack(md, pos["ticker"], intraday_only=True))["intraday"]
+    except Exception as e:                       # pragma: no cover — belt+braces
+        log.warning("ta pack unavailable for %s: %r", pos["ticker"], e)
+        ta = dict(NULL_INTRADAY)
+
     return {
         "price_action": {
             "last": last,
@@ -102,4 +112,5 @@ async def build_guard_context(md: MarketData, item: dict, pos: dict) -> dict:
             "minutes_since_news": int((now - received).total_seconds() // 60),
             "unrealized_r": unrealized_r,
         },
+        "ta_intraday": ta,
     }

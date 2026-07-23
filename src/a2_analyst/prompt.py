@@ -39,6 +39,12 @@ Rules:
   would kill the thesis (e.g. "counterparty denies talks").
 - related_opportunities: up to 3 second-order names (suppliers, customers,
   competitors) ONLY when the causal link is direct and obvious. Empty is fine.
+- context.ta: code-computed technicals (intraday VWAP distance, relative
+  volume, day-range position; daily RSI, SMA20/50 distance, trend, distance
+  from the 52-week high, 5-day return). Treat them as EVIDENCE for
+  priced_in_assessment and magnitude_est — e.g. RSI 80 at the 52-week high
+  after a +9% week means less room left; RSI 55 in a flat base means more.
+  A null field means "unavailable" — never guess a value for it.
 - reason: 2-4 sentences of plain reasoning.
 - confidence: 0.0-1.0, ordinal only — it ranks your own theses, nothing more.
 

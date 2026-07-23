@@ -82,8 +82,9 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 
 <div id="live" class="grid">
   <div class="panel"><h2>Open positions</h2>
-    <table><thead><tr><th>Ticker</th><th>Qty</th><th>Entry</th><th>Last</th><th>Stop</th>
-      <th>Target</th><th>Unrl P&amp;L</th><th>Thesis</th></tr></thead>
+    <table><thead><tr><th>Ticker</th><th>Origin</th><th>Qty</th><th>Entry</th><th>Last</th>
+      <th>Stop</th><th>Target</th><th>Cost</th><th>Unrl P&amp;L</th><th>P/L %</th>
+      <th>Thesis</th></tr></thead>
     <tbody id="positions"></tbody></table></div>
   <div class="row2">
     <div class="panel"><h2>Decision tape</h2><div id="tape"></div></div>
@@ -105,8 +106,8 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
       <th>Realized</th><th>Best</th><th>Worst</th></tr></thead><tbody id="periods"></tbody></table>
   </div>
   <div class="panel"><h2>Closed trades</h2>
-    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Qty</th><th>Entry</th><th>Exit</th>
-      <th>Layer</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div>
+    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Origin</th><th>Qty</th><th>Entry</th>
+      <th>Exit</th><th>Layer</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div>
 </div>
 
 <script>
@@ -126,6 +127,10 @@ const QORDER=['signal.dedup','signal.triage','signal.synthetic','signal.analyst'
               'signal.thesis','chat.request'];
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0});
 const px=v=>v==null?'—':Number(v).toFixed(2);
+// origin: which INPUT produced the trade — news pipeline vs momentum scanner
+const originChip=o=>o==='scanner'
+  ?'<span class="chip" style="background:var(--chip-gate)">SCAN</span>'
+  :'<span class="chip" style="background:var(--chip-triage)">NEWS</span>';
 let lastDecisionId=0, histTimer=null;
 
 function setConn(mode){const c=$('conn');
@@ -150,11 +155,16 @@ function render(s){
   $('breaker').style.display=ctl.drawdown_breaker==='1'?'inline-block':'none';
   $('positions').innerHTML=(s.positions||[]).map(p=>{
     const u=(p.current_price-p.entry_price)*p.qty;
-    return `<tr><td>${p.ticker}</td><td>${p.qty}</td><td>${px(p.entry_price)}</td>
-      <td>${px(p.current_price)}</td><td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
+    const pct=p.pct_pnl!=null?Number(p.pct_pnl):(p.entry_price?u/(p.entry_price*p.qty)*100:0);
+    const cost=p.total_cost!=null?Number(p.total_cost):p.entry_price*p.qty;
+    return `<tr><td>${p.ticker}</td><td>${originChip(p.origin)}</td><td>${p.qty}</td>
+      <td>${px(p.entry_price)}</td><td>${px(p.current_price)}</td>
+      <td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
+      <td>${money(cost)}</td>
       <td class="${u>=0?'gain':'loss'}">${money(u)}</td>
+      <td class="${pct>=0?'gain':'loss'}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>
       <td class="detail">${(p.thesis||'').slice(0,80)}</td></tr>`;}).join('')
-    ||'<tr><td colspan="8" class="detail">no open positions</td></tr>';
+    ||'<tr><td colspan="11" class="detail">no open positions</td></tr>';
   const maxId=(s.decisions||[]).reduce((m,d)=>Math.max(m,d.id),0);
   $('tape').innerHTML=(s.decisions||[]).map(d=>{
     const col=getComputedStyle(document.documentElement).getPropertyValue(CHIP[d.stage]||'--faint');
@@ -245,6 +255,7 @@ async function loadHistory(){
     ||'<tr><td colspan="7" class="detail">no closed trades yet</td></tr>';
   $('closed').innerHTML=(h.closed||[]).map(c=>
     `<tr><td>${new Date(c.closed_ts*1000).toLocaleString()}</td><td>${c.ticker}</td>
+     <td>${originChip(c.origin)}</td>
      <td>${c.qty}</td><td>${px(c.avg_entry)}</td><td>${px(c.avg_exit)}</td><td>${c.exit_layer||''}</td>
      <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td></tr>`).join('');
 }
