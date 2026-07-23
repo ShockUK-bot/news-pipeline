@@ -16,7 +16,7 @@ import signal as _signal
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from common.clock import parse_ts, utcnow
+from common.clock import parse_ts, session_open, utcnow
 from common.config import config_path, load_yaml
 from common.contracts import envelope
 from common.db import close_pool, get_pool
@@ -24,10 +24,12 @@ from common.journal import register_config_version, write_decision
 from common.log import get_logger, kv
 from common.marketdata import adv20, atr14, avg_minute_volume, get_marketdata
 from common.queue import ack, claim, defer, enqueue, fail, wait_for_message
+from common.ta import atr_5m, day_vwap, resample_5m
 from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
-from .rules import GateVerdict, MarketState, evaluate
+from .rules import (GateVerdict, MarketState, ScannerState, evaluate,
+                    evaluate_scanner)
 
 log = get_logger("c3.service")
 
@@ -193,6 +195,70 @@ class C3Service:
             minutes_since_open=minutes_since_open, gap_pct=gap_pct,
             corroboration_outlets=outlets, tier_min=tier_min)
 
+    async def _handle_scanner(self, msg, body: dict, thesis: dict,
+                                  item_ref: dict, signal_id: str) -> None:
+        scanner = body.get("scanner") or {}
+        item_id = item_ref.get("item_id")
+        revision = int(item_ref.get("revision") or 1)
+        ticker = thesis["ticker"]
+        now = self.now_fn()
+        scfg = self.cfg.get("scanner") or {}
+
+        state, minute, bars5 = await _scanner_state(self.md, ticker, scanner, now)
+        verdict = evaluate_scanner(thesis, state, scfg)
+
+        if verdict.verdict == "VETO":
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="GATE", agent="C3", action="VETO",
+                veto_reason=verdict.veto_reason,
+                payload={"rule": "scanner", "origin": "scanner",
+                         **(verdict.numbers or {})},
+                reason=f"{verdict.veto_reason} (scanner)",
+                regime_id=body.get("regime_id"))
+            log.info("gate VETO", extra=kv(signal_id=signal_id,
+                                           reason=verdict.veto_reason,
+                                           rule="scanner"))
+            return
+
+        quote = await self.md.snapshot(ticker)
+        daily = await self.md.daily_bars(ticker, 30)
+        a14 = atr14(daily)
+        a5 = atr_5m(minute, now)
+        atr_method = "atr_5m"
+        if a5 is None and a14:
+            # Early-session fallback: the 5-min ATR needs ~75 min of tape. A
+            # daily-ATR estimate scaled by sqrt(78 five-min bars/session) keeps
+            # the scalp stop geometry sane until real bars exist — flagged
+            # honestly so the journal shows which basis sized the trade.
+            a5 = round(a14 / EST_ATR5M_DIVISOR, 4)
+            atr_method = "atr_5m_est"
+        snapshot = {"ref_price": quote.price, "bid": quote.bid, "ask": quote.ask,
+                    "spread_bps": quote.spread_bps, "adv_20d": adv20(daily),
+                    "atr_14": a14, "atr_5m": a5, "atr_method": atr_method,
+                    "ts": quote.ts.isoformat()}
+        gate_body = {"thesis": thesis, "origin": "scanner", "scanner": scanner,
+                     "regime_id": body.get("regime_id"),
+                     "gate": {"verdict": "PASS", "rule": "scanner",
+                              **(verdict.numbers or {}), "snapshot": snapshot}}
+
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            async with conn.transaction():
+                decision_id = await write_decision(
+                    signal_id=signal_id, item_id=item_id, item_revision=revision,
+                    ticker=ticker, stage="GATE", agent="C3", action="PASS",
+                    payload={**gate_body["gate"], "origin": "scanner"},
+                    reason="tradeable (scanner)",
+                    regime_id=body.get("regime_id"), conn=conn)
+                out = envelope(CONTRACT_GATEPASS, "C3", signal_id, item_id,
+                               revision, gate_body)
+                out["envelope"]["trace"]["decision_id"] = decision_id
+                out["envelope"]["trace"]["origin"] = "scanner"
+                await enqueue(OUT_QUEUE, f"{signal_id}:{revision}", out, conn=conn)
+        log.info("gate PASS", extra=kv(signal_id=signal_id, ticker=ticker,
+                                       rule="scanner", atr_method=atr_method))
+
     async def handle(self, msg) -> None:
         body = msg.payload.get("body") or {}
         thesis = body.get("thesis") or {}
@@ -203,6 +269,16 @@ class C3Service:
                      .get("signal_id") or item_id)
         if not item_id or not thesis.get("ticker"):
             raise ValueError(f"malformed thesis message ({msg.dedup_key})")
+
+        # v0.12.1: scanner-origin signals take their own branch — no defer
+        # (their bars already exist by construction), no credibility (no news
+        # claim to corroborate), no confirmation (the move IS the signal).
+        origin = (body.get("origin")
+                  or msg.payload.get("envelope", {}).get("trace", {})
+                  .get("origin") or "news")
+        if origin == "scanner":
+            await self._handle_scanner(msg, body, thesis, item_ref, signal_id)
+            return
 
         pool = await get_pool()
         async with pool.connection() as conn:
@@ -289,6 +365,53 @@ class C3Service:
 
         log.info("gate PASS", extra=kv(signal_id=signal_id,
                                        ticker=thesis["ticker"], rule=verdict.rule))
+
+
+EST_ATR5M_DIVISOR = 8.8       # ~sqrt(78) 5-min bars per session — see below
+
+
+async def _scanner_state(md, ticker: str, scanner: dict,
+                         now) -> tuple[ScannerState, list[dict], list[dict]]:
+    """(state, minute_bars, bars5) — all tape re-measured at gate time."""
+    from datetime import timedelta as _td
+
+    quote = await md.snapshot(ticker)
+    open_utc = session_open(now)
+    minute = []
+    if open_utc and now > open_utc:
+        minute = await md.minute_bars(ticker, open_utc, now)
+
+    vwap = day_vwap(minute) if minute else None
+
+    range30_pos = None
+    if minute:
+        recent = [b for b in minute if b["ts"] >= now - _td(minutes=30)]
+        if recent:
+            hi = max(b["high"] for b in recent)
+            lo = min(b["low"] for b in recent)
+            if hi > lo:
+                range30_pos = round((quote.price - lo) / (hi - lo), 3)
+
+    bars5 = resample_5m(minute, now)
+    bar5_ratio = None
+    if len(bars5) >= 4:
+        last5 = bars5[-1]
+        prev = bars5[-15:-1] if len(bars5) > 14 else bars5[:-1]
+        avg_range = sum(b["high"] - b["low"] for b in prev) / len(prev)
+        if avg_range > 0:
+            bar5_ratio = round((last5["high"] - last5["low"]) / avg_range, 2)
+
+    halted = bool(minute) and (now - minute[-1]["ts"]).total_seconds() > 600
+
+    detect_price = float(scanner.get("price") or 0.0)
+    detected = parse_ts(scanner.get("detected_ts")) if scanner.get(
+        "detected_ts") else now
+    state = ScannerState(
+        last_price=quote.price, detect_price=detect_price,
+        minutes_since_detect=(now - detected).total_seconds() / 60.0,
+        vwap=vwap, range30_pos=range30_pos, bar5_range_ratio=bar5_ratio,
+        spread_bps=quote.spread_bps, halted=halted)
+    return state, minute, bars5
 
 
 async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:

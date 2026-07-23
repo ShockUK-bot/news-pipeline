@@ -10,6 +10,16 @@ profiles:
     realization:    {target_fraction: 0.7, action: scale_out_50}
     earnings_blackout_exit: true
     overnight_hold: eod_rule_v1
+  scalp_v1:                            # v0.12.1 — scanner-origin trades ONLY
+    initial_stop:   {method: atr_5m, k: 2.0}    # ATR(14) on completed 5-min bars
+    catastrophe:    {method: atr_5m, k: 3.5}
+    breakeven_at_R: 0.75
+    trail:          {activate_at_R: 1.0, method: atr_5m, k: 1.5}
+    time_stop:      {window_minutes: 60, min_progress_R: 0.5}
+    realization:    {target_fraction: 0.6, action: scale_out_50}
+    earnings_blackout_exit: true
+    overnight_hold: force_flat         # HARD RULE: C4 market-exits at force_flat_time_et
+    force_flat_time_et: "15:50"
   long_term_v1:
     initial_stop:   {method: atr, k: 3.0}
     catastrophe:    {method: atr, k: 4.5}

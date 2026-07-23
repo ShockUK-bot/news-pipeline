@@ -102,6 +102,25 @@ async def _state() -> dict:
               AND ts > now() - interval '30 minutes'
             GROUP BY ticker HAVING count(*) > 3
             ORDER BY analyses DESC LIMIT 8""")).fetchall()]
+        # Scanner panel (v0.12.1): today's funnel + the last few candidates.
+        scanner_counts = {r["status"]: int(r["n"]) for r in await (await conn.execute("""
+            SELECT status, count(*) AS n FROM journal.scanner_candidates
+            WHERE scan_date = (now() AT TIME ZONE 'America/New_York')::date
+            GROUP BY status""")).fetchall()}
+        scanner_recent = [dict(r) for r in await (await conn.execute("""
+            SELECT EXTRACT(EPOCH FROM ts) AS ts, ticker, status, reject_reason,
+                   metrics->>'move_pct' AS move_pct,
+                   metrics->>'rel_volume' AS rel_volume,
+                   metrics->>'score' AS score
+            FROM journal.scanner_candidates
+            WHERE scan_date = (now() AT TIME ZONE 'America/New_York')::date
+              AND ticker <> '*'
+            ORDER BY candidate_id DESC LIMIT 8""")).fetchall()]
+        scanner_losses = (await (await conn.execute("""
+            SELECT count(*) FROM journal.positions
+            WHERE origin='scanner' AND status='CLOSED' AND realized_pnl < 0
+              AND (closed_ts AT TIME ZONE 'America/New_York')::date =
+                  (now() AT TIME ZONE 'America/New_York')::date""")).fetchone())["count"]
         stats = dict((await (await conn.execute("""
             SELECT
               (SELECT value::numeric FROM journal.control WHERE key='trading_capital') AS trading_capital,
@@ -116,6 +135,9 @@ async def _state() -> dict:
         """)).fetchone()))
     return {"ts": time.time(), "positions": positions, "decisions": decisions,
             "vetoes": vetoes, "health": health, "control": control,
+            "scanner": {"counts": scanner_counts, "recent": scanner_recent,
+                        "losses_today": int(scanner_losses),
+                        "enabled": control.get("scanner_enabled") == "1"},
             "load": {"queues": load_queues, "hot_tickers": hot_tickers},
             "stats": {k: (float(v) if v is not None and k != "open_positions" else
                           int(v) if v is not None else 0) for k, v in stats.items()}}
@@ -263,6 +285,18 @@ async def api_capital(body: dict, user: str = Depends(_require_user)):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
     return await _set_control("trading_capital", f"{amount:.0f}", user, "CAPITAL_SET")
+
+
+@app.post("/api/scanner")
+async def api_scanner(body: dict, user: str = Depends(_require_user)):
+    """Toggle the C10 scanner input on/off (kill-token gated, audited).
+    The dashboard never commands the pipeline: C10 reads the flag each scan."""
+    _check_kill_token(body.get("token"))
+    enabled = body.get("enabled")
+    if enabled not in (True, False):
+        raise HTTPException(status_code=400, detail="enabled must be true/false")
+    return await _set_control("scanner_enabled", "1" if enabled else "0", user,
+                              "SCANNER_ON" if enabled else "SCANNER_OFF")
 
 
 @app.post("/api/max-trades")

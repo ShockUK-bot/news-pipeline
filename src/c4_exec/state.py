@@ -86,19 +86,19 @@ async def create_position(ticker: str, horizon: str, profile: str,
                           item_id: Optional[str], qty: int, avg_entry: float,
                           initial_stop: float, exit_policy: dict,
                           config_version: str, opened_ts: datetime,
-                          conn=None) -> int:
+                          origin: str = "news", conn=None) -> int:
     r_unit = round(avg_entry - initial_stop, 4)
     async def _run(c):
         cur = await c.execute(
             """INSERT INTO journal.positions
                (ticker, horizon, profile, status, opened_ts, entry_intent_id,
                 thesis_decision_id, item_id, qty_initial, qty_open, avg_entry,
-                initial_stop, r_unit, exit_policy, config_version)
-               VALUES (%s,%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                initial_stop, r_unit, exit_policy, config_version, origin)
+               VALUES (%s,%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING position_id""",
             (ticker, horizon, profile, opened_ts, entry_intent_id,
              thesis_decision_id, item_id, qty, qty, avg_entry, initial_stop,
-             r_unit, jb(exit_policy), config_version))
+             r_unit, jb(exit_policy), config_version, origin))
         return (await cur.fetchone())[0]
     if conn is not None:
         return await _run(conn)

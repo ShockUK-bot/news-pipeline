@@ -136,7 +136,10 @@ class PositionEngine:
                     reason=f"alert_guard: {fire.predicate_id}"))
 
         session_age = self.session_age_fn(pos["opened_ts"], now)
-        actions = evaluate_on_bar(pos, bar, session_age, exit_fires)
+        minutes_open = (now - pos["opened_ts"]).total_seconds() / 60.0 \
+            if pos.get("opened_ts") else None
+        actions = evaluate_on_bar(pos, bar, session_age, exit_fires,
+                                  minutes_open=minutes_open)
         actions.extend(a for a in extra_actions if a is not None)
         return await self._apply(pos, actions, bar)
 
@@ -251,6 +254,39 @@ class PositionEngine:
                 continue
             await self.step(pos, {**b, "tf": "session"})
 
+    # --------------------------------------------------------------- force-flat
+    async def force_flat_pass(self) -> list[str]:
+        """v0.12.1 — the scalp lane's hard no-overnight rule. Any open
+        position whose policy says `overnight_hold: force_flat` is market-
+        exited once ET reaches its `force_flat_time_et` (default 15:50).
+        Pure code: runs even if every model is down; no discretion, no
+        A6-lite pass, journaled FORCE_FLAT. Aggressive limit (bid minus a
+        step) — the point is to be flat, not to price-improve."""
+        now_et = self.now_fn().astimezone(ET)
+        hhmm = now_et.strftime("%H:%M")
+        flattened = []
+        for pos in await open_positions():
+            policy = pos["exit_policy"]
+            if policy.get("overnight_hold") != "force_flat":
+                continue
+            if hhmm < str(policy.get("force_flat_time_et", "15:50")):
+                continue
+            mark = float(pos.get("last_price") or pos["avg_entry"])
+            bid = round(mark * 0.997, 2)
+            await position_event(
+                pos["position_id"], "FORCE_FLAT", "C4",
+                new_value={"time_et": hhmm, "mark": mark},
+                detail=f"force-flat @ {hhmm} ET (no-overnight scalp rule)")
+            outcome = await execute_exit(
+                self.broker, pos, int(pos["qty_open"]), "FORCE_FLAT",
+                f"force_flat {hhmm} ET", bid, self.now_fn,
+                self.unprotected_max_secs, self.poll_sleep)
+            self.monitors.pop(pos["position_id"], None)
+            flattened.append(f"{pos['ticker']}:{outcome}")
+            log.info("force flat", extra=kv(ticker=pos["ticker"],
+                                            outcome=outcome))
+        return flattened
+
     # ---------------------------------------------------------------- overnight
     async def overnight_pass(self, cfg: dict, earnings_fn=None,
                              pass_label: str = "15:45") -> list[tuple]:
@@ -263,6 +299,8 @@ class PositionEngine:
             if pos["horizon"] != "SHORT":
                 continue
             policy = pos["exit_policy"]
+            if policy.get("overnight_hold") == "force_flat":
+                continue        # v0.12.1: force_flat_pass owns these (belt+braces)
             avg_entry = float(pos["avg_entry"])
             mark = float(pos.get("last_price") or avg_entry)
             unrealized_r = (mark - avg_entry) / float(pos["r_unit"])

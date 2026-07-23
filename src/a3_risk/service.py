@@ -119,6 +119,15 @@ async def portfolio_state() -> tuple[dict, float]:
     return heat, notional
 
 
+async def open_scanner_positions() -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT count(*) FROM journal.positions
+               WHERE origin='scanner' AND status='OPEN'""")
+        return (await cur.fetchone())[0]
+
+
 async def trades_today() -> int:
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -187,12 +196,16 @@ class A3Service:
     def __init__(self, cfg: dict, profiles: dict, backend=None, now_fn=None):
         self.capital = cfg["capital"]
         self.limits = cfg["limits"]
+        self.scanner_cfg = cfg.get("scanner") or {}
         self.profiles = profiles["profiles"]
         self.bands = profiles["discretion_bands"]
         self.backend = backend or get_backend(cfg["model"])
         self.now_fn = now_fn or utcnow
 
-    def profile_for(self, horizon: str) -> tuple[str, dict]:
+    def profile_for(self, horizon: str, origin: str = "news"
+                    ) -> tuple[str, dict]:
+        if origin == "scanner":
+            return "scalp_v1", self.profiles["scalp_v1"]
         name = "short_term_v1" if horizon == "SHORT" else "long_term_v1"
         return name, self.profiles[name]
 
@@ -226,19 +239,36 @@ class A3Service:
 
     def materialize_exit_policy(self, profile_name: str, profile: dict,
                                 adj: RiskAdjustments, limit_price: float,
-                                atr: float, thesis: dict) -> dict:
+                                atr: float, thesis: dict,
+                                atr_14: float | None = None,
+                                atr_method: str = "atr",
+                                origin: str = "news") -> dict:
+        """`atr` is the STOP-BASIS ATR: daily ATR(14) for news profiles,
+        5-min ATR(14) (or its flagged early-session estimate) for scalp_v1.
+        `atr_14` additionally carries the daily value for MIP ArmContext
+        regardless of basis. v0.12.1: minutes-based time stops + force-flat
+        fields flow through for scalp_v1."""
         stop_price = round(limit_price - adj.k * atr, 2)
         cat_price = round(limit_price - profile["catastrophe"]["k"] * atr, 2)
-        return {
+        ts_cfg = profile.get("time_stop")
+        if ts_cfg and "window_minutes" in ts_cfg:
+            time_stop = {"window_minutes": int(ts_cfg["window_minutes"]),
+                         "min_progress_R": ts_cfg["min_progress_R"]}
+        elif ts_cfg:
+            time_stop = {"window": f"{adj.time_window_sessions}_sessions",
+                         "min_progress_R": ts_cfg["min_progress_R"]}
+        else:
+            time_stop = None
+        policy = {
             "profile": profile_name,
-            "initial_stop": {"method": "atr", "k": adj.k, "price": stop_price},
+            "origin": origin,
+            "initial_stop": {"method": atr_method, "k": adj.k,
+                             "price": stop_price},
             "catastrophe_stop_broker": {"k": profile["catastrophe"]["k"],
                                         "price": cat_price},
             "breakeven_at_R": profile["breakeven_at_R"],
             "trail": dict(profile["trail"]),
-            "time_stop": ({"window": f"{adj.time_window_sessions}_sessions",
-                           "min_progress_R": profile["time_stop"]["min_progress_R"]}
-                          if profile.get("time_stop") else None),
+            "time_stop": time_stop,
             "realization": {"target_fraction": adj.realization_fraction,
                             "action": profile["realization"]["action"]},
             "machine_invalidations": thesis["invalidation"]["machine_checkable"],
@@ -246,8 +276,13 @@ class A3Service:
             "earnings_blackout_exit": profile["earnings_blackout_exit"],
             "overnight_hold": profile["overnight_hold"],
             "magnitude_est": thesis["magnitude_est"],
-            "atr_14": atr,
+            "atr_14": atr_14 if atr_14 is not None else atr,
+            "atr_value": atr,            # the value stops/trails multiply
+            "atr_method": atr_method,
         }
+        if profile.get("force_flat_time_et"):
+            policy["force_flat_time_et"] = str(profile["force_flat_time_et"])
+        return policy
 
     async def handle(self, msg) -> None:
         body = msg.payload.get("body") or {}
@@ -262,21 +297,50 @@ class A3Service:
             raise ValueError(f"malformed GatePass ({msg.dedup_key})")
         ticker = thesis["ticker"]
         horizon = thesis["horizon"]
-        profile_name, profile = self.profile_for(horizon)
+        origin = body.get("origin") or trace.get("origin") or "news"
+        profile_name, profile = self.profile_for(horizon, origin)
 
         controls = await read_controls()
         heat, deployed = await portfolio_state()
 
+        # v0.12.1: scanner-lane concurrency cap — checked before anything
+        # burns tokens; the scanner borrows SHORT-lane heat, it does not
+        # get its own bucket.
+        if origin == "scanner":
+            max_conc = int(self.scanner_cfg.get("max_concurrent_positions", 2))
+            if await open_scanner_positions() >= max_conc:
+                await write_decision(
+                    signal_id=signal_id, item_id=item_id,
+                    item_revision=revision, ticker=ticker, stage="RISK",
+                    agent="A3", action="VETO",
+                    veto_reason="SCANNER_CONCURRENT",
+                    payload={"origin": origin, "max_concurrent": max_conc},
+                    reason=f"scanner concurrency cap ({max_conc}) reached",
+                    regime_id=body.get("regime_id"))
+                log.info("risk VETO", extra=kv(signal_id=signal_id,
+                                               reason="SCANNER_CONCURRENT"))
+                return
+
         effective_capital = min(
             float(controls.get("broker_equity", "0") or 0),
             float(controls.get("trading_capital", "0") or 0))
+        # v0.12.1: scalp lane sizes and stops off the 5-min ATR from the
+        # scanner gate's snapshot (atr_method says whether it was measured
+        # or early-session-estimated); news lanes keep daily ATR(14).
+        if origin == "scanner":
+            sizing_atr = snapshot.get("atr_5m") and float(snapshot["atr_5m"])
+            atr_method = str(snapshot.get("atr_method") or "atr_5m")
+        else:
+            sizing_atr = snapshot.get("atr_14") and float(snapshot["atr_14"])
+            atr_method = "atr"
+
         inp = SizingInputs(
             effective_capital=effective_capital,
             settled_cash=float(controls.get("settled_cash", "0") or 0),
             ref_price=float(snapshot["ref_price"]), bid=float(snapshot["bid"]),
             ask=float(snapshot["ask"]),
             spread_bps=float(snapshot["spread_bps"]),
-            atr_14=snapshot.get("atr_14") and float(snapshot["atr_14"]),
+            atr_14=sizing_atr,
             adv_20d=snapshot.get("adv_20d") and float(snapshot["adv_20d"]),
             open_heat=heat, deployed_notional=deployed,
             trades_today=await trades_today(),
@@ -322,13 +386,31 @@ class A3Service:
                         extra=kv(signal_id=signal_id))
             return
 
-        adj, model_used = await self.discretion(thesis, gate, profile)
-        result = size_entry(inp, self.capital, self.limits, profile,
+        if origin == "scanner":
+            # Scalp trades take profile defaults deterministically — the
+            # discretion bands are session-scale and the whole point of this
+            # lane is speed + small size; fewer moving parts, journaled as such.
+            adj = RiskAdjustments(
+                k=float(profile["initial_stop"]["k"]),
+                realization_fraction=float(
+                    profile["realization"]["target_fraction"]),
+                time_window_sessions=1,
+                reason="scalp_v1 profile defaults (no discretion on scanner lane)")
+            model_used = False
+            capital_cfg = dict(self.capital)
+            capital_cfg["risk_per_trade_pct"] = (
+                float(self.capital["risk_per_trade_pct"])
+                * float(self.scanner_cfg.get("risk_multiplier", 0.5)))
+        else:
+            adj, model_used = await self.discretion(thesis, gate, profile)
+            capital_cfg = self.capital
+        result = size_entry(inp, capital_cfg, self.limits, profile,
                             horizon, adj.k)
 
         payload = {"sizing": result.numbers, "flags": result.flags,
                    "adjustments": adj.model_dump(),
                    "model_used": model_used,
+                   "origin": origin, "atr_method": atr_method,
                    "effective_capital": effective_capital}
 
         if result.verdict == "VETO":
@@ -348,7 +430,9 @@ class A3Service:
             f"{signal_id}:{revision}:{config_version}".encode()).hexdigest()[:24]
         exit_policy = self.materialize_exit_policy(
             profile_name, profile, adj, result.limit_price,
-            float(snapshot["atr_14"]), thesis)
+            float(sizing_atr), thesis,
+            atr_14=snapshot.get("atr_14") and float(snapshot["atr_14"]),
+            atr_method=atr_method, origin=origin)
 
         pool = await get_pool()
         async with pool.connection() as conn:
@@ -382,10 +466,12 @@ class A3Service:
                                    "exit_policy": exit_policy,
                                    "gate_snapshot": snapshot,
                                    "horizon": horizon,
+                                   "origin": origin,
                                    "thesis_decision_id": tdid,
                                    "effective_capital": effective_capital,
                                    "risk_budget": result.risk_budget})
                 out["envelope"]["trace"]["decision_id"] = decision_id
+                out["envelope"]["trace"]["origin"] = origin
                 await enqueue(OUT_QUEUE, intent_id, out, conn=conn)
 
         log.info("intent", extra=kv(signal_id=signal_id, ticker=ticker,

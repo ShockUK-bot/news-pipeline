@@ -61,13 +61,16 @@ def realization_target(avg_entry: float, exit_policy: dict) -> float:
 
 
 def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
-                    fired_invalidations: list | None = None
+                    fired_invalidations: list | None = None,
+                    minutes_open: Optional[float] = None
                     ) -> list[ExitAction]:
     """pos: positions row as dict (exit_policy already parsed).
     bar: {ts, open, high, low, close} floats.
     session_age: completed sessions since entry (0 = entry session).
     fired_invalidations: Fire objects from the compiled MIP monitors for
-    this bar (the caller runs the DSL; the evaluator stays pure)."""
+    this bar (the caller runs the DSL; the evaluator stays pure).
+    minutes_open (v0.12.1): minutes since entry — feeds minutes-based time
+    stops (scalp_v1's `window_minutes`); session-based windows ignore it."""
     policy = pos["exit_policy"]
     avg_entry = float(pos["avg_entry"])
     r_unit = float(pos["r_unit"])
@@ -96,7 +99,18 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
 
     # ---- L3 time stop ------------------------------------------------------------
     ts_cfg = policy.get("time_stop")
-    if ts_cfg:
+    if ts_cfg and "window_minutes" in ts_cfg:
+        # v0.12.1 scalp lane: a mover that stops moving has no thesis.
+        window_min = int(ts_cfg["window_minutes"])
+        if minutes_open is not None and minutes_open >= window_min \
+                and progress_r < float(ts_cfg["min_progress_R"]):
+            actions.append(ExitAction(
+                "EXIT", "TIME", qty_open,
+                reason=f"open {minutes_open:.0f}min >= {window_min}min window, "
+                       f"progress {progress_r:.2f}R < "
+                       f"{ts_cfg['min_progress_R']}R"))
+            return actions
+    elif ts_cfg:
         window = int(str(ts_cfg["window"]).split("_")[0])
         if session_age >= window and progress_r < float(ts_cfg["min_progress_R"]):
             actions.append(ExitAction(
@@ -123,7 +137,9 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
                     reason=f"target {target} reached — review flagged"))
 
     # ---- L2 ratchets (tighten-only) ---------------------------------------------
-    atr = float(policy["atr_14"])
+    # v0.12.1: atr_value = the stop-basis ATR (5-min for scalp_v1); older
+    # policies carry only atr_14 (daily), which remains the fallback.
+    atr = float(policy.get("atr_value") or policy["atr_14"])
     proposed: Optional[tuple[float, str]] = None
     trail_cfg = policy.get("trail") or {}
     if trail_cfg and progress_r >= float(trail_cfg["activate_at_R"]):

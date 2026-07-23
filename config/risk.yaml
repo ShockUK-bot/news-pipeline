@@ -12,6 +12,10 @@ capital:
   heat_split: {SHORT: 0.02, LONG: 0.01}
   max_sector_heat_pct: 0.015
   min_viable_risk_fraction: 0.5
+scanner:                             # v0.12.1 — scanner-origin sizing policy
+  risk_multiplier: 0.5               # half of risk_per_trade_pct until A11 shows
+                                     # >= 30 closed scanner trades of evidence
+  max_concurrent_positions: 2        # open origin=scanner positions (A3 veto)
 limits:
   max_trades_per_day_default: 5      # control-table override wins if present
   adv_participation_max: 0.01

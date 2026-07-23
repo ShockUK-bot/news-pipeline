@@ -18,7 +18,9 @@ from pydantic import (BaseModel, ConfigDict, Field, ValidationError,
 
 from common.invalidation_dsl import MIPError, STDLIB, validate as mip_validate
 
-_WINDOW = re.compile(r"^\d{1,2}_(sessions?|weeks?)$")
+# v0.12.1: minutes windows added for the scanner/scalp lane ("45_minutes");
+# news-origin theses keep using sessions/weeks.
+_WINDOW = re.compile(r"^\d{1,3}_(minutes?|sessions?|weeks?)$")
 
 
 class RelatedOpportunity(BaseModel):
@@ -86,7 +88,8 @@ class ThesisOutput(BaseModel):
     @classmethod
     def _window(cls, v: str) -> str:
         if not _WINDOW.match(v):
-            raise ValueError("expected_move_window must look like '2_sessions' or '3_weeks'")
+            raise ValueError("expected_move_window must look like '45_minutes', "
+                             "'2_sessions' or '3_weeks'")
         return v
 
 

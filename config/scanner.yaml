@@ -1,0 +1,27 @@
+# C10 Momentum Scanner (v0.12.1 — design: claude/momentum-scanner-spec-v1_0.md).
+# ALL numeric values are PLACEHOLDER starting points from practitioner
+# literature, tuned exclusively through the A9 evidence loop (same discipline
+# as gate.yaml). The scanner is another INPUT, not a firehose: the caps below
+# are the first anti-overtrading layer and zero emissions is a correct day.
+scanner:
+  scan_interval_secs: 60
+  session_start_et: "09:50"      # open blackout (15m) + 5m of settling
+  session_end_et: "15:15"        # last emission — room to work before force-flat
+  # -- candidate filters (ALL must pass) --------------------------------------
+  min_price: 5.0                 # no penny-stock tape games
+  min_adv20_dollars: 25000000    # $25M avg daily dollar volume — exits must be liquid
+  min_move_pct: 0.04             # >= +4% vs prev close = "big mover"
+  min_rel_volume: 3.0            # day volume vs ADV(20) pace at this session time
+  max_minutes_since_hod: 60      # move still in progress, not a morning spike flatlining
+  max_spread_bps: 40             # mirrors risk.yaml limits.spread_max_bps
+  min_luld_headroom_pct: 0.02    # approximated from 5-min tape (see rules.py)
+  exclude_etfs: true             # index plumbing, not a story (best-effort name filter)
+  earnings_blackout_sessions: 1  # no names reporting today/tonight (leak-shaped traps)
+  # -- news cross-check -------------------------------------------------------
+  news_strong_window_hours: 4    # escalated news item in this window -> news owns it
+  news_weak_window_hours: 24     # any news naming the ticker -> weak match, attach
+  # -- emission caps (anti-overtrading, layer 1) ------------------------------
+  max_per_scan: 2                # top-N by composite score per scan cycle
+  max_per_day: 6                 # global daily escalation cap
+  max_concurrent_positions: 2    # open origin=scanner positions (A3 enforces too)
+  breaker_max_losses_per_day: 3  # 3 losing scanner trades -> scanner off until tomorrow

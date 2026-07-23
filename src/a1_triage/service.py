@@ -43,6 +43,7 @@ log = get_logger("a1.service")
 
 IN_QUEUE = "signal.triage"
 SYNTHETIC_QUEUE = "signal.synthetic"
+SCANNER_QUEUE = "signal.scanner"
 CONSUMER = f"a1-{os.getpid()}"
 CONTRACT_TRIAGED = "signal.triaged/1"
 
@@ -299,9 +300,70 @@ class A1Service:
             routes=",".join(r.queue for r in decision.routes) or "-"))
 
 
+    async def handle_scanner(self, msg) -> None:
+        """Scanner-lane entry (v0.12.1). C10 already did the deterministic
+        triage — the metrics ARE the escalation case, and there is no news
+        text for the 8B to judge — so this handler is thin CODE: sanity
+        checks, position-touching guard, one TRIAGE decision row, and a
+        TriagedSignal to A2 with origin=scanner preserved in the trace.
+        No model call, no shortcuts downstream: same A2 -> C3 -> A3 -> C4
+        path as every other signal."""
+        body = msg.payload.get("body") or {}
+        scanner = body.get("scanner") or {}
+        item_ref = body.get("item_ref") or {}
+        ticker = body.get("ticker")
+        item_id = item_ref.get("item_id")
+        if not ticker or not item_id or not scanner:
+            raise ValueError(f"malformed ScannerSignal ({msg.dedup_key})")
+        signal_id = item_id                    # scanner:<ticker>:<date>
+
+        # Belt + braces: C10 filters held names, but the queue is async —
+        # a position opened between scan and claim must not be added to.
+        if await open_position_ids([ticker]):
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=1,
+                ticker=ticker, stage="TRIAGE", agent="A1", action="DISCARD",
+                payload={"scanner": scanner, "origin": "scanner"},
+                reason="scanner signal on already-held name",
+                model_id=None, latency_ms=None)
+            log.info("scanner DISCARD (held)", extra=kv(ticker=ticker))
+            return
+
+        triage = {"material": True, "tickers": [ticker],
+                  "direction_hint": "up", "urgency": "high",
+                  "novelty_score": 1.0,
+                  "confidence": None,
+                  "reason": ("deterministic scanner detection: "
+                             f"{scanner.get('move_pct')} move on "
+                             f"{scanner.get('rel_volume')}x relative volume, "
+                             f"news_match={scanner.get('news_match')}")}
+        triaged_body = {"item_ref": item_ref, "triage": triage,
+                        "routing": {"origin": "scanner"},
+                        "scanner": scanner, "origin": "scanner"}
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            async with conn.transaction():
+                decision_id = await write_decision(
+                    signal_id=signal_id, item_id=item_id, item_revision=1,
+                    ticker=ticker, stage="TRIAGE", agent="A1",
+                    action="ESCALATE",
+                    payload={"scanner": scanner, "origin": "scanner",
+                             "routes": ["signal.analyst"]},
+                    reason=triage["reason"], model_id=None, latency_ms=None,
+                    conn=conn)
+                out = envelope(CONTRACT_TRIAGED, "A1", signal_id, item_id, 1,
+                               triaged_body)
+                out["envelope"]["trace"]["decision_id"] = decision_id
+                out["envelope"]["trace"]["ticker"] = ticker
+                out["envelope"]["trace"]["origin"] = "scanner"
+                await enqueue("signal.analyst", signal_id, out, conn=conn)
+        log.info("scanner triaged", extra=kv(ticker=ticker,
+                                             signal_id=signal_id))
+
+
 async def consume_loop(svc: A1Service, stop: asyncio.Event) -> None:
     import time
-    hb_detail = f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE}"
+    hb_detail = f"consuming {IN_QUEUE} + {SYNTHETIC_QUEUE} + {SCANNER_QUEUE}"
     await set_health("triage", "OK", hb_detail)
     last_hb = time.monotonic()
     while not stop.is_set():
@@ -315,6 +377,9 @@ async def consume_loop(svc: A1Service, stop: asyncio.Event) -> None:
         if msg is None:
             msg = await claim(SYNTHETIC_QUEUE, CONSUMER)
             handler = svc.handle_synthetic
+        if msg is None:
+            msg = await claim(SCANNER_QUEUE, CONSUMER)
+            handler = svc.handle_scanner
         if msg is None:
             try:
                 await asyncio.wait_for(wait_for_message(IN_QUEUE, timeout_secs=5.0), 6.0)

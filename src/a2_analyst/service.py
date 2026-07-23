@@ -86,6 +86,12 @@ class A2Service:
                      .get("signal_id") or item_id)
         derived_from = (msg.payload.get("envelope", {}).get("trace", {})
                         .get("derived_from_decision"))
+        # v0.12.1: origin discriminates news-pipeline signals from C10
+        # scanner signals — different prompt, different downstream branch.
+        origin = (body.get("origin")
+                  or msg.payload.get("envelope", {}).get("trace", {})
+                  .get("origin") or "news")
+        scanner = body.get("scanner") if origin == "scanner" else None
         if not item_id:
             raise ValueError(f"malformed TriagedSignal ({msg.dedup_key})")
 
@@ -107,7 +113,8 @@ class A2Service:
         total_latency = 0
         for attempt in range(1 + self.retries):
             messages = build_messages(item, triage, context,
-                                      retry_error=error.detail if error else None)
+                                      retry_error=error.detail if error else None,
+                                      origin=origin, scanner=scanner)
             reply = await self.backend.complete(messages, schema)
             total_latency += reply.latency_ms
             try:
@@ -131,7 +138,10 @@ class A2Service:
 
         gate_body = {"item_ref": item_ref,
                      "thesis": thesis.model_dump(),
-                     "regime_id": regime_id}
+                     "regime_id": regime_id,
+                     "origin": origin}
+        if scanner:
+            gate_body["scanner"] = scanner
 
         pool = await get_pool()
         async with pool.connection() as conn:
@@ -140,7 +150,8 @@ class A2Service:
                     signal_id=signal_id, item_id=item_id, item_revision=revision,
                     ticker=thesis.ticker, stage="ANALYST", agent="A2",
                     action="THESIS",
-                    payload={"thesis": thesis.model_dump(), "context": context},
+                    payload={"thesis": thesis.model_dump(), "context": context,
+                             "origin": origin},
                     reason=thesis.reason, confidence=thesis.confidence,
                     model_id=self.backend.model_id, latency_ms=total_latency,
                     regime_id=regime_id, derived_from=derived_from, conn=conn)
@@ -148,6 +159,7 @@ class A2Service:
                 out = envelope(CONTRACT_THESIS, "A2", signal_id, item_id,
                                revision, gate_body)
                 out["envelope"]["trace"]["decision_id"] = decision_id
+                out["envelope"]["trace"]["origin"] = origin
                 await enqueue(GATE_QUEUE, f"{signal_id}:{revision}", out, conn=conn)
 
                 # Sympathy fan-out (spec §10): ONLY a primary thesis — one
@@ -161,7 +173,9 @@ class A2Service:
                 # is None on primary analyst signals and set on synthetic-origin
                 # ones (A1.handle_synthetic stamps the trace), so it is exactly
                 # the depth guard: sympathy stays one hop from real news.
-                if derived_from is None:
+                # v0.12.1: scanner theses NEVER fan out — momentum sympathy
+                # is how overtrading starts (code-enforced, not just prompted).
+                if derived_from is None and origin == "news":
                     for opp in thesis.related_opportunities:
                         syn_id = f"syn-{decision_id}-{opp.ticker}"
                         syn = envelope(CONTRACT_SYNTHETIC, "A2", syn_id, item_id,

@@ -119,3 +119,70 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
         return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
     return GateVerdict("PASS", rule, None, numbers)
 
+
+# ---------------------------------------------------------------------------
+# Scanner-origin branch (v0.12.1)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScannerState:
+    """Everything the scanner rules need — computed by the service NOW, at
+    gate time; detection-time numbers are re-checked, never trusted."""
+    last_price: float
+    detect_price: float                # C10's snapshot price
+    minutes_since_detect: float
+    vwap: Optional[float]              # today's session VWAP
+    range30_pos: Optional[float]       # position in last-30-min range (0..1)
+    bar5_range_ratio: Optional[float]  # last completed 5-min bar range / avg
+    spread_bps: Optional[float]
+    halted: bool = False
+
+
+def evaluate_scanner(thesis: dict, s: ScannerState, cfg: dict) -> GateVerdict:
+    """The scanner branch asks "is this still tradeable", not "did the move
+    happen" — a scanner signal is BORN confirmed (the move IS the signal), so
+    confirmation, credibility and the extended-skip do not apply. LONG_ONLY
+    survives unchanged. Every check re-measures the tape at gate time.
+
+    Null policy: this branch PROPOSES an entry, so missing evidence fails
+    CLOSED (contrast v0.11.10's defer, which protects news signals from
+    missing TIME — here the bars exist or the setup is wrong)."""
+    run_since_detect = ((s.last_price - s.detect_price) / s.detect_price
+                        if s.detect_price else 0.0)
+    numbers = {"last": s.last_price, "detect_price": s.detect_price,
+               "run_since_detect_pct": round(run_since_detect, 5),
+               "minutes_since_detect": round(s.minutes_since_detect, 1),
+               "vwap": s.vwap, "range30_pos": s.range30_pos,
+               "bar5_range_ratio": s.bar5_range_ratio,
+               "spread_bps": s.spread_bps, "halted": s.halted}
+    rule = "scanner"
+
+    if thesis["direction"] != "up":
+        return GateVerdict("VETO", rule, "LONG_ONLY", numbers)
+
+    # 1. staleness — chasing is how mean reversion collects its fee
+    if s.minutes_since_detect > float(cfg["stale_max_min"]) \
+            or run_since_detect > float(cfg["stale_run_pct"]):
+        return GateVerdict("VETO", rule, "SCANNER_STALE", numbers)
+
+    # 2. structure — below VWAP or lower half of the recent range is
+    #    distribution, not continuation
+    if cfg.get("require_above_vwap", True):
+        if s.vwap is None or s.last_price < s.vwap:
+            return GateVerdict("VETO", rule, "SCANNER_STRUCTURE", numbers)
+    if s.range30_pos is None or s.range30_pos < float(cfg["range30_min_pos"]):
+        return GateVerdict("VETO", rule, "SCANNER_STRUCTURE", numbers)
+
+    # 3. parabolic — a vertical bar is the exhaustion print, not the entry
+    if s.bar5_range_ratio is None \
+            or s.bar5_range_ratio > float(cfg["parabolic_bar_ratio"]):
+        return GateVerdict("VETO", rule, "SCANNER_PARABOLIC", numbers)
+
+    # 4. liquidity — re-checked NOW (halts + spreads change in minutes)
+    if s.halted:
+        return GateVerdict("VETO", rule, "SCANNER_LIQUIDITY", numbers)
+    if s.spread_bps is None or s.spread_bps > float(cfg["max_spread_bps"]):
+        return GateVerdict("VETO", rule, "SCANNER_LIQUIDITY", numbers)
+
+    return GateVerdict("PASS", rule, None, numbers)
+

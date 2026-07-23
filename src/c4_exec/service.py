@@ -183,7 +183,9 @@ class C4Service:
                              entry_order_id: int, qty: int,
                              fill_price: float) -> None:
         policy = dict(body["exit_policy"])
-        atr = float(policy["atr_14"])
+        # v0.12.1: atr_value is the stop-basis ATR (5-min for scalp_v1,
+        # daily for news profiles); pre-v0.12.1 policies only carry atr_14.
+        atr = float(policy.get("atr_value") or policy["atr_14"])
         # re-materialize stops off the ACTUAL fill (A3 anticipated the limit)
         k = float(policy["initial_stop"]["k"])
         cat_k = float(policy["catastrophe_stop_broker"]["k"])
@@ -203,7 +205,8 @@ class C4Service:
                     initial_stop=policy["initial_stop"]["price"],
                     exit_policy=policy,
                     config_version=active_config_version(),
-                    opened_ts=self.now_fn(), conn=conn)
+                    opened_ts=self.now_fn(),
+                    origin=body.get("origin") or "news", conn=conn)
                 await conn.execute(
                     """UPDATE journal.orders SET position_id=%s
                        WHERE order_id=%s""", (position_id, entry_order_id))
@@ -315,6 +318,11 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                 et = now.astimezone(ET)
                 today = et.date().isoformat()
                 hhmm = et.strftime("%H:%M")
+                # v0.12.1: hard no-overnight rule for the scalp lane — runs
+                # every engine pass from 15:45 so a position opened late or a
+                # missed pass still gets flattened before the close.
+                if hhmm >= "15:45":
+                    await engine.force_flat_pass()
                 oc = exit_cfg["overnight_rule"]
                 if hhmm >= "15:55" and overnight_done.get(today) == "15:45":
                     await engine.overnight_pass(oc, pass_label="15:55")
