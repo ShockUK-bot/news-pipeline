@@ -18,6 +18,7 @@ narrative:
 heavy:
   endpoint: "http://127.0.0.1:8084"
   model_id: "qwen3.5-122b-a10b-q4_k_m"
+  disable_thinking: true       # v0.12.4 — thinking burns the whole token budget; see backends.py
   autostart: false             # never boot 77GB pre-open just for narrative
   stop_after_use: false        # ...and never stop a server we didn't start
   probe_timeout_secs: 3

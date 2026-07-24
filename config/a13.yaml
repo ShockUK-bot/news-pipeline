@@ -46,7 +46,10 @@ wake:
   # the /etc/sudoers.d/a13-wake rule (see ops/). Probe-first: if the server is
   # already up, no command ever runs.
   enabled: true
-  command: "sudo -n /usr/bin/systemctl start llama-analyst.service"
+  # v0.12.4: was llama-analyst.service — that unit does not exist on the
+  # Spark (llama-a2.service serves :8081 since the Qwen3.6-27B upgrade) and
+  # sudoers only whitelists llama-a2, so every off-hours chat wake failed.
+  command: "sudo -n /usr/bin/systemctl start llama-a2.service"
   health_path: "/health"
   ready_timeout_secs: 240      # 32B load time on the Spark + margin
   poll_secs: 3

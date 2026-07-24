@@ -127,6 +127,9 @@ class SlotManager:
             "temperature": n.get("temperature", 0.0),
             "max_tokens": n.get("max_tokens", 900),
             "timeout_secs": n.get("timeout_secs", 300),
+            # v0.12.4: per-slot thinking switch (heavy slot sets true — see
+            # backends.py; A4/A5/A6-nightly/A7/A8 all build through here)
+            "disable_thinking": slot_cfg.get("disable_thinking", False),
         })
 
 

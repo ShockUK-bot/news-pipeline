@@ -69,23 +69,38 @@ class LlamaCppBackend:
         self.temperature = float(cfg.get("temperature", 0.0))
         self.max_tokens = int(cfg.get("max_tokens", 512))
         self.timeout = float(cfg.get("timeout_secs", 30))
+        # v0.12.4 — disable the model's thinking phase at the CHAT-TEMPLATE
+        # level, per request. Probe evidence (2026-07-24, heavy slot): with
+        # thinking on, the 122B narrates prose inside its <think> block, the
+        # response_format grammar never bites (it constrains content only),
+        # generation burns the whole max_tokens budget in reasoning and
+        # finishes on `length` with content == "" — every heavy consumer
+        # (A4 sheet, A6 nightly, A7/A8 narrative) then falls back. With
+        # chat_template_kwargs {"enable_thinking": false} the same request
+        # returned schema-valid JSON in `content` at 52 tokens, finish=stop.
+        # (Server-side flags — --reasoning-budget 0 is IN the unit — are
+        # demonstrably ignored by this build; the /no_think soft switch is
+        # ignored by this template. The per-request kwarg is what works.)
+        self.disable_thinking = bool(cfg.get("disable_thinking", False))
 
     async def complete(self, messages: list[dict], json_schema: dict) -> ModelReply:
         t0 = time.monotonic()
+        body = {
+            "model": self.model_id,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "triage", "strict": True,
+                                "schema": json_schema},
+            },
+        }
+        if self.disable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
-                f"{self.endpoint}/v1/chat/completions",
-                json={
-                    "model": self.model_id,
-                    "messages": messages,
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {"name": "triage", "strict": True,
-                                        "schema": json_schema},
-                    },
-                })
+                f"{self.endpoint}/v1/chat/completions", json=body)
             resp.raise_for_status()
             data = resp.json()
         latency = int((time.monotonic() - t0) * 1000)

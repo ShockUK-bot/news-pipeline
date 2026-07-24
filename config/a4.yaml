@@ -22,6 +22,7 @@ narrative:                     # model-call parameters (SlotManager contract)
 heavy:
   endpoint: "http://127.0.0.1:8084"
   model_id: "qwen3.5-122b-a10b-q4_k_m"
+  disable_thinking: true       # v0.12.4 — thinking burns the whole token budget; see backends.py
   autostart: true              # 07:00 ET is pre-open; stopped again after
   stop_after_use: true
   start_command: "sudo systemctl start llama-heavy.service"
