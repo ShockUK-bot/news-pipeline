@@ -60,6 +60,7 @@ SSH tunnel reconnects to the restarted dashboard.)
    shows and only CHAT is underlined. Click back to **PERFORMANCE** — only
    the chart shows. Try LIVE and HISTORY too; every tab should fully
    replace the previous one.
+4. Decision-tape latencies read in seconds ("12.5s"), not milliseconds.
 
 ## Rollback
 

@@ -22,7 +22,12 @@ logic touched — safe to deploy any time, including market hours.
    verified exclusive in a headless browser against the real app_chat
    entry point. — `dashboard/app_chat.py`, `dashboard/index.html`
 
-3. **Tile repositioning (LIVE tab), per operator:**
+3. **Tape latency now reads in seconds.** Decision latencies displayed as
+   raw milliseconds ("12500ms"); they now show one-decimal seconds
+   ("12.5s"). Display only — the journal keeps storing latency_ms.
+   — `dashboard/index.html`
+
+4. **Tile repositioning (LIVE tab), per operator:**
    - Momentum scanner now sits directly BELOW Open positions.
    - Vetoed trades and System health swapped — vetoes on top.
    - New order: Open positions → Momentum scanner → Decision tape +
