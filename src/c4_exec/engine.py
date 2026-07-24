@@ -243,6 +243,15 @@ class PositionEngine:
                 if a.kind == "EXIT" or outcome == "CATASTROPHE_FILLED":
                     self.monitors.pop(pos["position_id"], None)
                     break                             # position closed
+                if a.kind == "SCALE_OUT" and outcome == "FILLED":
+                    # v0.12.6: persist the once-only flag. The evaluator
+                    # gates L4 on scale_out_done but nothing ever set it,
+                    # so the realization layer re-fired on every bar at
+                    # target, halving the position each minute
+                    # (JNJ 2026-07-24: 19 shares -> 9/5/2/1/1 sold over
+                    # five consecutive bars). REINSTATED (unfilled) does
+                    # NOT set the flag — the scale-out retries next bar.
+                    await self._update_policy(pos, {"scale_out_done": True})
             elif a.kind == "SET_STOP":
                 await self._ratchet(pos, a)
                 applied.append(f"SET_STOP:{a.new_basis}:{a.new_stop}")

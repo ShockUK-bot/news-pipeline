@@ -508,3 +508,26 @@ async def test_10c_step_accepts_datetime_bar_ts(env):
                            WHERE ticker='LMBDA'""")
     assert float(rows[0][0]) == 100.0               # mark written, no crash
 
+
+async def test_10d_scale_out_fires_exactly_once(env):
+    """v0.12.6 regression (JNJ 2026-07-24): scale_out_done was never
+    persisted after a filled scale-out, so L4 re-fired on every bar at
+    target, halving the position each minute. Two bars at target must
+    produce exactly ONE TARGET exit; the second bar sells nothing."""
+    broker = FakeBroker()
+    pos = await seed_position(env, broker, "OMCRN")
+    eng = engine_for(broker)
+    a1 = await eng.step(pos, bar(h=104.0, l=103.0, c=103.9, bid=103.85))
+    assert "SCALE_OUT:TARGET:FILLED" in a1
+    pos2 = [p for p in await open_positions() if p["ticker"] == "OMCRN"][0]
+    assert pos2["exit_policy"].get("scale_out_done") is True   # persisted
+    a2 = await eng.step(pos2, bar(h=104.2, l=103.2, c=104.0, bid=103.95))
+    assert not any(x.startswith("SCALE_OUT") for x in a2)      # no re-fire
+    rows = await q(env, """SELECT count(*) FROM journal.exits e
+                           JOIN journal.positions p USING (position_id)
+                           WHERE p.ticker='OMCRN' AND e.exit_layer='TARGET'""")
+    assert rows[0][0] == 1
+    rows = await q(env, "SELECT qty_open FROM journal.positions "
+                        "WHERE ticker='OMCRN'")
+    assert rows[0][0] == 30                          # 60 -> one half, once
+
