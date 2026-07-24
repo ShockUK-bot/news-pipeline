@@ -147,7 +147,16 @@ class PositionEngine:
         pos = {**pos, "last_price": bar["close"]}
 
         # MIP monitors
-        mip_bar = Bar(ts=int(bar.get("ts", now.timestamp())),
+        # v0.12.5: marketdata adapters (Alpaca and Fake alike) return
+        # bar["ts"] as a datetime; int() on it raised TypeError, killing
+        # every exit evaluation on live bars right after the mark was
+        # written. Accept datetime, epoch number, or missing.
+        raw_ts = bar.get("ts")
+        if isinstance(raw_ts, datetime):
+            bar_epoch = int(raw_ts.timestamp())
+        else:
+            bar_epoch = int(raw_ts if raw_ts is not None else now.timestamp())
+        mip_bar = Bar(ts=bar_epoch,
                       tf=bar.get("tf", "1m"),
                       open=bar["open"], high=bar["high"], low=bar["low"],
                       close=bar["close"], vwap=bar.get("vwap", bar["close"]),
@@ -197,12 +206,20 @@ class PositionEngine:
 
     async def check_halt(self, pos: dict) -> bool:
         """True if the position is (now) frozen: no bar within the stale
-        window during RTH. LULD heuristic-only until SIP (D7)."""
+        window during RTH. LULD heuristic-only until SIP (D7).
+        v0.12.5: staleness is measured against session time only — the clock
+        starts no earlier than today's 09:30 ET open, so a position held
+        overnight (or over a weekend) is not mistaken for a halted stock at
+        the next open."""
         pid = pos["position_id"]
         last = self.last_bar_ts.get(pid)
         if last is None:
             return False
-        stale_min = (self.now_fn() - last).total_seconds() / 60.0
+        now = self.now_fn()
+        open_utc = (now.astimezone(ET)
+                    .replace(hour=9, minute=30, second=0, microsecond=0)
+                    .astimezone(timezone.utc))
+        stale_min = (now - max(last, open_utc)).total_seconds() / 60.0
         if stale_min > self.halt_stale_min and pid not in self.frozen:
             self.frozen.add(pid)
             await position_event(pid, "HALT_FROZEN", "C4",

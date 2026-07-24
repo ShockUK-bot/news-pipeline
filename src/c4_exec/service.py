@@ -311,8 +311,12 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                     await engine.promotion_pass(
                         exit_cfg["profiles"]["short_term_v1"])
                 for pos in await open_positions():
-                    if await engine.check_halt(pos):
-                        continue
+                    # v0.12.5: check_halt flags/journals the freeze but must
+                    # NOT block the bar fetch — a frozen position has to see
+                    # the next bar to resume (step() clears the freeze and
+                    # journals HALT_RESUMED). During a real halt the feed
+                    # returns no bars, so the position stays safely frozen.
+                    await engine.check_halt(pos)
                     end = now
                     start = end - timedelta(minutes=3)
                     bars = await marketdata.minute_bars(pos["ticker"], start, end)

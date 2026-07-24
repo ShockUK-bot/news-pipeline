@@ -467,3 +467,44 @@ async def test_10_halt_heuristic_freeze_resume(env):
                            ORDER BY event_id""")
     assert [r[0] for r in rows] == ["HALT_FROZEN", "HALT_RESUMED"]
 
+
+async def test_10b_overnight_hold_is_not_a_halt(env):
+    """v0.12.5 regression (JNJ 2026-07-24): staleness counts only from
+    today's 09:30 ET open, so an overnight hold must not freeze at the next
+    open — but a real >10min in-session bar gap that morning still must."""
+    broker = FakeBroker()
+    pos = await seed_position(env, broker, "KAPPA")
+    clock = {"now": PIN}                            # 11:00 ET, in session
+    eng = PositionEngine(broker, now_fn=lambda: clock["now"],
+                         unprotected_max_secs=0.03, poll_sleep=0.01,
+                         halt_stale_min=10.0, session_age_fn=lambda o, n: 0)
+    await eng.step(pos, bar())                      # last bar: yesterday
+    # next session, 5 min after the 09:30 ET open (13:35 UTC in July):
+    # ~22.5h wall-clock gap, but only 5 in-session minutes -> NOT frozen
+    clock["now"] = (PIN + timedelta(days=1)).replace(hour=13, minute=35)
+    assert await eng.check_halt(pos) is False
+    # same morning, 12 min after the open with still no bar -> frozen
+    clock["now"] = (PIN + timedelta(days=1)).replace(hour=13, minute=42)
+    assert await eng.check_halt(pos) is True
+    rows = await q(env, """SELECT event_type FROM journal.position_events pe
+                           JOIN journal.positions p USING (position_id)
+                           WHERE p.ticker='KAPPA'
+                             AND event_type='HALT_FROZEN'""")
+    assert len(rows) == 1
+
+
+async def test_10c_step_accepts_datetime_bar_ts(env):
+    """v0.12.5 regression (JNJ 2026-07-24): real marketdata adapters return
+    bar['ts'] as a datetime — step() used int() on it and raised TypeError
+    on every live bar, silently disabling all exit layers while the mark
+    still updated. step() must accept datetime, epoch number, or missing."""
+    broker = FakeBroker()
+    pos = await seed_position(env, broker, "LMBDA")
+    eng = PositionEngine(broker, now_fn=lambda: PIN,
+                         unprotected_max_secs=0.03, poll_sleep=0.01,
+                         session_age_fn=lambda o, n: 0)
+    await eng.step(pos, bar(ts=PIN))                # datetime ts, like Alpaca
+    rows = await q(env, """SELECT last_price FROM journal.positions
+                           WHERE ticker='LMBDA'""")
+    assert float(rows[0][0]) == 100.0               # mark written, no crash
+
