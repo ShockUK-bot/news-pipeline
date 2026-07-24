@@ -32,9 +32,13 @@ if not any(getattr(r, "path", "") == "/api/chat/state" for r in app.routes):
 _INDEX = Path(__file__).parent / "index.html"
 
 # Matches the reference index.html mechanics exactly:
-#   tabs bar  = <div class="tabs"> with #tabLive / #tabHist ('on' = active)
-#   panels    = #live / #hist toggled via style.display
-# Defensive: bails silently if any of those are missing or already injected.
+#   tabs bar  = <div class="tabs"> with #tabLive / #tabHist / #tabPerf
+#   panels    = #live / #hist / #perf toggled via style.display
+# v0.12.3: PANEL_IDS/TAB_IDS are enumerated generically so the chat tab
+# hides EVERY console panel (the v0.12.2 PERFORMANCE tab stayed visible and
+# selected when CHAT was opened — both showed at once). Any future tab that
+# follows the same id convention is handled automatically; missing ids are
+# skipped. Defensive: bails silently if the core pieces are absent.
 _CHAT_TAB_SNIPPET = """
 <script>
 (function(){
@@ -43,6 +47,13 @@ _CHAT_TAB_SNIPPET = """
     var live=document.getElementById('live'), hist=document.getElementById('hist');
     var tabLive=document.getElementById('tabLive'), tabHist=document.getElementById('tabHist');
     if(!tabs||!live||!hist||!tabLive||!tabHist||document.getElementById('tabChat'))return;
+
+    var PANEL_IDS=['live','hist','perf'];
+    var TAB_IDS=['tabLive','tabHist','tabPerf'];
+    var panels=PANEL_IDS.map(function(i){return document.getElementById(i);})
+                        .filter(Boolean);
+    var tabBtns=TAB_IDS.map(function(i){return document.getElementById(i);})
+                       .filter(Boolean);
 
     var btn=document.createElement('button');
     btn.id='tabChat'; btn.textContent='CHAT';
@@ -61,15 +72,15 @@ _CHAT_TAB_SNIPPET = """
           'border:1px solid var(--line);border-radius:8px;background:var(--bg)';
         panel.appendChild(frame);
       }
-      live.style.display='none'; hist.style.display='none'; panel.style.display='';
-      btn.classList.add('on'); tabLive.classList.remove('on'); tabHist.classList.remove('on');
+      panels.forEach(function(p){p.style.display='none';});
+      tabBtns.forEach(function(b){b.classList.remove('on');});
+      panel.style.display=''; btn.classList.add('on');
     }
     function hideChat(){
       panel.style.display='none'; btn.classList.remove('on');
     }
     btn.onclick=showChat;
-    tabLive.addEventListener('click',hideChat);
-    tabHist.addEventListener('click',hideChat);
+    tabBtns.forEach(function(b){b.addEventListener('click',hideChat);});
   }catch(e){/* console still fully usable; chat remains at /chat */}
 })();
 </script>

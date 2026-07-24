@@ -52,7 +52,11 @@ td{padding:6px 8px;border-bottom:1px solid var(--panel-2)}
 .gain{color:var(--gain)} .loss{color:var(--loss)} .amber{color:var(--amber)}
 .ld-num{font-family:var(--mono);text-align:right}
 #load table{font-size:13px} #load td,#load th{padding:4px 8px}
-#tape{max-height:420px;overflow:auto;font-size:13px}
+/* v0.12.3: the tape fills its whole tile — the panel flexes to the height
+   the row2 grid gives it (matching the right-hand column) and the tape
+   itself takes all remaining space instead of capping at 420px. */
+.tape-panel{display:flex;flex-direction:column}
+#tape{flex:1 1 0;min-height:340px;overflow:auto;font-size:13px}
 .tape-row{display:flex;flex-wrap:wrap;gap:4px 10px;padding:6px 2px;border-bottom:1px solid var(--panel-2);
   font-family:var(--mono);align-items:baseline}
 .tape-row.new{animation:flash 1s ease-out 1}
@@ -94,17 +98,17 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
       <th>Stop</th><th>Target</th><th>Cost</th><th>Unrl P&amp;L</th><th>P/L %</th>
       <th>Thesis</th></tr></thead>
     <tbody id="positions"></tbody></table></div>
-  <div class="row2">
-    <div class="panel"><h2>Decision tape</h2><div id="tape"></div></div>
-    <div>
-      <div class="panel" style="margin-bottom:10px"><h2>System health</h2><div id="health"></div></div>
-      <div class="panel"><h2>Vetoed trades</h2><div id="vetoes"></div></div>
-    </div>
-  </div>
   <div class="panel"><h2>Momentum scanner
     <span class="micro" style="margin-left:8px">big movers without news · another input, not a firehose</span>
     <button id="scannerBtn" style="float:right;margin-top:-4px">SCANNER ON</button></h2>
     <div id="scanner"></div></div>
+  <div class="row2">
+    <div class="panel tape-panel"><h2>Decision tape</h2><div id="tape"></div></div>
+    <div>
+      <div class="panel" style="margin-bottom:10px"><h2>Vetoed trades</h2><div id="vetoes"></div></div>
+      <div class="panel"><h2>System health</h2><div id="health"></div></div>
+    </div>
+  </div>
   <div class="panel"><h2>Pipeline load
     <span class="micro" style="margin-left:8px">queue depth per agent · repeat-analysis watch</span></h2>
     <div id="load"></div></div>
@@ -419,6 +423,11 @@ function showTab(which){
     $(tabs[t][0]).classList.toggle('on',t===which);
     $(tabs[t][1]).style.display=(t===which)?'':'none';
   }
+  // v0.12.3: the CHAT tab is injected by app_chat.py — deselect/hide it too
+  // (defensive: both may be absent when app.py serves the page directly).
+  const cp=document.getElementById('chatPanel'), tc=document.getElementById('tabChat');
+  if(cp) cp.style.display='none';
+  if(tc) tc.classList.remove('on');
   clearInterval(histTimer); clearInterval(perfTimer);
   if(which==='hist'){ loadHistory(); histTimer=setInterval(loadHistory,5000); }
   if(which==='perf'){ loadPerf(); perfTimer=setInterval(loadPerf,60000); }
