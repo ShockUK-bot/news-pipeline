@@ -50,6 +50,16 @@ Rules:
   name, correction of the entry story); medium = act today; low = watch.
 - You cannot widen stops, add to positions, or extend time windows. Those
   actions do not exist.
+- news_confirms_move: ONLY relevant when position.origin is "scanner" (the
+  system entered on pure price action, driver unknown). Set TRUE only if
+  this item is plausibly THE STORY THAT CAUSED the move the position is
+  riding — right ticker, right direction, material, and consistent with the
+  move's timing (the system was in FIRST; this news validates the entry).
+  Peer/sector noise, reiterations, or negative items are FALSE. For
+  news-origin positions ALWAYS set false. TRUE requires thesis_intact=true
+  and must not accompany "exit". Code may then graduate the position from
+  quick-scalp exits to normal exit rules — so a wrong TRUE holds a blind
+  trade longer; be skeptical.
 - confidence: 0.0-1.0, ordinal only. reason: 2-4 plain sentences.
 
 Respond with ONLY a JSON object matching the required schema."""

@@ -39,6 +39,13 @@ class GuardVerdict(BaseModel):
     # Which news_checkable watch-list entries (verbatim) this item matches;
     # empty when none do. Journaled for A11's saves-vs-shakeouts attribution.
     watch_hits: list[str] = Field(default_factory=list, max_length=3)
+    # v0.12.2 — scanner-lane promotion evidence: TRUE only when the position
+    # is scanner-origin AND this item is plausibly the story that CAUSED the
+    # move the scanner entered on (we were first; the news validates the
+    # position). Always false for news-origin positions. A12 only VERDICTS
+    # this — C4 code performs the actual promotion (deliberately not an
+    # "action": the guard's action vocabulary stays risk-reducing-only).
+    news_confirms_move: bool = False
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -62,8 +69,19 @@ def validate_guard(raw_text: str) -> GuardVerdict:
     except json.JSONDecodeError as e:
         raise GuardValidationError(f"output is not valid JSON: {e}", raw_text)
     try:
-        return GuardVerdict(**data)
+        v = GuardVerdict(**data)
     except ValidationError as e:
         errs = "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}"
                          for x in e.errors()[:4])
         raise GuardValidationError(f"schema violations: {errs}", raw_text)
+    # Cross-field (code disposes): a confirmation claim on a broken thesis
+    # is contradictory — the story that caused the move cannot both validate
+    # the position and invalidate it.
+    if v.news_confirms_move and not v.thesis_intact:
+        raise GuardValidationError(
+            "news_confirms_move=true requires thesis_intact=true", raw_text)
+    if v.news_confirms_move and v.recommended_action == "exit":
+        raise GuardValidationError(
+            "news_confirms_move=true contradicts recommended_action=exit",
+            raw_text)
+    return v

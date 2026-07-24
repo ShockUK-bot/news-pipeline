@@ -58,6 +58,10 @@ def position_pack(pos: dict) -> dict:
         "ticker": pos["ticker"],
         "horizon": pos.get("horizon"),
         "profile": pos.get("profile"),
+        # v0.12.2: origin drives the news_confirms_move instruction — the
+        # guard must know whether this entry was scanner (driver unknown,
+        # promotable) or news (already story-backed).
+        "origin": pos.get("origin", "news"),
         "qty_open": int(pos["qty_open"]),
         "avg_entry": float(pos["avg_entry"]),
         "current_stop": policy.get("current_stop") or float(pos["initial_stop"]),

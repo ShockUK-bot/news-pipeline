@@ -11,4 +11,6 @@ c4:
   exit_unprotected_max_secs: 45      # D3 cancel-and-replace reinstatement window
   drawdown_breaker_pct: 0.02
   heartbeat_secs: 60
+  promotion_enabled: true            # v0.12.2 — scanner->short_term_v1 promotion
+                                     # on A12 news_confirms_move (code executes)
 

@@ -304,6 +304,12 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
             await set_health("exec", "OK", "engine loop")
 
             if in_session and (await get_flag("exit_engine_suspended")) != "1":
+                # v0.12.2: promotion runs FIRST each pass — a scanner entry
+                # whose causal news just got A12-confirmed graduates to
+                # normal exits before the force-flat check could flatten it.
+                if svc.cfg.get("promotion_enabled", True):
+                    await engine.promotion_pass(
+                        exit_cfg["profiles"]["short_term_v1"])
                 for pos in await open_positions():
                     if await engine.check_halt(pos):
                         continue

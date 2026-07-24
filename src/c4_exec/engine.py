@@ -44,6 +44,41 @@ def sessions_between(opened_ts: datetime, now: datetime) -> int:
     return _session_cache[key]
 
 
+def promoted_policy(policy: dict, target: dict, decision_id: int,
+                    now_iso: str) -> dict:
+    """v0.12.2 — pure transform: graduate a scalp_v1 exit policy to
+    short_term_v1 semantics after the causal news CONFIRMED a scanner entry
+    (A12 verdict `news_confirms_move`; the system was in first).
+
+    What changes: overnight_hold force_flat -> the target's D1 rule (the
+    15:45 decision applies instead of the hard 15:50 flat), minutes time
+    stop -> 2-session window, trail/breakeven -> target geometry on the
+    DAILY ATR basis. What NEVER changes: current_stop / stop_basis / hwm
+    (tighten-only survives promotion), the broker-resident catastrophe stop
+    (never widened, baseline rule 16), realization state (a done scale-out
+    stays done), earnings blackout. One-way, once — promoted_ts is the
+    idempotency marker."""
+    new = dict(policy)
+    new["promoted_from"] = policy.get("profile", "scalp_v1")
+    new["profile"] = "short_term_v1"
+    new["promoted_ts"] = now_iso
+    new["promotion_decision_id"] = decision_id
+    new["overnight_hold"] = target.get("overnight_hold", "eod_rule_v1")
+    new.pop("force_flat_time_et", None)
+    # 2 sessions = the discretion-band default A3 gives comparable news
+    # trades; the promoted thesis is "the story printed and we were early".
+    ts_target = target.get("time_stop") or {}
+    new["time_stop"] = {"window": "2_sessions",
+                        "min_progress_R": float(
+                            ts_target.get("min_progress_R", 0.5))}
+    new["trail"] = dict(target["trail"])
+    new["breakeven_at_R"] = target["breakeven_at_R"]
+    if new.get("atr_14"):
+        new["atr_value"] = new["atr_14"]   # future ratchet math on daily ATR
+        new["atr_method"] = "atr"
+    return new
+
+
 class PositionEngine:
     def __init__(self, broker, now_fn=None, unprotected_max_secs: float = 45.0,
                  poll_sleep: float = 1.0, halt_stale_min: float = 10.0,
@@ -253,6 +288,61 @@ class PositionEngine:
             if not b:
                 continue
             await self.step(pos, {**b, "tf": "session"})
+
+    # ---------------------------------------------------------------- promotion
+    async def promotion_pass(self, short_profile: dict) -> list[str]:
+        """v0.12.2 — promote scanner positions whose causal news printed and
+        was CONFIRMED by A12 (verdict-only agent; this code path is the
+        disposer). Finds OPEN origin='scanner' positions with no promoted_ts
+        and a GUARD decision whose verdict says news_confirms_move=true +
+        thesis_intact=true; rewrites the exit policy via promoted_policy().
+        Idempotent (promoted_ts) and journaled (PROMOTED position_event with
+        the confirming decision's id as lineage)."""
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute("""
+                SELECT p.position_id, p.ticker, p.exit_policy, d.decision_id
+                FROM journal.positions p
+                JOIN LATERAL (
+                    SELECT dd.decision_id FROM journal.decisions dd
+                    WHERE dd.stage = 'GUARD'
+                      AND (dd.payload->>'position_id')::bigint = p.position_id
+                      AND (dd.payload->'verdict'->>'news_confirms_move')::boolean
+                      AND (dd.payload->'verdict'->>'thesis_intact')::boolean
+                    ORDER BY dd.decision_id DESC LIMIT 1
+                ) d ON TRUE
+                WHERE p.status = 'OPEN' AND p.origin = 'scanner'
+                  AND (p.exit_policy->>'promoted_ts') IS NULL""")
+            rows = await cur.fetchall()
+        promoted = []
+        for position_id, ticker, policy, decision_id in rows:
+            new_policy = promoted_policy(policy, short_profile, decision_id,
+                                         self.now_fn().isoformat())
+            async with pool.connection() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE journal.positions
+                           SET exit_policy=%s, profile='short_term_v1'
+                           WHERE position_id=%s
+                             AND (exit_policy->>'promoted_ts') IS NULL""",
+                        (jb(new_policy), position_id))
+                    await position_event(
+                        position_id, "PROMOTED", "C4",
+                        old_value={"profile": policy.get("profile"),
+                                   "overnight_hold": policy.get("overnight_hold"),
+                                   "time_stop": policy.get("time_stop")},
+                        new_value={"profile": "short_term_v1",
+                                   "overnight_hold": new_policy["overnight_hold"],
+                                   "time_stop": new_policy["time_stop"]},
+                        detail="scanner entry confirmed by news (A12 "
+                               "news_confirms_move) — scalp exits graduated "
+                               "to short_term_v1; stop untouched",
+                        decision_id=decision_id, conn=conn)
+            promoted.append(ticker)
+            log.info("position PROMOTED", extra=kv(
+                position_id=position_id, ticker=ticker,
+                decision_id=decision_id))
+        return promoted
 
     # --------------------------------------------------------------- force-flat
     async def force_flat_pass(self) -> list[str]:

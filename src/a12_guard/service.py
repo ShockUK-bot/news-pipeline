@@ -94,7 +94,7 @@ async def open_positions(position_ids: list[int]) -> list[dict]:
         cur = await conn.execute(
             """SELECT position_id, ticker, horizon, profile, status, opened_ts,
                       thesis_decision_id, item_id, qty_open, avg_entry,
-                      initial_stop, r_unit, exit_policy, realized_pnl
+                      initial_stop, r_unit, exit_policy, realized_pnl, origin
                FROM journal.positions
                WHERE position_id = ANY(%s) AND status = 'OPEN'
                ORDER BY position_id""", (position_ids,))

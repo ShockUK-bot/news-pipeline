@@ -26,6 +26,12 @@ header{display:flex;align-items:center;gap:14px;margin-bottom:12px}
 .spacer{flex:1}
 button{font:inherit;cursor:pointer;border-radius:6px;padding:7px 16px;font-size:12.5px;letter-spacing:.08em}
 #capitalBtn{background:none;border:1.5px solid var(--amber);color:var(--amber)}
+#maxTradesBtn{background:none;border:1.5px solid var(--line);color:var(--muted)}
+.perf-tip{position:absolute;pointer-events:none;background:var(--panel-2);border:1px solid var(--line);
+  border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:12px;display:none;z-index:5}
+.perf-tip .sw{display:inline-block;width:9px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.perf-legend{display:flex;gap:18px;margin-bottom:8px;font-size:12.5px;color:var(--muted)}
+.perf-legend .sw{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
 #killBtn{background:var(--loss);border:1.5px solid var(--loss);color:#fff;font-weight:700}
 #killBtn.armed{background:none;color:var(--loss)}
 #killBanner{display:none;background:var(--loss);color:#fff;text-align:center;font-weight:700;
@@ -68,6 +74,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
   <span id="conn" class="pill dead">CONNECTING</span>
   <span id="breaker" class="pill breaker">DRAWDOWN BREAKER</span>
   <span class="spacer"></span>
+  <button id="maxTradesBtn">MAX TRADES</button>
   <button id="capitalBtn">CAPITAL</button>
   <button id="killBtn">KILL SWITCH</button>
 </header>
@@ -78,6 +85,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 <div class="tabs">
   <button id="tabLive" class="on">LIVE</button>
   <button id="tabHist">HISTORY</button>
+  <button id="tabPerf">PERFORMANCE</button>
 </div>
 
 <div id="live" class="grid">
@@ -100,6 +108,19 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
   <div class="panel"><h2>Pipeline load
     <span class="micro" style="margin-left:8px">queue depth per agent · repeat-analysis watch</span></h2>
     <div id="load"></div></div>
+</div>
+
+<div id="perf" class="grid" style="display:none">
+  <div class="panel" style="position:relative">
+    <h2>Performance — total % change vs SPY &amp; QQQ <span class="micro" id="perfSince"></span></h2>
+    <div class="perf-legend" id="perfLegend"></div>
+    <div id="perfStats" style="margin-bottom:10px"></div>
+    <div id="perfChart" style="position:relative"></div>
+    <details style="margin-top:10px"><summary class="detail" style="cursor:pointer">data table</summary>
+      <div style="max-height:260px;overflow:auto;margin-top:6px">
+      <table><thead><tr><th>Date</th><th>Portfolio</th><th>SPY</th><th>QQQ</th></tr></thead>
+      <tbody id="perfTable"></tbody></table></div></details>
+  </div>
 </div>
 
 <div id="hist" class="grid" style="display:none">
@@ -142,8 +163,10 @@ function setConn(mode){const c=$('conn');
   c.className='pill '+(mode==='ws'?'live':mode==='poll'?'poll':'dead');
   c.textContent=mode==='ws'?'LIVE · WS':mode==='poll'?'POLLING':'DISCONNECTED';}
 
+let lastCtl={};
 function render(s){
   const st=s.stats||{}, ctl=s.control||{};
+  lastCtl=ctl;
   $('stats').innerHTML=[
     ['Trading capital',money(st.trading_capital||0)],
     ['Open positions',st.open_positions||0],
@@ -288,12 +311,121 @@ async function loadHistory(){
      <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td></tr>`).join('');
 }
 
-$('tabLive').onclick=()=>{ $('live').style.display=''; $('hist').style.display='none';
-  $('tabLive').classList.add('on'); $('tabHist').classList.remove('on');
-  clearInterval(histTimer); };
-$('tabHist').onclick=()=>{ $('live').style.display='none'; $('hist').style.display='';
-  $('tabHist').classList.add('on'); $('tabLive').classList.remove('on');
-  loadHistory(); histTimer=setInterval(loadHistory,5000); };
+// ---- PERFORMANCE tab (v0.12.2) --------------------------------------------
+// Series colors validated with the dataviz six-checks against this dark
+// surface (#1c2430): lightness band, chroma, CVD + normal-vision separation,
+// contrast. The amber<->green pair sits in the CVD floor band, so identity is
+// never color-alone: legend + direct end labels on every line.
+const PSER=[['portfolio','Portfolio','#b9862f',3],
+            ['SPY','SPY','#6b8ef0',2],
+            ['QQQ','QQQ','#26a173',2]];
+let perfTimer=null, perfRows=null, perfSince=null;
+const pfmt=v=>v==null?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%';
+
+async function loadPerf(){
+  let d=null;
+  try{ d=await api('/api/performance'); }catch(e){ d=null; }
+  const port=(d&&d.series&&d.series.portfolio)||[];
+  perfSince=d&&d.first_trade_date;
+  const byDate={};
+  port.forEach(p=>byDate[p.date]={date:p.date,portfolio:p.pct});
+  ['SPY','QQQ'].forEach(k=>((d&&d.series&&d.series[k])||[]).forEach(p=>{
+    if(byDate[p.date]) byDate[p.date][k]=p.pct; }));
+  perfRows=Object.values(byDate).sort((a,b)=>a.date<b.date?-1:1);
+  drawPerf();
+}
+
+function drawPerf(){
+  const box=$('perfChart');
+  $('perfLegend').innerHTML=PSER.map(([k,n,c])=>
+    `<span><span class="sw" style="background:${c}"></span>${n}</span>`).join('');
+  if(!perfRows||!perfRows.length){
+    box.innerHTML='<div class="detail">no NAV history yet — the nightly snapshot '+
+      '(pipeline-nav-snapshot.timer) adds one point per trading day</div>';
+    $('perfStats').innerHTML=''; $('perfTable').innerHTML='';
+    $('perfSince').textContent=''; return;
+  }
+  $('perfSince').textContent=perfSince?('since '+perfSince):'';
+  const rows=perfRows, n=rows.length;
+  const lastOf=k=>{for(let i=n-1;i>=0;i--) if(rows[i][k]!=null) return rows[i][k]; return null;};
+  $('perfStats').innerHTML=PSER.map(([k,nm,c])=>{
+    const v=lastOf(k);
+    return `<span style="margin-right:24px"><span class="sw perf-tipless" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${c};margin-right:6px;vertical-align:middle"></span>`+
+      `<span class="detail">${nm}</span> <span style="font-family:var(--mono)" class="${v>=0?'gain':'loss'}">${pfmt(v)}</span></span>`;}).join('');
+  $('perfTable').innerHTML=rows.map(r=>
+    `<tr><td>${r.date}</td><td class="${r.portfolio>=0?'gain':'loss'}">${pfmt(r.portfolio)}</td>`+
+    `<td>${pfmt(r.SPY)}</td><td>${pfmt(r.QQQ)}</td></tr>`).join('');
+
+  const W=Math.max(box.clientWidth||900,560), H=320,
+        m={l:56,r:92,t:12,b:26}, iw=W-m.l-m.r, ih=H-m.t-m.b;
+  let vals=[0];
+  rows.forEach(r=>PSER.forEach(([k])=>{ if(r[k]!=null) vals.push(r[k]); }));
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  if(hi-lo<0.5){hi+=0.5;lo-=0.5;}
+  const pad=(hi-lo)*0.08; hi+=pad; lo-=pad;
+  const X=i=>m.l+(n===1?iw/2:i*iw/(n-1));
+  const Y=v=>m.t+ih-(v-lo)/(hi-lo)*ih;
+  const ticks=[]; const step=(hi-lo)/4;
+  for(let i=0;i<=4;i++) ticks.push(lo+i*step);
+  let g='';
+  ticks.forEach(t=>{ g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="var(--panel-2)" stroke-width="1"/>`+
+    `<text x="${m.l-8}" y="${Y(t)+4}" text-anchor="end" fill="var(--faint)" font-size="11" font-family="var(--mono)">${pfmt(t)}</text>`; });
+  if(lo<0&&hi>0) g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line)" stroke-width="1"/>`;
+  const nx=Math.max(1,Math.floor(n/6));
+  rows.forEach((r,i)=>{ if(i%nx===0||i===n-1) g+=`<text x="${X(i)}" y="${H-8}" text-anchor="middle" fill="var(--faint)" font-size="10.5" font-family="var(--mono)">${r.date.slice(5)}</text>`; });
+  let lines='', labels='';
+  const usedLabelY=[];
+  PSER.forEach(([k,nm,c,wd])=>{
+    let dstr='', started=false, lastI=null;
+    rows.forEach((r,i)=>{ if(r[k]==null) return;
+      dstr+=(started?'L':'M')+X(i).toFixed(1)+' '+Y(r[k]).toFixed(1)+' '; started=true; lastI=i; });
+    if(!started) return;
+    lines+=`<path d="${dstr}" fill="none" stroke="${c}" stroke-width="${wd}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    // end labels dodge each other when lines converge (identity must stay
+    // readable even with overlapping series)
+    let ly=Y(rows[lastI][k]);
+    while(usedLabelY.some(u=>Math.abs(u-ly)<13)) ly+=13;
+    usedLabelY.push(ly);
+    labels+=`<line x1="${X(lastI)+5}" x2="${X(lastI)+15}" y1="${ly}" y2="${ly}" stroke="${c}" stroke-width="3"/>`+
+      `<text x="${X(lastI)+19}" y="${ly+4}" fill="var(--muted)" font-size="11.5">${nm}</text>`;
+  });
+  box.innerHTML=`<svg id="perfSvg" viewBox="0 0 ${W} ${H}" width="100%" style="display:block">`+
+    g+lines+labels+`<g id="perfHover"></g><rect id="perfCatch" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`+
+    `<div class="perf-tip" id="perfTip"></div>`;
+  const svg=$('perfSvg'), tip=$('perfTip'), hov=$('perfHover');
+  $('perfCatch').addEventListener('mousemove',ev=>{
+    const r=svg.getBoundingClientRect(), sx=W/r.width;
+    const px=(ev.clientX-r.left)*sx;
+    const i=Math.max(0,Math.min(n-1,Math.round((px-m.l)/(iw/Math.max(n-1,1)))));
+    const row=rows[i];
+    let hg=`<line x1="${X(i)}" x2="${X(i)}" y1="${m.t}" y2="${m.t+ih}" stroke="var(--line)" stroke-width="1"/>`;
+    PSER.forEach(([k,,c])=>{ if(row[k]!=null)
+      hg+=`<circle cx="${X(i)}" cy="${Y(row[k])}" r="4" fill="${c}" stroke="var(--panel)" stroke-width="2"/>`; });
+    hov.innerHTML=hg;
+    tip.innerHTML=`<div class="detail">${row.date}</div>`+PSER.map(([k,nm,c])=>
+      `<div><span class="sw" style="background:${c}"></span>${nm} <span class="${row[k]>=0?'gain':'loss'}">${pfmt(row[k])}</span></div>`).join('');
+    tip.style.display='block';
+    const bx=box.getBoundingClientRect();
+    let tx=(ev.clientX-bx.left)+14;
+    if(tx>bx.width-150) tx-=170;
+    tip.style.left=tx+'px'; tip.style.top=((ev.clientY-bx.top)-10)+'px';
+  });
+  $('perfCatch').addEventListener('mouseleave',()=>{ hov.innerHTML=''; tip.style.display='none'; });
+}
+
+function showTab(which){
+  const tabs={live:['tabLive','live'],hist:['tabHist','hist'],perf:['tabPerf','perf']};
+  for(const t in tabs){
+    $(tabs[t][0]).classList.toggle('on',t===which);
+    $(tabs[t][1]).style.display=(t===which)?'':'none';
+  }
+  clearInterval(histTimer); clearInterval(perfTimer);
+  if(which==='hist'){ loadHistory(); histTimer=setInterval(loadHistory,5000); }
+  if(which==='perf'){ loadPerf(); perfTimer=setInterval(loadPerf,60000); }
+}
+$('tabLive').onclick=()=>showTab('live');
+$('tabHist').onclick=()=>showTab('hist');
+$('tabPerf').onclick=()=>showTab('perf');
 $('gran').onchange=loadHistory;
 
 async function guarded(path,extra){
@@ -313,6 +445,10 @@ $('scannerBtn').onclick=()=>{
   const on=$('scannerBtn').textContent==='SCANNER ON';
   if(on && !confirm('Disable the momentum scanner input? News trading is unaffected.'))return;
   guarded('/api/scanner',{enabled:!on});};
+$('maxTradesBtn').onclick=()=>{
+  const cur=lastCtl.max_trades_per_day||'5 (config default)';
+  const raw=prompt('Max BUY entries per day (current: '+cur+'):'); if(raw==null)return;
+  guarded('/api/max-trades',{amount:raw});};
 
 connectWS();
 </script>
