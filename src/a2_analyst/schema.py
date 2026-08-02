@@ -66,7 +66,13 @@ class ThesisOutput(BaseModel):
 
     ticker: str = Field(min_length=1, max_length=7)
     direction: Literal["up", "down"]
-    magnitude_est: float = Field(gt=0.0, le=0.5)           # fraction, e.g. 0.055 = 5.5%
+    # fraction, e.g. 0.055 = 5.5%. EXACTLY 0.0 is the analyst's explicit
+    # no-trade verdict (v0.12.9): "nothing left here" is a valid, successful
+    # answer — the service journals it as REJECT and nothing reaches the gate.
+    # Before v0.12.9 the gt=0 bound made an honest 0 a schema violation, so
+    # every exhausted-move judgment burned two model calls and was journaled
+    # as a model FAILURE (2026-08-02 stale-scanner-backlog incident).
+    magnitude_est: float = Field(ge=0.0, le=0.5)
     expected_move_window: str
     horizon: Literal["SHORT", "LONG"]
     confidence: float = Field(ge=0.0, le=1.0)              # ordinal (baseline rule 6)

@@ -136,6 +136,28 @@ class A2Service:
             log.warning("thesis REJECT journaled", extra=kv(item_id=item_id))
             return
 
+        # v0.12.9 — the analyst's explicit no-trade verdict. magnitude_est of
+        # exactly 0 means "nothing left here": journal it as a JUDGMENT
+        # (REJECT with the model's own assessment as the reason), send nothing
+        # to the gate, no sympathy fan-out. One model call, no retries — before
+        # this, an honest 0 violated the schema and burned two ~30s attempts
+        # per dead signal (2026-08-02 stale-scanner-backlog incident).
+        if thesis.magnitude_est == 0.0:
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=thesis.ticker, stage="ANALYST", agent="A2",
+                action="REJECT",
+                payload={"thesis": thesis.model_dump(), "origin": origin,
+                         "no_trade": True},
+                reason=f"analyst no-trade: {thesis.priced_in_assessment[:250]}",
+                confidence=thesis.confidence,
+                model_id=self.backend.model_id, latency_ms=total_latency,
+                regime_id=regime_id, derived_from=derived_from)
+            log.info("analyst no-trade", extra=kv(
+                signal_id=signal_id, ticker=thesis.ticker, origin=origin,
+                conf=thesis.confidence, latency_ms=total_latency))
+            return
+
         gate_body = {"item_ref": item_ref,
                      "thesis": thesis.model_dump(),
                      "regime_id": regime_id,

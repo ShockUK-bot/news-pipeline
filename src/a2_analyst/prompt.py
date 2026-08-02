@@ -25,6 +25,9 @@ Rules:
   priced_in_assessment and lower confidence accordingly.
 - magnitude_est is the FURTHER move you expect from here, as a fraction
   (0.03 = 3%). Be conservative; the confirmation gate punishes overclaiming.
+  If you judge there is NOTHING left — the story is fully priced in — set
+  magnitude_est to 0. That is the no-trade verdict, a valid and successful
+  answer. Never invent a small positive number just to produce a thesis.
 - direction: the expected move of the stock. The system only enters longs;
   a "down" thesis is still valuable (it blocks entries and informs guards).
 - expected_move_window: like "2_sessions" or "3_weeks" — when the move should
@@ -69,7 +72,9 @@ Rules:
   case — demand stronger tape evidence and lower confidence.
 - magnitude_est is the REMAINING move from here as a fraction (0.02 = 2%),
   NOT the move already made. Be conservative: this lane scale-outs at 60% of
-  your estimate and force-flats before the close either way.
+  your estimate and force-flats before the close either way. If the move is
+  exhausted and nothing tradeable remains, set magnitude_est to 0 — the
+  no-trade verdict, a valid and successful answer (see REJECTING below).
 - expected_move_window MUST be in minutes, 30-120 (e.g. "60_minutes").
   horizon MUST be "SHORT". direction is your honest read — "down" (exhausted,
   reverting) VETOES the entry downstream and is a valuable answer.

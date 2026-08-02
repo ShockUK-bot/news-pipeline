@@ -37,6 +37,12 @@ router:
   # distribution for a trading day before setting a value (baseline §14
   # config-values discipline). The lever exists; it does nothing yet.
   min_confidence: 0.0
+  # v0.12.9: scanner signals older than this (minutes since C10's
+  # detected_ts) are DISCARDed by A1 before any model call. A momentum
+  # signal is only actionable for minutes — C3 vetoes >5 min after
+  # detection anyway; 15 is a generous ceiling. Guards against consumer
+  # downtime leaving a queue of dead movers (2026-07-28 outage week).
+  scanner_expire_min: 15
 
 # v0.4.7 story-level repeat suppression (see src/a1_triage/suppression.py).
 # One story cluster = at most one analysis per window unless materially new

@@ -48,6 +48,21 @@ CONSUMER = f"a1-{os.getpid()}"
 CONTRACT_TRIAGED = "signal.triaged/1"
 
 
+def scanner_age_minutes(scanner: dict, now=None) -> float | None:
+    """Minutes since C10's detection snapshot, or None if the timestamp is
+    missing/unparseable (caller falls through to the old behavior — C3's
+    SCANNER_STALE re-check still guards the trade itself). v0.12.9."""
+    from common.clock import parse_ts, utcnow
+    raw = scanner.get("detected_ts")
+    if not raw:
+        return None
+    try:
+        ts = parse_ts(raw)
+    except (ValueError, TypeError):
+        return None
+    return ((now or utcnow()) - ts).total_seconds() / 60.0
+
+
 async def _fetch_item_and_cluster(item_id: str, revision: int) -> tuple[dict, dict] | None:
     """Parent item + its cluster corroboration, for synthetic re-entry."""
     pool = await get_pool()
@@ -316,6 +331,28 @@ class A1Service:
         if not ticker or not item_id or not scanner:
             raise ValueError(f"malformed ScannerSignal ({msg.dedup_key})")
         signal_id = item_id                    # scanner:<ticker>:<date>
+
+        # v0.12.9 — staleness guard. A momentum signal is only actionable for
+        # minutes (C3 vetoes >5 min after detection anyway). If A1 was down
+        # when C10 emitted — the 2026-07-28 outage left a WEEK of movers
+        # queued — draining them into A2 wastes ~60s of model time per dead
+        # signal. Expire here, in code, before any model is consulted.
+        # Missing/unparseable detected_ts falls through to the old behavior
+        # (C3's SCANNER_STALE re-check still guards the trade itself).
+        age_min = scanner_age_minutes(scanner)
+        max_age = float(self.router_cfg.get("scanner_expire_min", 15))
+        if age_min is not None and age_min > max_age:
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=1,
+                ticker=ticker, stage="TRIAGE", agent="A1", action="DISCARD",
+                payload={"scanner": scanner, "origin": "scanner",
+                         "expired": True, "age_min": round(age_min, 1)},
+                reason=(f"scanner signal expired: detected {age_min:.0f} min "
+                        f"ago (max {max_age:.0f})"),
+                model_id=None, latency_ms=None)
+            log.info("scanner DISCARD (expired)",
+                     extra=kv(ticker=ticker, age_min=round(age_min, 1)))
+            return
 
         # Belt + braces: C10 filters held names, but the queue is async —
         # a position opened between scan and claim must not be added to.
