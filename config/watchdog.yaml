@@ -1,0 +1,78 @@
+# C7 watchdog (v0.12.7). Fired by c7-watchdog.timer every 5 minutes.
+# Block style only (the built-in tiny-YAML fallback parses this file too).
+#
+# services:  long-running units. Must be systemd-active AND enabled.
+#            `health` names the journal.health component the watchdog
+#            overwrites to DOWN when the unit is dead (so the dashboard
+#            stops showing a stale OK). `desc` is prose for the alert email.
+# timers:    timer-driven jobs. The .timer must be active+enabled and the
+#            .service's last run must not have failed.
+# heartbeats: journal.health rows expected to refresh periodically.
+#            rth_only entries are only checked during market hours.
+
+realert_hours: 6
+
+services:
+  c1-ingestion:
+    health: ingestion
+    desc: news feed (Alpaca WS + EDGAR + RSS) — pipeline is blind without it
+  c2-dedup:
+    health: dedup
+    desc: dedup/clustering — nothing reaches triage without it
+  a1-triage:
+    health: triage
+    desc: triage router — news AND scanner signals die unheard without it
+  a2-analyst:
+    desc: analyst service — no theses can be written
+  c3-gate:
+    health: gate
+    desc: deterministic gate
+  a3-risk:
+    health: risk
+    desc: sizing service
+  c4-exec:
+    health: exec
+    desc: EXECUTION ENGINE — no entries and no managed exits while down
+  c8-regime:
+    health: regime
+    desc: regime context builder
+  c10-scanner:
+    health: scanner
+    desc: momentum scanner
+  a12-guard:
+    health: guard
+    desc: position guard
+  c6-dashboard:
+    desc: operator dashboard
+  llama-a1:
+    desc: 8B triage model slot
+  llama-a2:
+    desc: analyst model slot
+
+timers:
+  - c5-mailer
+  - pipeline-backup
+  - pipeline-nav-snapshot
+  - queue-prune
+  - earnings-calendar
+  - a4-premarket
+  - a5-thematic
+  - a6-eod
+  - a6-nightly
+  - a7-eod
+  - a8-briefing
+
+heartbeats:
+  exec:
+    max_age_min: 10
+  deadman:
+    max_age_min: 10
+  marketdata:
+    max_age_min: 15
+    rth_only: true
+  mailer:
+    max_age_min: 30
+  backup:
+    max_age_min: 1560
+  earnings:
+    max_age_min: 1560

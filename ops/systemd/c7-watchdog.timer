@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the C7 watchdog every 5 minutes
+
+[Timer]
+OnCalendar=*:2/5
+Persistent=false
+
+[Install]
+WantedBy=timers.target
