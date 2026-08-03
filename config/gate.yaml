@@ -18,6 +18,22 @@ gate:
                                # quiet news stretches; a real provider outage
                                # still ages the row and blocks. <=0 disables.
   marketdata_probe_symbol: SPY # liquid reference symbol for the probe
+  confirm_recheck_secs: 180    # v0.12.10: an intraday NO_CONFIRM /
+                               # CREDIBILITY / MARKETDATA_MISSING verdict
+                               # re-checks at this cadence until the
+                               # intraday_window_min expires — the window is
+                               # a WINDOW again, not a one-shot check at
+                               # minute ~4 (incident 2026-08-03: 0-for-21).
+  confirm_final_margin_secs: 45  # once less than this remains of the window
+                               # the verdict is final; the last re-check is
+                               # scheduled to land BEFORE expiry so the
+                               # journaled reason is the real one, never a
+                               # misleading GATE_WINDOW
+  counterfactual_sweep_secs: 600 # v0.12.10: every N secs C3 fills
+                               # journal.gate_counterfactuals rows whose
+                               # session has closed (what did the stock do
+                               # after each veto — the §14 tuning dataset).
+                               # <=0 disables the sweep (recording stays on).
   extended_pct: 0.06           # baseline v0.5: skip if >= +6% from pre-news
   open_blackout_min: 15        # no entries first 15 min after open (baseline)
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN

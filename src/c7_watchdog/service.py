@@ -55,6 +55,16 @@ SHOW_PROPS = ("LoadState,ActiveState,SubState,UnitFileState,Result,"
 FP_KEY = "watchdog_findings_fp"
 TS_KEY = "watchdog_last_alert_ts"
 
+# v0.12.10: systemd states that mean "mid-transition", not "down". The
+# v0.12.9 deploy restart raced a scheduled pass and emailed a false
+# SERVICE_DOWN ("deactivating") followed by RECOVERED minutes later. A unit
+# seen in one of these states produces NO finding this pass: a normal
+# restart is active next pass; a crashed one shows failed/inactive next
+# pass (5 min — well inside every heartbeat limit); and a service wedged
+# mid-activation still trips its HEARTBEAT_STALE check. Nothing is lost
+# except the false alarm.
+TRANSIENT_STATES = ("activating", "deactivating", "reloading", "refreshing")
+
 
 # ---------------------------------------------------------------------------
 # systemd introspection (read-only; no sudo required for `systemctl show`)
@@ -114,10 +124,13 @@ def evaluate(cfg: dict, units: dict, ages_min: dict,
                 "unit file not found on this machine — remove it from "
                 "config/watchdog.yaml or install the unit")
             continue
-        if info.get("ActiveState") != "active":
+        state = info.get("ActiveState")
+        if state in TRANSIENT_STATES:
+            continue                       # v0.12.10: recheck next pass
+        if state != "active":
             since = info.get("InactiveEnterTimestamp") or "unknown time"
             add("CRITICAL", "SERVICE_DOWN", name,
-                f"{info.get('ActiveState', '?')} since {since}"
+                f"{state or '?'} since {since}"
                 + (f" — {desc}" if desc else ""))
         if info.get("UnitFileState") not in ("enabled", "static",
                                              "enabled-runtime"):
@@ -134,9 +147,12 @@ def evaluate(cfg: dict, units: dict, ages_min: dict,
                 "timer not found on this machine — remove it from "
                 "config/watchdog.yaml or install the unit")
             continue
-        if tinfo.get("ActiveState") != "active":
+        tstate = tinfo.get("ActiveState")
+        if tstate in TRANSIENT_STATES:
+            pass                           # v0.12.10: recheck next pass
+        elif tstate != "active":
             add("CRITICAL", "TIMER_DOWN", f"{name}.timer",
-                f"timer is {tinfo.get('ActiveState', '?')} — its job never "
+                f"timer is {tstate or '?'} — its job never "
                 "fires — fix: sudo systemctl enable --now " + name + ".timer")
         elif tinfo.get("UnitFileState") not in ("enabled", "static",
                                                 "enabled-runtime"):

@@ -28,6 +28,7 @@ from common.ta import atr_5m, day_vwap, resample_5m
 from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
+from .counterfactual import record_veto, sweep as counterfactual_sweep
 from .rules import (GateVerdict, MarketState, ScannerState, evaluate,
                     evaluate_scanner)
 
@@ -115,6 +116,44 @@ def defer_delay(published_ts: datetime, now: datetime,
     if now >= mature:
         return None
     return min(max((mature - now).total_seconds() + 1.0, 5.0), 300.0)
+
+
+# ---------------------------------------------------------------------------
+# v0.12.10: confirmation re-check window
+# ---------------------------------------------------------------------------
+# Incident (2026-08-03): every intraday gate evaluation ran ONCE, at
+# minutes=3-6 (the v0.11.10 maturity defer), and a NO_CONFIRM verdict was
+# terminal — so the notional 30-minute confirmation window was effectively a
+# one-shot check four minutes after publish. All 21 theses of the first
+# post-recovery session died this way (Boeing MAX-7 09:41: vol_mult 3.17 —
+# volume confirmed — but pct_move +0.4% at minute 3; never looked at again).
+# Now a veto whose inputs can still CHANGE inside the window re-defers the
+# message instead of journaling: confirmation can arrive at minute 12, new
+# outlets can corroborate a story, a transient bar gap can heal. Verdicts
+# whose inputs cannot improve (LONG_ONLY, GATE_EXTENDED, GATE_WINDOW) stay
+# terminal, as does everything on the open-handoff and scanner branches.
+
+RECHECKABLE_VETOES = frozenset(
+    {"GATE_NO_CONFIRM", "MARKETDATA_MISSING", "CREDIBILITY"})
+
+
+def recheck_delay(published_ts: datetime, now: datetime,
+                  cfg: dict) -> Optional[float]:
+    """Seconds until the next confirmation re-check, or None when the current
+    verdict is FINAL (the window is over, or too little of it remains for
+    another look). The last re-check is scheduled to land BEFORE the window
+    expires so the final journaled verdict is the real reason (NO_CONFIRM /
+    CREDIBILITY / MARKETDATA_MISSING with final numbers), never a misleading
+    GATE_WINDOW. Floor 5s (no busy re-claims); the remaining-window cap
+    bounds even clock-skewed inputs."""
+    window_end = published_ts + timedelta(
+        minutes=float(cfg["intraday_window_min"]))
+    margin = float(cfg.get("confirm_final_margin_secs", 45))
+    remaining = (window_end - now).total_seconds()
+    if remaining <= margin:
+        return None
+    step = float(cfg.get("confirm_recheck_secs", 180))
+    return min(max(step, 5.0), max(remaining - margin, 5.0))
 
 
 PROBE_DEFAULT_SYMBOL = "SPY"
@@ -208,7 +247,7 @@ class C3Service:
         verdict = evaluate_scanner(thesis, state, scfg)
 
         if verdict.verdict == "VETO":
-            await write_decision(
+            decision_id = await write_decision(
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=ticker, stage="GATE", agent="C3", action="VETO",
                 veto_reason=verdict.veto_reason,
@@ -219,6 +258,14 @@ class C3Service:
             log.info("gate VETO", extra=kv(signal_id=signal_id,
                                            reason=verdict.veto_reason,
                                            rule="scanner"))
+            await record_veto(
+                decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+                ticker=ticker, direction=thesis.get("direction") or "up",
+                rule="scanner", veto_reason=verdict.veto_reason, veto_ts=now,
+                price_at_veto=state.last_price,
+                prenews_price=state.detect_price,
+                pct_move=(verdict.numbers or {}).get("run_since_detect_pct"),
+                vol_mult=None)
             return
 
         quote = await self.md.snapshot(ticker)
@@ -320,7 +367,24 @@ class C3Service:
         verdict = evaluate(thesis, state, self.cfg)
 
         if verdict.verdict == "VETO":
-            await write_decision(
+            # v0.12.10: inside the confirmation window, a verdict whose
+            # inputs can still change (price/volume building, more outlets
+            # corroborating, a bar gap healing) is a SCHEDULING event, not an
+            # outcome — defer and look again. Only a FINAL verdict journals.
+            if (verdict.rule == "intraday"
+                    and verdict.veto_reason in RECHECKABLE_VETOES):
+                delay = recheck_delay(published_ts, now, self.cfg)
+                if delay is not None:
+                    nums = verdict.numbers or {}
+                    log.info("gate RECHECK", extra=kv(
+                        signal_id=signal_id, ticker=thesis["ticker"],
+                        reason=verdict.veto_reason,
+                        pct_move=nums.get("pct_move"),
+                        vol_mult=nums.get("vol_mult"),
+                        delay_secs=round(delay, 1)))
+                    raise DeferEvaluation(delay,
+                                          now + timedelta(seconds=delay))
+            decision_id = await write_decision(
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=thesis["ticker"], stage="GATE", agent="C3",
                 action="VETO", veto_reason=verdict.veto_reason,
@@ -333,11 +397,22 @@ class C3Service:
             if verdict.veto_reason == "MARKETDATA_MISSING":
                 # v0.5.9: surface data starvation on the dashboard/deadman
                 # instead of hiding it inside a normal-looking veto.
+                # (v0.12.10: only a FINAL missing-data verdict lands here —
+                # transient gaps inside the window just re-check.)
                 await set_health(
                     "marketdata", "DEGRADED",
                     f"no volume bars for {thesis['ticker']} ({item_id})")
                 log.warning("volume bars missing", extra=kv(
                     ticker=thesis["ticker"], item_id=item_id))
+            await record_veto(
+                decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+                ticker=thesis["ticker"],
+                direction=thesis.get("direction") or "up",
+                rule=verdict.rule, veto_reason=verdict.veto_reason,
+                veto_ts=now, price_at_veto=state.last_price,
+                prenews_price=state.prenews_price,
+                pct_move=(verdict.numbers or {}).get("pct_move"),
+                vol_mult=state.vol_mult)
             return
 
         quote = await self.md.snapshot(thesis["ticker"])
@@ -427,6 +502,10 @@ async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
     if probe_secs > 0:
         await probe_marketdata(svc.md, probe_symbol)   # clear staleness at boot
     last_probe = time.monotonic()
+    # v0.12.10: periodic counterfactual sweep — after each session close,
+    # fill in what every vetoed thesis' stock actually did (§14 tuning data).
+    cf_secs = float(svc.cfg.get("counterfactual_sweep_secs", 600))
+    last_cf = time.monotonic()
     while not stop.is_set():
         # Periodic heartbeat (v0.11.7) — C3 used to write health only at
         # startup, so the dead-man flagged 'stale: gate' forever after 5 min.
@@ -439,6 +518,16 @@ async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
         if probe_secs > 0 and time.monotonic() - last_probe >= probe_secs:
             await probe_marketdata(svc.md, probe_symbol)
             last_probe = time.monotonic()
+        if cf_secs > 0 and time.monotonic() - last_cf >= cf_secs:
+            try:
+                filled = await counterfactual_sweep(svc.md)
+                if filled:
+                    log.info("counterfactuals filled", extra=kv(rows=filled))
+            except Exception as e:                            # noqa: BLE001
+                # measurement must never take down the gate
+                log.warning("counterfactual sweep failed",
+                            extra=kv(error=repr(e)[:200]))
+            last_cf = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:

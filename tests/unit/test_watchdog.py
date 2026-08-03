@@ -88,6 +88,34 @@ def test_dead_service_is_critical_with_since():
     assert "execution engine" in down["detail"]
 
 
+def test_transient_states_produce_no_findings():
+    # v0.12.10 — the v0.12.9 deploy restart raced a scheduled pass:
+    # 'deactivating' was reported as CRITICAL SERVICE_DOWN and emailed a
+    # false alert + RECOVERED pair. Mid-transition states are 'recheck next
+    # pass', not findings; a genuinely dead unit shows inactive/failed 5
+    # minutes later and still alerts.
+    for state in ("activating", "deactivating", "reloading", "refreshing"):
+        units = _healthy_units()
+        units["c4-exec.service"]["ActiveState"] = state
+        assert evaluate(_cfg(), units, {"exec": 1.0}, True) == [], state
+
+
+def test_transient_timer_produces_no_timer_down():
+    units = _healthy_units()
+    units["pipeline-nav-snapshot.timer"]["ActiveState"] = "activating"
+    assert "TIMER_DOWN" not in [x["code"] for x in
+                                evaluate(_cfg(), units, {"exec": 1.0}, True)]
+
+
+def test_stuck_service_still_caught_once_it_lands():
+    # the pass AFTER a transition: failed is not transient — still CRITICAL.
+    units = _healthy_units()
+    units["c4-exec.service"]["ActiveState"] = "failed"
+    codes = {(x["code"], x["severity"])
+             for x in evaluate(_cfg(), units, {"exec": 1.0}, True)}
+    assert ("SERVICE_DOWN", "CRITICAL") in codes
+
+
 def test_active_but_disabled_is_warning_only():
     units = _healthy_units()
     units["c1-ingestion.service"]["UnitFileState"] = "disabled"
