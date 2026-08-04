@@ -1,0 +1,12 @@
+[Unit]
+Description=Fire the A4 late pass every 10 min, 07:00-09:59 ET weekdays
+
+[Timer]
+# Fires alongside/after the 07:00 sheet run; the pass itself no-ops until
+# today's SHEET decision exists and stops once the market opens (holidays
+# no-op the same way — the sheet journals SKIPPED_NO_SESSION, never SHEET).
+OnCalendar=Mon..Fri 07..09:00/10 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=a4 late pass — pre-market overnight-queue drain (oneshot, fired by a4-late.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/.venv/bin/python -m a4_premarket.late
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal

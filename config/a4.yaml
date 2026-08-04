@@ -12,6 +12,9 @@ sheet:
   fallback_open_k: 5           # deterministic fallback: top-K -> open lane
   blackout_min: 15             # entries allowed from open + blackout (§4 C3)
   batch_max: 300               # safety cap per run
+  late_daily_max: 10           # v0.12.13: max open-handoffs the late passes
+                               # (07:00 ET sheet -> 09:30 open) may add per
+                               # day, on top of the sheet's ranked top_k
 
 narrative:                     # model-call parameters (SlotManager contract)
   max_tokens: 1400
