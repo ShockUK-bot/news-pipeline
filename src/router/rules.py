@@ -29,6 +29,8 @@ OVERNIGHT_QUEUE = "signal.overnight"
 class Route:
     queue: str
     priority: int
+    origin: str | None = None   # v0.12.11: tag stamped onto THIS route's copy
+                                # of the message (eh_shadow); None = untagged
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,8 @@ class RoutingDecision:
 
 
 def route(triage: TriageOutput, facts: RoutingFacts,
-          overnight_base: int = 50, min_confidence: float = 0.0) -> RoutingDecision:
+          overnight_base: int = 50, min_confidence: float = 0.0,
+          eh_shadow: bool = False) -> RoutingDecision:
     routes: list[Route] = []
 
     # Rule 1 — guard fan-out happens regardless of the outcome below.
@@ -63,5 +66,12 @@ def route(triage: TriageOutput, facts: RoutingFacts,
     else:
         routes.append(Route(OVERNIGHT_QUEUE,
                             max(0, overnight_base - facts.priority_score)))
+        # v0.12.11 EH shadow: during the pre/post extended sessions the SAME
+        # signal also goes to A2 NOW, tagged eh_shadow. C3 evaluates it
+        # observe-only (WOULD_TRADE / VETO journal rows + counterfactuals,
+        # never signal.risk). The overnight copy above is untouched — the
+        # real premarket path is unchanged.
+        if eh_shadow and facts.eh_session:
+            routes.append(Route(ANALYST_QUEUE, 100, origin="eh_shadow"))
     return RoutingDecision("ESCALATE", tuple(routes))
 

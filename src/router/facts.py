@@ -96,21 +96,25 @@ class RoutingFacts:
     position_ids: list[int] = field(default_factory=list)
     thesis_matches: list[str] = field(default_factory=list)
     priority_score: int = 0
+    eh_session: str | None = None      # v0.12.11: 'pre' | 'post' | None
 
     def payload(self) -> dict:
         return {"market_open": self.market_open, "position_ids": self.position_ids,
                 "thesis_matches": self.thesis_matches,
-                "priority_score": self.priority_score}
+                "priority_score": self.priority_score,
+                "eh_session": self.eh_session}
 
 
 async def compute_facts(tickers: list[str], source_tier: int, urgency: str,
                         novelty: float, independent_outlets: int,
                         router_cfg: dict, now: datetime | None = None) -> RoutingFacts:
+    from common.clock import extended_session
     return RoutingFacts(
         market_open=market_open_now(now),
         position_ids=await open_position_ids(tickers),
         thesis_matches=await thesis_matches(tickers),
         priority_score=priority_score(source_tier, urgency, novelty,
                                       independent_outlets, router_cfg),
+        eh_session=extended_session(now),
     )
 

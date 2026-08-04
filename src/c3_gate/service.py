@@ -29,8 +29,8 @@ from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
 from .counterfactual import record_veto, sweep as counterfactual_sweep
-from .rules import (GateVerdict, MarketState, ScannerState, evaluate,
-                    evaluate_scanner)
+from .rules import (EHState, GateVerdict, MarketState, ScannerState, evaluate,
+                    evaluate_eh, evaluate_scanner)
 
 log = get_logger("c3.service")
 
@@ -306,6 +306,76 @@ class C3Service:
         log.info("gate PASS", extra=kv(signal_id=signal_id, ticker=ticker,
                                        rule="scanner", atr_method=atr_method))
 
+    async def _handle_eh_shadow(self, msg, body: dict, thesis: dict,
+                                item_ref: dict, signal_id: str) -> None:
+        """v0.12.11 — the observe-only extended-hours lane. Journals ONE
+        decision (WOULD_TRADE or VETO, rule=eh_shadow) plus a counterfactual
+        row, and stops. There is deliberately NO enqueue to signal.risk
+        anywhere in this method: shadow mode cannot place an order by
+        construction, not by configuration."""
+        ecfg = self.cfg.get("eh_shadow") or {}
+        item_id = item_ref.get("item_id")
+        revision = int(item_ref.get("revision") or 1)
+        ticker = thesis["ticker"]
+        now = self.now_fn()
+        if not ecfg.get("enabled", True):
+            log.info("eh shadow disabled — dropping", extra=kv(
+                signal_id=signal_id, ticker=ticker))
+            return
+
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT published_ts FROM news.news_items WHERE item_id=%s AND revision=%s",
+                (item_id, revision))
+            row = await cur.fetchone()
+        if row is None:
+            raise ValueError(f"item not in news store: {item_id} rev {revision}")
+        published_ts = row[0]
+
+        from common.clock import extended_session
+        session = extended_session(now) or "closed"
+
+        quote = await self.md.snapshot(ticker)
+        prev = await self.md.prev_close(ticker)
+        pre_bars = await self.md.minute_bars(
+            ticker, published_ts - timedelta(minutes=30), published_ts)
+        prenews = pre_bars[-1]["close"] if pre_bars else prev
+        outlets, tier_min = await _corroboration(item_id)
+
+        state = EHState(
+            prenews_price=prenews, last_price=quote.price,
+            bid=quote.bid, ask=quote.ask, spread_bps=quote.spread_bps,
+            minutes_since_publish=int((now - published_ts).total_seconds() // 60),
+            session=session, corroboration_outlets=outlets, tier_min=tier_min)
+        verdict = evaluate_eh(thesis, state, self.cfg)
+
+        would = verdict.verdict == "WOULD_TRADE"
+        decision_id = await write_decision(
+            signal_id=signal_id, item_id=item_id, item_revision=revision,
+            ticker=ticker, stage="GATE", agent="C3",
+            action="WOULD_TRADE" if would else "VETO",
+            veto_reason=None if would else verdict.veto_reason,
+            payload={"rule": "eh_shadow", "origin": "eh_shadow",
+                     **(verdict.numbers or {})},
+            reason=("would trade (eh shadow, observe-only)" if would else
+                    f"{verdict.veto_reason} (eh_shadow)"),
+            regime_id=body.get("regime_id"))
+        log.info("eh shadow", extra=kv(
+            signal_id=signal_id, ticker=ticker, session=session,
+            outcome="WOULD_TRADE" if would else verdict.veto_reason,
+            spread_bps=state.spread_bps))
+        nums = verdict.numbers or {}
+        await record_veto(
+            decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+            ticker=ticker, direction=thesis.get("direction") or "up",
+            rule="eh_shadow",
+            veto_reason="WOULD_TRADE" if would else verdict.veto_reason,
+            veto_ts=now,
+            price_at_veto=(nums.get("hypothetical_entry") or state.last_price),
+            prenews_price=state.prenews_price,
+            pct_move=nums.get("pct_move"), vol_mult=None)
+
     async def handle(self, msg) -> None:
         body = msg.payload.get("body") or {}
         thesis = body.get("thesis") or {}
@@ -325,6 +395,10 @@ class C3Service:
                   .get("origin") or "news")
         if origin == "scanner":
             await self._handle_scanner(msg, body, thesis, item_ref, signal_id)
+            return
+        # v0.12.11: extended-hours SHADOW — journal + measure, never trade.
+        if origin == "eh_shadow":
+            await self._handle_eh_shadow(msg, body, thesis, item_ref, signal_id)
             return
 
         pool = await get_pool()

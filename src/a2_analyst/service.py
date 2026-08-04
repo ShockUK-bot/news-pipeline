@@ -182,7 +182,13 @@ class A2Service:
                                revision, gate_body)
                 out["envelope"]["trace"]["decision_id"] = decision_id
                 out["envelope"]["trace"]["origin"] = origin
-                await enqueue(GATE_QUEUE, f"{signal_id}:{revision}", out, conn=conn)
+                # v0.12.11: the eh_shadow copy gets its own dedup key so the
+                # REAL morning thesis for the same signal (A4 open-candidate
+                # path) is never swallowed by ON CONFLICT DO NOTHING.
+                gate_key = (f"{signal_id}:{revision}:ehshadow"
+                            if origin == "eh_shadow"
+                            else f"{signal_id}:{revision}")
+                await enqueue(GATE_QUEUE, gate_key, out, conn=conn)
 
                 # Sympathy fan-out (spec §10): ONLY a primary thesis — one
                 # derived directly from a real news item — may spawn synthetic

@@ -121,6 +121,77 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
 
 
 # ---------------------------------------------------------------------------
+# Extended-hours SHADOW branch (v0.12.11) — observe-only
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EHState:
+    """Quote-based state for the extended-hours shadow evaluation. There is
+    no vol_mult / VWAP here on purpose: pre/post books are thin and the RTH
+    volume machinery is meaningless — liquidity is judged from the live
+    quote (two-sided market + spread), which is also exactly what a real EH
+    limit order would face."""
+    prenews_price: float
+    last_price: float
+    bid: Optional[float]
+    ask: Optional[float]
+    spread_bps: Optional[float]
+    minutes_since_publish: int
+    session: str                       # 'pre' | 'post'
+    corroboration_outlets: int
+    tier_min: int
+
+
+def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
+    """Would we have traded this in extended hours? Verdict WOULD_TRADE is
+    journaled and measured (counterfactuals) but NEVER executed — no
+    signal.risk message exists on this branch, by construction.
+
+    Check order mirrors the intraday rule where semantics carry over
+    (LONG_ONLY, CREDIBILITY, freshness window, already-extended) and
+    replaces volume confirmation with quote-based liquidity: a real
+    two-sided market tighter than eh_shadow.max_spread_bps. One-shot by
+    design — the strategy being measured is 'trade the news AT ARRIVAL in
+    the extended session'; there is no re-check window here."""
+    ecfg = cfg.get("eh_shadow") or {}
+    pct_move = ((s.last_price - s.prenews_price) / s.prenews_price
+                if s.prenews_price else 0.0)
+    numbers = {"pct_move": round(pct_move, 5), "bid": s.bid, "ask": s.ask,
+               "spread_bps": s.spread_bps,
+               "minutes": s.minutes_since_publish, "session": s.session,
+               "corroboration": {"independent_outlets": s.corroboration_outlets,
+                                 "tier_min": s.tier_min}}
+    rule = "eh_shadow"
+
+    if thesis["direction"] != "up":
+        return GateVerdict("VETO", rule, "LONG_ONLY", numbers)
+
+    impact = _impact_bucket(float(thesis["magnitude_est"]), cfg)
+    required = credibility_required(impact, s.tier_min,
+                                    thesis["source_risk"], cfg)
+    numbers["credibility"] = {"impact": impact, "required_outlets": required}
+    if s.corroboration_outlets < required:
+        return GateVerdict("VETO", rule, "CREDIBILITY", numbers)
+
+    if s.minutes_since_publish > float(ecfg.get("window_min", 30)):
+        return GateVerdict("VETO", rule, "GATE_WINDOW", numbers)
+    if pct_move >= cfg["extended_pct"]:
+        return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
+
+    # liquidity: a real, two-sided, tradeable quote — the EH equivalent of
+    # confirmation. Missing/one-sided/inverted quotes and wide spreads all
+    # fail here (fail closed: this branch PROPOSES a hypothetical entry).
+    if (s.bid is None or s.ask is None or s.bid <= 0 or s.ask <= s.bid
+            or s.last_price <= 0 or s.spread_bps is None):
+        return GateVerdict("VETO", rule, "EH_LIQUIDITY", numbers)
+    if s.spread_bps > float(ecfg.get("max_spread_bps", 100)):
+        return GateVerdict("VETO", rule, "EH_LIQUIDITY", numbers)
+
+    numbers["hypothetical_entry"] = s.ask     # a marketable EH limit buys the ask
+    return GateVerdict("WOULD_TRADE", rule, None, numbers)
+
+
+# ---------------------------------------------------------------------------
 # Scanner-origin branch (v0.12.1)
 # ---------------------------------------------------------------------------
 

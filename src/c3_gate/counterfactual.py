@@ -124,8 +124,14 @@ async def sweep(md, now: datetime | None = None, limit: int = 25) -> int:
         stale = (now - veto_ts) > timedelta(hours=GIVE_UP_HOURS)
         session = _session_window(veto_ts)
         close_ts = session[1] if session else None
+        if close_ts is None or close_ts <= veto_ts:
+            # v0.12.11: post-market and weekend rows (eh_shadow) measure into
+            # the NEXT session — walk forward to the first close after the
+            # veto. SIP minute bars include the extended sessions, so the
+            # overnight/pre-market tape is part of the excursion honestly.
+            close_ts = _next_close_after(veto_ts)
         if close_ts is None:
-            await _finish(cf_id, {}, "no session for veto date")
+            await _finish(cf_id, {}, "no session within 5 days of veto")
             filled += 1
             continue
         if now < close_ts + timedelta(minutes=FILL_BUFFER_MIN) and not stale:
@@ -146,6 +152,17 @@ async def sweep(md, now: datetime | None = None, limit: int = 25) -> int:
             await _finish(cf_id, {}, "gave up: no bars within 48h")
             filled += 1
     return filled
+
+
+def _next_close_after(ts: datetime):
+    """First session close strictly after ts, walking up to 5 calendar days
+    (covers long weekends). None if no session found in range."""
+    from .service import _session_window
+    for d in range(0, 6):
+        session = _session_window(ts + timedelta(days=d))
+        if session and session[1] > ts:
+            return session[1]
+    return None
 
 
 async def _finish(cf_id: int, out: dict, note: str) -> None:

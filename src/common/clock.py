@@ -78,6 +78,24 @@ def is_market_hours(dt: datetime | None = None) -> bool:
     return (9 * 60 + 30) <= minutes < (16 * 60)
 
 
+def extended_session(dt: datetime | None = None) -> str | None:
+    """'pre' (4:00-9:30 ET), 'post' (16:00-20:00 ET) on weekdays — the
+    Alpaca extended-hours trading windows — else None. v0.12.11, feeds the
+    EH shadow lane. Same coarseness contract as is_market_hours (no holiday
+    calendar): on a holiday this may say 'pre'/'post', and the shadow
+    evaluation then finds no quotes/bars and records EH_LIQUIDITY — missing
+    data is the ground truth, and no real order is ever at stake."""
+    et = (dt or utcnow()).astimezone(_ET)
+    if et.weekday() >= 5:
+        return None
+    minutes = et.hour * 60 + et.minute
+    if (4 * 60) <= minutes < (9 * 60 + 30):
+        return "pre"
+    if (16 * 60) <= minutes < (20 * 60):
+        return "post"
+    return None
+
+
 def session_open(dt: datetime | None = None) -> datetime | None:
     """UTC timestamp of the 9:30 ET session open for dt's ET calendar date,
     or None on weekends. Same coarseness contract as is_market_hours (no

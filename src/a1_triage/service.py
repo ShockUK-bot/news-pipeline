@@ -183,7 +183,11 @@ class A1Service:
             router_cfg=self.router_cfg)
         decision = route(triage, facts,
                          overnight_base=int(self.router_cfg.get("overnight_base", 50)),
-                         min_confidence=self.min_confidence)
+                         min_confidence=self.min_confidence,
+                         # v0.12.11: primary news signals only — the
+                         # synthetic (sympathy) lane keeps eh_shadow off
+                         eh_shadow=bool(self.router_cfg.get(
+                             "eh_shadow_enabled", False)))
 
         triaged_body = {
             "item_ref": {"item_id": item_id, "revision": revision,
@@ -216,7 +220,20 @@ class A1Service:
                                    revision, triaged_body)
                 msg_out["envelope"]["trace"]["decision_id"] = decision_id
                 for r in decision.routes:
-                    await enqueue(r.queue, f"{item_id}:{revision}", msg_out,
+                    out_r, key = msg_out, f"{item_id}:{revision}"
+                    if r.origin:
+                        # v0.12.11: a tagged route gets its OWN copy of the
+                        # message (origin stamped into body + trace) and its
+                        # own dedup key — the eh_shadow copy on signal.analyst
+                        # must never collide with A4's real morning
+                        # re-enqueue of the same item (ON CONFLICT DO
+                        # NOTHING would silently drop the real one).
+                        import copy as _copy
+                        out_r = _copy.deepcopy(msg_out)
+                        out_r["body"]["origin"] = r.origin
+                        out_r["envelope"]["trace"]["origin"] = r.origin
+                        key = f"{item_id}:{revision}:{r.origin}"
+                    await enqueue(r.queue, key, out_r,
                                   priority=r.priority, conn=conn)
 
         if triage.material:

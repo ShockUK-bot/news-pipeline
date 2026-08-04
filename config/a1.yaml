@@ -43,6 +43,12 @@ router:
   # detection anyway; 15 is a generous ceiling. Guards against consumer
   # downtime leaving a queue of dead movers (2026-07-28 outage week).
   scanner_expire_min: 15
+  # v0.12.11: extended-hours SHADOW routing. During pre/post sessions an
+  # escalated tickered signal is ALSO sent to A2 immediately, tagged
+  # eh_shadow; C3 journals WOULD_TRADE/VETO observe-only (no order path).
+  # The signal.overnight copy and the whole premarket lane are unchanged.
+  # Set false to stop shadow evaluations (extra A2 calls) entirely.
+  eh_shadow_enabled: true
 
 # v0.4.7 story-level repeat suppression (see src/a1_triage/suppression.py).
 # One story cluster = at most one analysis per window unless materially new
