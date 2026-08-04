@@ -90,6 +90,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
   <button id="tabLive" class="on">LIVE</button>
   <button id="tabHist">HISTORY</button>
   <button id="tabPerf">PERFORMANCE</button>
+  <button id="tabLab">GATE LAB</button>
 </div>
 
 <div id="live" class="grid">
@@ -125,6 +126,27 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
       <table><thead><tr><th>Date</th><th>Portfolio</th><th>SPY</th><th>QQQ</th></tr></thead>
       <tbody id="perfTable"></tbody></table></div></details>
   </div>
+</div>
+
+<div id="lab" class="grid" style="display:none">
+  <div class="panel">
+    <h2>Today at the gate <span class="micro">avg minutes = when the final verdict landed (re-check window live when &gt; 6)</span></h2>
+    <table><thead><tr><th>Action</th><th>Reason</th><th>Count</th><th>Avg minutes</th></tr></thead>
+    <tbody id="labToday"></tbody></table></div>
+  <div class="panel">
+    <h2>Veto counterfactuals — regular hours <span class="micro" id="labDays"></span></h2>
+    <div class="micro" style="margin-bottom:6px">avg best % = mean max favorable move after the veto; big positive on GATE_NO_CONFIRM means the gate is leaving money on the table, near zero means the vetoes are earning their keep</div>
+    <table><thead><tr><th>Veto reason</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
+    <tbody id="labRth"></tbody></table></div>
+  <div class="panel">
+    <h2>Extended-hours shadow — outcome mix</h2>
+    <table><thead><tr><th>Outcome</th><th>Total</th><th>Measured</th><th>Avg EOD %</th></tr></thead>
+    <tbody id="labEh"></tbody></table></div>
+  <div class="panel">
+    <h2>Shadow would-trades <span class="micro">what a real EH entry at the ask would have done (no order was placed)</span></h2>
+    <table><thead><tr><th>When</th><th>Ticker</th><th>Move at entry</th><th>Entry</th><th>To close</th><th>Best</th><th>Worst</th></tr></thead>
+    <tbody id="labTrades"></tbody></table>
+    <div class="micro" id="labPending" style="margin-top:8px"></div></div>
 </div>
 
 <div id="hist" class="grid" style="display:none">
@@ -417,8 +439,36 @@ function drawPerf(){
   $('perfCatch').addEventListener('mouseleave',()=>{ hov.innerHTML=''; tip.style.display='none'; });
 }
 
+// ---- GATE LAB tab (v0.12.12) ----------------------------------------------
+let labTimer=null;
+const sgn=v=>v==null?'—':`<span class="${v>=0?'gain':'loss'}">${v>=0?'+':''}${Number(v).toFixed(2)}%</span>`;
+async function loadLab(){
+  let d=null; try{ d=await api('/api/gatelab'); }catch(e){ return; }
+  $('labDays').textContent='last '+d.days+' days';
+  $('labToday').innerHTML=(d.today||[]).map(r=>
+    `<tr><td class="${r.action==='WOULD_TRADE'?'gain':/VETO/.test(r.action)?'loss':''}">${r.action}</td>
+     <td>${r.reason}</td><td>${r.n}</td><td>${r.avg_minutes??'—'}</td></tr>`).join('')
+    ||'<tr><td colspan="4" class="detail">no gate decisions yet today</td></tr>';
+  $('labRth').innerHTML=(d.rth||[]).map(r=>
+    `<tr><td>${r.veto_reason}</td><td>${r.total}</td><td>${r.measured}</td>
+     <td>${sgn(r.avg_best_pct)}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
+    ||'<tr><td colspan="5" class="detail">no measured vetoes yet — rows fill ~30 min after each close</td></tr>';
+  $('labEh').innerHTML=(d.eh||[]).map(r=>
+    `<tr><td class="${r.outcome==='WOULD_TRADE'?'gain':''}">${r.outcome}</td>
+     <td>${r.total}</td><td>${r.measured}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
+    ||'<tr><td colspan="4" class="detail">no extended-hours evaluations yet — first ones arrive pre-market (3:00–8:30 AM CT)</td></tr>';
+  $('labTrades').innerHTML=(d.eh_trades||[]).map(r=>
+    `<tr><td class="detail">${new Date(r.ts*1000).toLocaleString()}</td><td>${r.ticker}</td>
+     <td>${sgn(r.move_at_entry_pct)}</td><td>${px(r.entry)}</td>
+     <td>${r.complete?sgn(r.entry_to_close_pct):'<span class="detail">measuring…</span>'}</td>
+     <td>${r.complete?sgn(r.best_pct):'—'}</td><td>${r.complete?sgn(r.worst_pct):'—'}</td></tr>`).join('')
+    ||'<tr><td colspan="7" class="detail">no shadow would-trades yet</td></tr>';
+  $('labPending').textContent=d.pending?`${d.pending} row(s) still measuring — outcomes fill after the session closes`:'';
+}
+
 function showTab(which){
-  const tabs={live:['tabLive','live'],hist:['tabHist','hist'],perf:['tabPerf','perf']};
+  const tabs={live:['tabLive','live'],hist:['tabHist','hist'],perf:['tabPerf','perf'],
+              lab:['tabLab','lab']};
   for(const t in tabs){
     $(tabs[t][0]).classList.toggle('on',t===which);
     $(tabs[t][1]).style.display=(t===which)?'':'none';
@@ -428,13 +478,15 @@ function showTab(which){
   const cp=document.getElementById('chatPanel'), tc=document.getElementById('tabChat');
   if(cp) cp.style.display='none';
   if(tc) tc.classList.remove('on');
-  clearInterval(histTimer); clearInterval(perfTimer);
+  clearInterval(histTimer); clearInterval(perfTimer); clearInterval(labTimer);
   if(which==='hist'){ loadHistory(); histTimer=setInterval(loadHistory,5000); }
   if(which==='perf'){ loadPerf(); perfTimer=setInterval(loadPerf,60000); }
+  if(which==='lab'){ loadLab(); labTimer=setInterval(loadLab,30000); }
 }
 $('tabLive').onclick=()=>showTab('live');
 $('tabHist').onclick=()=>showTab('hist');
 $('tabPerf').onclick=()=>showTab('perf');
+$('tabLab').onclick=()=>showTab('lab');
 $('gran').onchange=loadHistory;
 
 async function guarded(path,extra){

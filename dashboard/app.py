@@ -221,6 +221,69 @@ async def api_performance(user: str = Depends(_require_user)):
     return _json({"first_trade_date": first_date.isoformat(), "series": series})
 
 
+@app.get("/api/gatelab")
+async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
+    """GATE LAB tab (v0.12.12): the measurement views for the two Aug-03
+    builds — v0.12.10 veto counterfactuals (what did each gate veto cost or
+    save?) and v0.12.11 extended-hours shadow results (would EH trading
+    have worked?). Read-only aggregates over journal.gate_counterfactuals
+    and journal.decisions; fetched on tab open, not in the WS push."""
+    days = max(1, min(int(days), 60))
+    async with await _connect() as conn:
+        # today's gate activity with avg evaluation minute — shows the
+        # re-check window working (final vetoes at ~29 min, not only 3-6)
+        today = [dict(r) for r in await (await conn.execute("""
+            SELECT action, COALESCE(veto_reason, '-') AS reason, count(*) AS n,
+                   round(avg((payload->>'minutes')::numeric), 1) AS avg_minutes
+            FROM journal.decisions
+            WHERE stage='GATE' AND ts::date = current_date
+            GROUP BY 1, 2 ORDER BY 3 DESC""")).fetchall()]
+        # RTH veto counterfactuals: by reason, what happened after the veto
+        rth = [dict(r) for r in await (await conn.execute("""
+            SELECT veto_reason, count(*) AS total,
+                   count(*) FILTER (WHERE complete) AS measured,
+                   round(avg(max_up_pct) FILTER (WHERE complete) * 100, 2)
+                       AS avg_best_pct,
+                   round(avg((price_eod - price_at_veto)
+                             / NULLIF(price_at_veto, 0))
+                         FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
+            FROM journal.gate_counterfactuals
+            WHERE rule <> 'eh_shadow'
+              AND veto_ts > now() - make_interval(days => %s)
+            GROUP BY 1 ORDER BY 2 DESC""", (days,))).fetchall()]
+        # EH shadow scoreboard: outcome mix during pre/post sessions
+        eh = [dict(r) for r in await (await conn.execute("""
+            SELECT veto_reason AS outcome, count(*) AS total,
+                   count(*) FILTER (WHERE complete) AS measured,
+                   round(avg((price_eod - price_at_veto)
+                             / NULLIF(price_at_veto, 0))
+                         FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
+            FROM journal.gate_counterfactuals
+            WHERE rule = 'eh_shadow'
+              AND veto_ts > now() - make_interval(days => %s)
+            GROUP BY 1 ORDER BY 2 DESC""", (days,))).fetchall()]
+        # the shadow would-trades in detail — the live-EH build decision data
+        eh_trades = [dict(r) for r in await (await conn.execute("""
+            SELECT EXTRACT(EPOCH FROM veto_ts) AS ts, ticker,
+                   round(pct_move_at_veto * 100, 2)  AS move_at_entry_pct,
+                   round(price_at_veto, 2)           AS entry,
+                   round(((price_eod - price_at_veto)
+                          / NULLIF(price_at_veto, 0)) * 100, 2)
+                                                     AS entry_to_close_pct,
+                   round(max_up_pct * 100, 2)        AS best_pct,
+                   round(max_down_pct * 100, 2)      AS worst_pct,
+                   complete
+            FROM journal.gate_counterfactuals
+            WHERE rule = 'eh_shadow' AND veto_reason = 'WOULD_TRADE'
+              AND veto_ts > now() - make_interval(days => %s)
+            ORDER BY veto_ts DESC LIMIT 25""", (days,))).fetchall()]
+        pending = (await (await conn.execute(
+            "SELECT count(*) AS n FROM journal.gate_counterfactuals "
+            "WHERE NOT complete")).fetchone())["n"]
+    return _json({"days": days, "today": today, "rth": rth, "eh": eh,
+                  "eh_trades": eh_trades, "pending": int(pending)})
+
+
 @app.get("/api/ws-token")
 async def api_ws_token(user: str = Depends(_require_user)):
     token = secrets.token_urlsafe(24)
