@@ -1,9 +1,20 @@
-"""A4 late pass (v0.12.13) — oneshot, fired by a4-late.timer every 10 minutes
-between 07:00 and 09:59 ET on weekdays. Closes the pre-market blind window:
-before this, `signal.overnight` was drained exactly once per day (the 07:00 ET
-sheet run), so news breaking between the sheet and the 09:30 open sat unread
-until the NEXT morning and died of staleness (2026-08-04: the PLTR
-"analysts turning bullish" item, escalated 07:46 ET, was never seen that day).
+"""A4 late pass (v0.12.13; budget pacing v0.12.15) — oneshot, fired by
+a4-late.timer every 10 minutes between 07:00 and 09:59 ET on weekdays.
+Closes the pre-market blind window: before v0.12.13, `signal.overnight` was
+drained exactly once per day (the 07:00 ET sheet run), so news breaking
+between the sheet and the 09:30 open sat unread until the NEXT morning and
+died of staleness (2026-08-04: the PLTR "analysts turning bullish" item,
+escalated 07:46 ET, was never seen that day).
+
+v0.12.15 — the budget is PACED, not first-come-first-served. On the first
+busy earnings morning (2026-08-05) the v0.12.13 daily budget of 10 was
+consumed entirely by the 07:10 ET pass; ~140 later pre-market signals
+(GOOG, LLY, AZN, MRVL, SHOP among them) were IGNOREd over-budget — the
+PLTR pattern reborn one layer up. Now each pass may forward only its
+allowance = min(late_pass_max, ceil(remaining_budget / remaining_passes)),
+so budget survives to the final pre-open pass by construction, and items
+that lose a pass are DEFERRED back to the queue (attempt refunded) to
+compete again next pass instead of being discarded.
 
 Flow (deterministic, NO model call — A2/C3 remain the judges at the open):
   1. Guards: exit silently unless (a) today's SHEET decision exists (the
@@ -11,17 +22,21 @@ Flow (deterministic, NO model call — A2/C3 remain the judges at the open):
      front-runs it), and (b) the session hasn't opened yet (once the market
      is open, router rule 4 sends new items straight to signal.analyst, so
      there is nothing for this pass to do).
-  2. Claim fresh overnight messages. Code-routes first, identical to the
-     sheet run: open-position tickers -> signal.guard (priority 0);
-     no tickers -> signal.thesis (A5's nightly lane).
+  2. Claim fresh + previously-deferred overnight messages. Code-routes
+     first, identical to the sheet run: open-position tickers ->
+     signal.guard (priority 0); no tickers -> signal.thesis (A5's lane).
   3. Remaining candidates, ordered by queue priority (which encodes A1's
-     priority_score): the top N — bounded by sheet.late_daily_max minus what
-     earlier late passes already forwarded today — are re-enqueued on
-     signal.analyst with available_ts = open + blackout (the same
-     queue-native delayed open-handoff the sheet's open_candidates use, same
-     dedup key, so an item can never be forwarded twice) and journaled as
-     PREMARKET/LATE_CANDIDATE. Over-budget items journal PREMARKET/IGNORE
-     ("late-window daily budget exhausted") — visible, never silent.
+     priority_score): the top `allowance` are re-enqueued on signal.analyst
+     with available_ts = open + blackout (the same queue-native delayed
+     open-handoff the sheet's open_candidates use, same dedup key, so an
+     item can never be forwarded twice) and journaled as
+     PREMARKET/LATE_CANDIDATE. The rest: while daily budget remains they
+     are deferred to the next pass (visible again in ~9 minutes, attempt
+     refunded — repeated deferral can never DLQ them); once the daily
+     budget is truly gone they journal PREMARKET/IGNORE ("late-window
+     daily budget exhausted") — visible, never silent. Items still
+     deferred at the open simply stay on signal.overnight and are ranked
+     by tomorrow's 07:00 sheet like any other overnight item.
 
 The daily budget keeps the open-handoff token spend bounded: the sheet run
 forwards at most top_k ranked candidates; late passes add at most
@@ -31,6 +46,7 @@ checks are untouched — this release only guarantees fresh signals REACH them.
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import datetime, timedelta
 
 from common.config import config_path, load_yaml
@@ -38,7 +54,7 @@ from common.clock import utcnow
 from common.db import get_pool
 from common.journal import register_config_version, write_decision
 from common.log import get_logger, kv
-from common.queue import ack, claim, enqueue, fail
+from common.queue import ack, claim, defer, enqueue, fail
 
 from .service import (ANALYST_QUEUE, ET, GUARD_QUEUE, IN_QUEUE,
                       THESIS_QUEUE, enqueue_delayed, fetch_headline,
@@ -48,6 +64,11 @@ from router.facts import open_position_ids
 log = get_logger("a4.late")
 
 LATE_CONSUMER = "a4-late"
+
+# The timer fires every 10 minutes; deferred items become visible again
+# shortly before the next firing so they are always in the next pass's pool.
+PASS_CADENCE_MIN = 10
+DEFER_SECS = 540
 
 
 # --------------------------------------------------------------------------
@@ -70,14 +91,38 @@ def should_run(now: datetime, sheet_done: bool, open_ts: datetime) -> bool:
     return sheet_done and same_session and now < open_ts
 
 
+def passes_remaining(now: datetime, open_ts: datetime,
+                     cadence_min: int = PASS_CADENCE_MIN) -> int:
+    """Timer firings left before the open, INCLUDING the current one.
+    Never less than 1 (the caller only runs pre-open)."""
+    if now >= open_ts:
+        return 1
+    gap_min = (open_ts - now).total_seconds() / 60.0
+    return int(gap_min // cadence_min) + 1
+
+
 def plan_forwarding(candidates: list[dict], already_forwarded: int,
-                    late_daily_max: int) -> tuple[list[dict], list[dict]]:
-    """Split candidates (any order) into (forward, over_budget). Forward the
-    best remaining budget's worth by queue priority (ascending — lower is
-    more urgent, matching queue.claim_next ordering)."""
+                    late_daily_max: int, late_pass_max: int = 4,
+                    remaining_passes: int = 1,
+                    ) -> tuple[list[dict], list[dict], int]:
+    """Split candidates (any order) into (forward, rest) plus this pass's
+    allowance. Forwarding order is queue priority ascending — lower is more
+    urgent, matching queue.claim_next — with msg_id (FIFO) as tie-break.
+
+    v0.12.15 pacing: allowance = min(late_pass_max,
+    ceil(remaining_budget / remaining_passes)). Spending exactly the
+    allowance each pass leaves at least one budget slot for every remaining
+    pass down to the last one before the open, so an early flood can no
+    longer consume the whole day (2026-08-05: budget of 10 gone at the
+    first 07:10 ET pass; ~140 later signals dropped unmeasured)."""
     budget = max(0, late_daily_max - already_forwarded)
+    if budget == 0:
+        allowance = 0
+    else:
+        allowance = min(late_pass_max, budget,
+                        math.ceil(budget / max(1, remaining_passes)))
     ordered = sorted(candidates, key=lambda c: (c["priority"], c["msg_id"]))
-    return ordered[:budget], ordered[budget:]
+    return ordered[:allowance], ordered[allowance:], allowance
 
 
 # --------------------------------------------------------------------------
@@ -106,7 +151,8 @@ async def run_late_pass(cfg: dict, now: datetime | None = None) -> dict:
     scfg = cfg.get("sheet") or {}
     blackout = int(scfg.get("blackout_min", 15))
     batch_max = int(scfg.get("batch_max", 300))
-    late_daily_max = int(scfg.get("late_daily_max", 10))
+    late_daily_max = int(scfg.get("late_daily_max", 24))
+    late_pass_max = int(scfg.get("late_pass_max", 4))
 
     entry_ts = next_entry_ts(now, blackout)
     open_ts = open_ts_from_entry(entry_ts, blackout)
@@ -183,7 +229,10 @@ async def run_late_pass(cfg: dict, now: datetime | None = None) -> dict:
         by_msg[msg.msg_id] = msg
 
     already = await late_forwarded_today(session_date)
-    forward, over_budget = plan_forwarding(candidates, already, late_daily_max)
+    passes_left = passes_remaining(now, open_ts)
+    forward, rest, allowance = plan_forwarding(
+        candidates, already, late_daily_max, late_pass_max, passes_left)
+    budget_after = max(0, late_daily_max - already - len(forward))
 
     for c in forward:
         msg = by_msg[c["msg_id"]]
@@ -197,6 +246,8 @@ async def run_late_pass(cfg: dict, now: datetime | None = None) -> dict:
                     payload={"headline": c["headline"],
                              "priority": c["priority"],
                              "entry_ts": entry_ts.isoformat(),
+                             "pass_allowance": allowance,
+                             "passes_left": passes_left,
                              "session_date": session_date},
                     reason="arrived after the 07:00 ET sheet — forwarded to "
                            "the open (late pass)", conn=conn)
@@ -208,20 +259,31 @@ async def run_late_pass(cfg: dict, now: datetime | None = None) -> dict:
                                             item_id=c["item_id"],
                                             priority=c["priority"]))
 
-    for c in over_budget:
-        msg = by_msg[c["msg_id"]]
-        await write_decision(
-            signal_id=c["item_id"], item_id=c["item_id"],
-            item_revision=c["revision"], ticker=c["tickers"][0],
-            stage="PREMARKET", agent="A4", action="IGNORE",
-            payload={"headline": c["headline"], "priority": c["priority"],
-                     "session_date": session_date, "late": True},
-            reason=f"late-window daily budget exhausted "
-                   f"({late_daily_max} forwarded)")
-        await ack(msg.msg_id)
+    deferred = ignored = 0
+    for c in rest:
+        if budget_after > 0:
+            # Daily budget survives — this item lost only THIS pass's
+            # ranking. Refund its attempt and let it compete again next
+            # pass (or be ranked by tomorrow's sheet if the open arrives
+            # first). No journal spam for a scheduling decision.
+            await defer(c["msg_id"], DEFER_SECS)
+            deferred += 1
+        else:
+            await write_decision(
+                signal_id=c["item_id"], item_id=c["item_id"],
+                item_revision=c["revision"], ticker=c["tickers"][0],
+                stage="PREMARKET", agent="A4", action="IGNORE",
+                payload={"headline": c["headline"], "priority": c["priority"],
+                         "session_date": session_date, "late": True},
+                reason=f"late-window daily budget exhausted "
+                       f"({late_daily_max} forwarded)")
+            await ack(c["msg_id"])
+            ignored += 1
 
     stats = {"ran": True, "session_date": session_date, "fresh": len(claimed),
-             "forwarded": len(forward), "over_budget": len(over_budget),
+             "forwarded": len(forward), "deferred": deferred,
+             "over_budget": ignored, "allowance": allowance,
+             "passes_left": passes_left, "budget_left": budget_after,
              "guard_routed": guard_routed, "thesis_routed": thesis_routed,
              "entry_ts": entry_ts.isoformat()}
     log.info("late pass done", extra=kv(**stats))

@@ -12,9 +12,17 @@ sheet:
   fallback_open_k: 5           # deterministic fallback: top-K -> open lane
   blackout_min: 15             # entries allowed from open + blackout (§4 C3)
   batch_max: 300               # safety cap per run
-  late_daily_max: 10           # v0.12.13: max open-handoffs the late passes
-                               # (07:00 ET sheet -> 09:30 open) may add per
-                               # day, on top of the sheet's ranked top_k
+  late_daily_max: 24           # v0.12.13/15: max open-handoffs the late
+                               # passes (07:00 ET sheet -> 09:30 open) may
+                               # add per day, on top of the sheet's top_k.
+                               # ~24 x 40s = ~16 min of A2 time at the open.
+  late_pass_max: 4             # v0.12.15: hard per-pass cap. Each pass
+                               # forwards min(late_pass_max,
+                               # ceil(budget_left / passes_left)) -- pacing
+                               # that guarantees budget survives to the
+                               # last pre-open pass on flood mornings
+                               # (2026-08-05: old cap of 10 was gone at
+                               # 07:10 ET; ~140 later signals dropped).
 
 narrative:                     # model-call parameters (SlotManager contract)
   max_tokens: 1400
