@@ -54,15 +54,40 @@ class AlpacaScreener:
         return [{"symbol": str(m["symbol"]).upper(), "price": None,
                  "change_pct": None} for m in data.get("most_actives") or []]
 
+    ASSETS_BASE = "https://paper-api.alpaca.markets"   # same creds as broker
+
+    async def asset_name(self, symbol: str) -> str | None:
+        """Official asset name from the trading API's assets endpoint
+        (v0.12.14 — feeds the name-based ETF exclusion). None on any
+        failure: the caller falls back to the ticker sets."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0,
+                                         headers=self._headers) as client:
+                resp = await client.get(
+                    f"{self.ASSETS_BASE}/v2/assets/{symbol}")
+                resp.raise_for_status()
+                return (resp.json() or {}).get("name")
+        except Exception as e:                                # noqa: BLE001
+            log.warning("asset name lookup failed",
+                        extra={"symbol": symbol, "error": repr(e)[:150]})
+            return None
+
 
 @dataclass
 class FakeScreener:
     """Programmable fixture. set_movers([...]) with normalized mover dicts."""
     _movers: list[dict] = field(default_factory=list)
     _actives: list[dict] = field(default_factory=list)
+    _names: dict = field(default_factory=dict)
 
     def set_movers(self, movers: list[dict]) -> None:
         self._movers = movers
+
+    def set_asset_names(self, names: dict) -> None:
+        self._names = names
+
+    async def asset_name(self, symbol: str) -> str | None:
+        return self._names.get(symbol)
 
     async def movers(self, top: int = 20) -> list[dict]:
         return self._movers[:top]

@@ -56,6 +56,7 @@ class C10Service:
         # per-day memory (rebuilt from the journal on restart where it matters)
         self._journaled: set[tuple] = set()      # (date, ticker, status, reason)
         self._static_reject: dict[str, str] = {} # ticker -> static reject code (today)
+        self._asset_names: dict[str, str | None] = {}  # v0.12.14: name cache
         self._day = None
 
     # ------------------------------------------------------------------ state
@@ -64,6 +65,7 @@ class C10Service:
             self._day = today
             self._journaled.clear()
             self._static_reject.clear()
+            self._asset_names.clear()   # re-resolve daily (listings change)
 
     async def _controls(self) -> dict:
         pool = await get_pool()
@@ -299,8 +301,15 @@ class C10Service:
             if m is None:
                 continue
             earn = await self._earnings(t)
+            # v0.12.14: official asset name (cached per day) feeds the
+            # name-based ETF exclusion — the layer that catches leveraged
+            # single-stock wrappers like PTIR/PLTU whose tickers no static
+            # set can enumerate. Lookup failure -> None -> ticker-set fallback.
+            if t not in self._asset_names:
+                self._asset_names[t] = await self.screener.asset_name(t)
             reject = filter_candidate(m, self.cfg,
-                                      earnings_next_sessions=earn)
+                                      earnings_next_sessions=earn,
+                                      asset_name=self._asset_names[t])
             if reject:
                 if reject in ("ETF_EXCLUDED", "PRICE_FLOOR", "DOLLAR_VOLUME",
                               "EARNINGS_SOON"):

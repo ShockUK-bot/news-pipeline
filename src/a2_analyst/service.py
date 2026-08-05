@@ -21,6 +21,7 @@ import asyncio
 import os
 import signal as _signal
 
+from common.clock import utcnow
 from common.config import config_path, load_yaml
 from common.contracts import envelope
 from common.db import close_pool, get_pool
@@ -46,6 +47,23 @@ SYNTHETIC_QUEUE = "signal.synthetic"
 CONSUMER = f"a2-{os.getpid()}"
 CONTRACT_THESIS = "signal.gate/1"
 CONTRACT_SYNTHETIC = "signal.synthetic/1"
+
+
+def scanner_reject_cf_args(*, decision_id: int, signal_id: str,
+                           item_id: str | None, thesis, scanner: dict,
+                           veto_ts) -> dict:
+    """Pure (v0.12.14): the record_veto kwargs for a scanner-lane analyst
+    no-trade. Prices come from the scanner's detection snapshot — detection
+    is ~1 minute before the verdict, honest enough for outcome measurement
+    and free (no extra marketdata call on the reject path)."""
+    return {"decision_id": decision_id, "signal_id": signal_id,
+            "item_id": item_id, "ticker": thesis.ticker,
+            "direction": thesis.direction, "rule": "scanner_reject",
+            "veto_reason": "ANALYST_REJECT", "veto_ts": veto_ts,
+            "price_at_veto": scanner.get("price"),
+            "prenews_price": scanner.get("prev_close"),
+            "pct_move": scanner.get("move_pct"),
+            "vol_mult": scanner.get("rel_volume")}
 
 
 async def fetch_item(item_id: str, revision: int) -> dict | None:
@@ -143,7 +161,7 @@ class A2Service:
         # this, an honest 0 violated the schema and burned two ~30s attempts
         # per dead signal (2026-08-02 stale-scanner-backlog incident).
         if thesis.magnitude_est == 0.0:
-            await write_decision(
+            decision_id = await write_decision(
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=thesis.ticker, stage="ANALYST", agent="A2",
                 action="REJECT",
@@ -153,6 +171,20 @@ class A2Service:
                 confidence=thesis.confidence,
                 model_id=self.backend.model_id, latency_ms=total_latency,
                 regime_id=regime_id, derived_from=derived_from)
+            # v0.12.14: scanner-lane rejects become measurable. The gate's
+            # vetoes got counterfactual rows in v0.12.10; the analyst's
+            # scanner no-trades were the remaining blind spot (2026-08-04:
+            # three rejects at conf 0.15, zero evidence whether that was
+            # wisdom or timidity). Bounded by the scanner's max_per_day cap
+            # (<= 6 rows/day); news-lane rejects stay unmeasured for now
+            # (~150/day would swamp the sweep). Best-effort by construction:
+            # record_veto never raises, measurement must not gate.
+            if origin == "scanner" and scanner:
+                from c3_gate.counterfactual import record_veto
+                await record_veto(**scanner_reject_cf_args(
+                    decision_id=decision_id, signal_id=signal_id,
+                    item_id=item_id, thesis=thesis, scanner=scanner,
+                    veto_ts=utcnow()))
             log.info("analyst no-trade", extra=kv(
                 signal_id=signal_id, ticker=thesis.ticker, origin=origin,
                 conf=thesis.confidence, latency_ms=total_latency))

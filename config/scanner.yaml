@@ -16,6 +16,10 @@ scanner:
   max_spread_bps: 40             # mirrors risk.yaml limits.spread_max_bps
   min_luld_headroom_pct: 0.02    # approximated from 5-min tape (see rules.py)
   exclude_etfs: true             # index plumbing, not a story (best-effort name filter)
+  etf_denylist: []               # v0.12.14: extra tickers to exclude, e.g. [PTIR, PLTU]
+                                 # — the built-in list + the official-name check
+                                 # (assets API) usually catch these; this is the
+                                 # operator's override for anything that slips.
   earnings_blackout_sessions: 1  # no names reporting today/tonight (leak-shaped traps)
   # -- news cross-check -------------------------------------------------------
   news_strong_window_hours: 4    # escalated news item in this window -> news owns it

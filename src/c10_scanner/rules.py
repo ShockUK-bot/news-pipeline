@@ -10,12 +10,20 @@ MOVE_STALE_HOD, SPREAD, LULD_HEADROOM, ETF_EXCLUDED, EARNINGS_SOON, NO_TAPE.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
 # Best-effort ETF/ETN exclusion without a reference-data source: the heavily
 # traded index/sector products that dominate movers lists on volatile days.
+# v0.12.14: extended with the single-stock leveraged wrappers that leaked
+# through on 2026-08-04 (PTIR/PLTU — 2x PLTR ETFs burned 2 of the 6 daily
+# emission slots and 2 analyst calls on the exact instruments the spec
+# excludes). The ticker set is the FALLBACK layer; the primary check is now
+# looks_like_etf() on the asset's official name (service fetches it from the
+# broker's assets API and caches per day), plus the operator-editable
+# scanner.etf_denylist in config.
 KNOWN_ETFS = {
     "SPY", "QQQ", "IWM", "DIA", "VOO", "VTI", "IVV", "RSP",
     "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE",
@@ -23,7 +31,41 @@ KNOWN_ETFS = {
     "TQQQ", "SQQQ", "SPXL", "SPXS", "SOXL", "SOXS", "UVXY", "VXX", "SVXY",
     "TLT", "HYG", "LQD", "EEM", "EFA", "FXI", "EWZ", "USO", "UNG", "GLD",
     "SLV", "BITO", "IBIT", "FBTC",
+    # single-stock leveraged/inverse wrappers (name filter is primary; these
+    # are belt-and-braces for the most screener-prone ones)
+    "PTIR", "PLTU", "PLTD", "TSLL", "TSLQ", "TSLT", "TSLZ", "NVDL", "NVDU",
+    "NVDD", "NVDX", "NVDQ", "CONL", "CONI", "MSTU", "MSTX", "MSTZ", "SMCX",
+    "SMCL", "AMDL", "AMDS", "AAPU", "AAPD", "GGLL", "GGLS", "METU", "METD",
+    "AMZU", "AMZD", "MSFU", "MSFD", "AVL", "AVS", "PALU", "HOOX", "COIX",
 }
+
+# Name-based ETF/ETN detection (v0.12.14) — the primary exclusion layer.
+# Word-bounded and issuer-anchored to avoid false positives on operating
+# companies ("Build-A-Bear Workshop" must NOT match on "Bear").
+_ETF_NAME_WORDS = ("ETF", "ETN")
+_ETF_ISSUER_PREFIXES = (
+    "PROSHARES", "DIREXION", "GRANITESHARES", "DEFIANCE", "YIELDMAX",
+    "TRADR", "T-REX", "LEVERAGE SHARES", "VOLATILITY SHARES", "ROUNDHILL",
+    "GLOBAL X", "ISHARES", "SPDR", "VANGUARD", "INVESCO", "WISDOMTREE",
+    "FIRST TRUST", "VANECK", "SIMPLIFY", "AXS ",
+)
+
+
+def looks_like_etf(asset_name: Optional[str]) -> bool:
+    """True when the asset's official name identifies an ETF/ETN/leveraged
+    wrapper. Pure and conservative: word-bounded 'ETF'/'ETN', a leverage
+    multiplier token ('2X', '1.5X', '-1X'), a fund word, or a known fund
+    issuer prefix. None/empty name -> False (the ticker sets still apply)."""
+    if not asset_name:
+        return False
+    up = asset_name.upper()
+    if any(re.search(rf"\b{w}\b", up) for w in _ETF_NAME_WORDS):
+        return True
+    if re.search(r"(?<![A-Z0-9])-?\d(?:\.\d)?X\b", up):     # 2X / 1.5X / -1X
+        return True
+    if re.search(r"\bFUND\b", up):
+        return True
+    return any(up.startswith(p) for p in _ETF_ISSUER_PREFIXES)
 
 
 @dataclass
@@ -59,15 +101,24 @@ def luld_headroom(last: float, ref_price_5m: Optional[float]) -> Optional[float]
 
 def filter_candidate(m: CandidateMetrics, cfg: dict,
                      is_etf: Optional[bool] = None,
-                     earnings_next_sessions: Optional[int] = None
+                     earnings_next_sessions: Optional[int] = None,
+                     asset_name: Optional[str] = None
                      ) -> Optional[str]:
     """First failing filter's reject code, or None = candidate passes.
     Null-safe: a metric that could not be computed fails CLOSED (the scanner
     proposes trades — missing evidence means no proposal; contrast with the
-    TA context pack where null just means 'unavailable')."""
-    if (is_etf if is_etf is not None else m.ticker in KNOWN_ETFS) \
-            and cfg.get("exclude_etfs", True):
-        return "ETF_EXCLUDED"
+    TA context pack where null just means 'unavailable').
+
+    v0.12.14 ETF exclusion layers, any hit -> ETF_EXCLUDED: explicit is_etf
+    flag, the KNOWN_ETFS ticker set, the operator's cfg etf_denylist, or the
+    asset's official name (looks_like_etf)."""
+    if cfg.get("exclude_etfs", True):
+        denylist = {str(t).upper() for t in (cfg.get("etf_denylist") or [])}
+        etf = (is_etf if is_etf is not None
+               else (m.ticker in KNOWN_ETFS or m.ticker in denylist
+                     or looks_like_etf(asset_name)))
+        if etf:
+            return "ETF_EXCLUDED"
     if m.price is None or m.price < float(cfg["min_price"]):
         return "PRICE_FLOOR"
     if not m.adv20_dollars or m.adv20_dollars < float(cfg["min_adv20_dollars"]):
