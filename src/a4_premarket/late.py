@@ -1,4 +1,5 @@
-"""A4 late pass (v0.12.13; budget pacing v0.12.15) — oneshot, fired by
+"""A4 late pass (v0.12.13; budget pacing v0.12.15; quiet exhaustion
+v0.12.16) — oneshot, fired by
 a4-late.timer every 10 minutes between 07:00 and 09:59 ET on weekdays.
 Closes the pre-market blind window: before v0.12.13, `signal.overnight` was
 drained exactly once per day (the 07:00 ET sheet run), so news breaking
@@ -30,13 +31,17 @@ Flow (deterministic, NO model call — A2/C3 remain the judges at the open):
      with available_ts = open + blackout (the same queue-native delayed
      open-handoff the sheet's open_candidates use, same dedup key, so an
      item can never be forwarded twice) and journaled as
-     PREMARKET/LATE_CANDIDATE. The rest: while daily budget remains they
-     are deferred to the next pass (visible again in ~9 minutes, attempt
-     refunded — repeated deferral can never DLQ them); once the daily
-     budget is truly gone they journal PREMARKET/IGNORE ("late-window
-     daily budget exhausted") — visible, never silent. Items still
-     deferred at the open simply stay on signal.overnight and are ranked
-     by tomorrow's 07:00 sheet like any other overnight item.
+     PREMARKET/LATE_CANDIDATE. ALL other candidates are deferred back to
+     the queue (visible again in ~9 minutes, attempt refunded — repeated
+     deferral can never DLQ them): while budget remains they compete
+     again next pass; whatever is still deferred at the open stays on
+     signal.overnight and is ranked — and journaled — by tomorrow's
+     07:00 sheet like any other overnight item (or bulk-expired at
+     max_age_hours). v0.12.16: exhaustion no longer journals a same-day
+     IGNORE per item — on 2026-08-06 the moment the 24th slot was spent,
+     ~100 pool items hit the tape as one IGNORE burst in a single
+     minute, which read as a malfunction; the sheet's next-morning
+     ranking is the honest (and quieter) disposition.
 
 The daily budget keeps the open-handoff token spend bounded: the sheet run
 forwards at most top_k ranked candidates; late passes add at most
@@ -259,31 +264,23 @@ async def run_late_pass(cfg: dict, now: datetime | None = None) -> dict:
                                             item_id=c["item_id"],
                                             priority=c["priority"]))
 
-    deferred = ignored = 0
+    deferred = 0
     for c in rest:
-        if budget_after > 0:
-            # Daily budget survives — this item lost only THIS pass's
-            # ranking. Refund its attempt and let it compete again next
-            # pass (or be ranked by tomorrow's sheet if the open arrives
-            # first). No journal spam for a scheduling decision.
-            await defer(c["msg_id"], DEFER_SECS)
-            deferred += 1
-        else:
-            await write_decision(
-                signal_id=c["item_id"], item_id=c["item_id"],
-                item_revision=c["revision"], ticker=c["tickers"][0],
-                stage="PREMARKET", agent="A4", action="IGNORE",
-                payload={"headline": c["headline"], "priority": c["priority"],
-                         "session_date": session_date, "late": True},
-                reason=f"late-window daily budget exhausted "
-                       f"({late_daily_max} forwarded)")
-            await ack(c["msg_id"])
-            ignored += 1
+        # Lost this pass's ranking, or the daily budget is spent. Either
+        # way: refund the attempt and return it to the pool. While budget
+        # remains it competes again next pass; once budget is gone (or the
+        # open arrives) it simply stays on signal.overnight and tomorrow's
+        # 07:00 sheet ranks and journals it like any other overnight item
+        # (or bulk-expires it at max_age_hours). No per-item journal row
+        # for a scheduling decision — v0.12.16 removed the same-day
+        # IGNORE burst that flooded the tape at exhaustion on 2026-08-06.
+        await defer(c["msg_id"], DEFER_SECS)
+        deferred += 1
 
     stats = {"ran": True, "session_date": session_date, "fresh": len(claimed),
              "forwarded": len(forward), "deferred": deferred,
-             "over_budget": ignored, "allowance": allowance,
-             "passes_left": passes_left, "budget_left": budget_after,
+             "allowance": allowance, "passes_left": passes_left,
+             "budget_left": budget_after,
              "guard_routed": guard_routed, "thesis_routed": thesis_routed,
              "entry_ts": entry_ts.isoformat()}
     log.info("late pass done", extra=kv(**stats))
