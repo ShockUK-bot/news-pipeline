@@ -13,6 +13,12 @@ recall applies to the CATALYST TAXONOMY — never discard a taxonomy match
 because details are thin. It does not apply to the NEGATIVE CATEGORIES: those
 are not marginal cases, they are known non-events, and "can influence investor
 sentiment" is never a justification (anything can).
+
+v0.12.18 (the SPCX miss, 2026-08-06): rating changes and lock-up expirations
+are explicit catalyst classes, and price-action framing no longer neutralizes
+a concrete catalyst named inside the story — on catalyst days the catalyst
+arrives wrapped in "shares are trading higher" reaction items, and A1 was
+discarding the wrapper with the catalyst inside it.
 """
 from __future__ import annotations
 
@@ -35,17 +41,25 @@ MATERIAL — the item must fit one of these catalyst classes:
    supply-chain disruptions naming the company; plant shutdowns; strikes.
 5. Capital structure & credit: dividend initiated, cut, or suspended;
    buyback materially changed; credit-rating CHANGE; large equity/debt
-   raises; bankruptcy or going-concern language.
+   raises; bankruptcy or going-concern language; share lock-up expirations
+   taking effect now or within days; index inclusion or exclusion.
 6. Leadership: unexpected CEO/CFO departure, effective now or imminent.
 7. 8-K or other filings with substantive items of the classes above.
+8. Analyst rating changes: an actual upgrade or downgrade from a named firm
+   — the rating itself changes. (Maintains/reiterates, price-target-only
+   moves, and coverage initiations remain negative category 1.)
 
 NOT MATERIAL — these categories are never material, regardless of wording:
 1. Analyst actions without a rating change: "Maintains"/"Reiterates" with a
    price-target raise or cut; coverage initiations; price-target-only moves.
-   (An actual upgrade/downgrade of the rating MAY be material.)
+   (An actual upgrade/downgrade of the rating is class 8 — material.)
 2. Price-action commentary: 52-week highs/lows, "shares rise/fall X%",
    unusual-volume movers, technical levels. News ABOUT the price is not a
-   catalyst — that move has already happened.
+   catalyst — that move has already happened. EXCEPTION: if the item itself
+   names a concrete catalyst from the material classes occurring now or
+   within days (lock-up expiration, rating change, new guidance, earnings,
+   M&A, FDA), classify by THAT catalyst — a catalyst does not stop being
+   material because the story leads with the price reaction.
 3. Distant-future scheduled events: executive transitions effective a year or
    more out; conference presentations; announcements of future earnings dates.
 4. Sub-materiality transactions: acquisitions, contracts, or investments
@@ -127,6 +141,27 @@ FEW_SHOT: list[tuple[dict, dict]] = [
         {"material": False, "tickers": ["NXTC"], "direction_hint": "unclear",
          "urgency": "low", "novelty_score": 0.6, "confidence": 0.85,
          "reason": "Sub-materiality transaction: a $6.25M bolt-on against a multi-billion market cap is negative category 4."},
+    ),
+    (
+        # v0.12.18 — the SPCX lesson (2026-08-06): the lock-up-expiry catalyst
+        # arrived INSIDE a price-reaction story and was discarded as
+        # price-action commentary. Classify by the named catalyst.
+        {"headline": "Orbita Systems shares are trading higher. The company's lockup expired today, releasing 400 million shares.",
+         "summary": "Shares rose 6% Thursday as the post-IPO lock-up period ended.",
+         "source": "alpaca_benzinga", "source_tier": 2, "symbols": ["ORBS"],
+         "channels": [], "is_new_story": True, "independent_outlets": 1},
+        {"material": True, "tickers": ["ORBS"], "direction_hint": "up",
+         "urgency": "high", "novelty_score": 0.9, "confidence": 0.85,
+         "reason": "Capital-structure catalyst class: a lock-up expiration taking effect today is the catalyst; price-action framing does not neutralize it."},
+    ),
+    (
+        {"headline": "Bernstein Upgrades Metrix Health to Outperform, Sets $92 Target",
+         "summary": "Analyst moves rating from Market Perform, citing accelerating device adoption.",
+         "source": "alpaca_benzinga", "source_tier": 2, "symbols": ["MTRX"],
+         "channels": [], "is_new_story": True, "independent_outlets": 1},
+        {"material": True, "tickers": ["MTRX"], "direction_hint": "up",
+         "urgency": "high", "novelty_score": 0.9, "confidence": 0.9,
+         "reason": "Analyst rating change class: an actual upgrade from a named firm, not a PT-only move."},
     ),
     (
         {"headline": "8-K - ZENITH PHARMA INC (0001234567) (Filer)",

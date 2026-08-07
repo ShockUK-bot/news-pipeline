@@ -36,7 +36,8 @@ from router.rules import route
 
 from .backends import get_backend
 from .suppression import DEFAULTS as SUPP_DEFAULTS
-from .suppression import corroboration_bypass, find_prior_verdict
+from .suppression import (corroboration_bypass, discard_cooldown_expired,
+                          find_prior_verdict)
 from .triage import TriageRejected, run_triage
 
 log = get_logger("a1.service")
@@ -120,6 +121,14 @@ class A1Service:
             cluster_id, float(self.supp_cfg["window_hours"]))
         if prior is None:
             return False
+        # v0.12.18: a DISCARDed cluster is only a reprint-flood shield, not a
+        # session-long verdict — after discard_window_hours, follow-ups (which
+        # may carry a NEW catalyst, e.g. SPCX post-upgrade 2026-08-07) get a
+        # fresh triage. ESCALATE priors keep the full window.
+        if discard_cooldown_expired(
+                prior.action, prior.age_hours,
+                float(self.supp_cfg.get("discard_window_hours", 2))):
+            return False
         outlets_now = int(cluster.get("independent_outlets", 1))
         if corroboration_bypass(
                 outlets_now, prior.independent_outlets,
@@ -140,7 +149,9 @@ class A1Service:
                                  "independent_outlets": outlets_now}},
             reason=(f"story cluster {cluster_id} already triaged "
                     f"(decision {prior.decision_id}, {prior.action}) within "
-                    f"{self.supp_cfg['window_hours']}h"),
+                    + (f"{self.supp_cfg.get('discard_window_hours', 2)}h"
+                       if prior.action == "DISCARD"
+                       else f"{self.supp_cfg['window_hours']}h")),
             model_id=None, latency_ms=None)
         log.info("repeat suppressed", extra=kv(
             item_id=item["item_id"], rev=revision, cluster=cluster_id,

@@ -44,7 +44,8 @@ from common.db import get_pool
 
 DEFAULTS = {
     "enabled": True,
-    "window_hours": 24,               # session-scoped: one analysis per story
+    "window_hours": 24,               # ESCALATE priors: one analysis per story
+    "discard_window_hours": 2,        # v0.12.18: DISCARD priors cool off fast
     "corroboration_reescalate_threshold": 3,
 }
 
@@ -55,6 +56,22 @@ class PriorVerdict:
     action: str                        # ESCALATE | DISCARD
     tickers: tuple[str, ...]           # prior triage tickers (guard-union input)
     independent_outlets: int           # outlets at prior decision time
+    age_hours: float                   # v0.12.18: how old the prior verdict is
+
+
+def discard_cooldown_expired(action: str, age_hours: Optional[float],
+                             discard_window_hours: float) -> bool:
+    """v0.12.18 — the SPCX dedup blackhole (2026-08-06/07): once a story
+    cluster was DISCARDed, every follow-up was suppressed into it for 24
+    hours — including next-day items carrying a NEW catalyst ("shares
+    trading higher after Argus upgrade" suppressed into a cluster discarded
+    long before). Suppression into a DISCARD exists to flood-control wire
+    reprints, which arrive minutes apart — not to freeze a verdict on the
+    story for a full session. True -> the DISCARD prior is stale and the
+    item deserves a fresh triage. ESCALATE priors keep the long window: an
+    analyst already saw that story, so repeats genuinely add nothing."""
+    return action == "DISCARD" and age_hours is not None \
+        and float(age_hours) > float(discard_window_hours)
 
 
 async def find_prior_verdict(cluster_id: int,
@@ -66,7 +83,8 @@ async def find_prior_verdict(cluster_id: int,
         cur = await conn.execute(
             """SELECT d.decision_id, d.action,
                       COALESCE(d.payload->'triage'->'tickers', '[]'::jsonb),
-                      COALESCE((d.payload->'cluster'->>'independent_outlets')::int, 1)
+                      COALESCE((d.payload->'cluster'->>'independent_outlets')::int, 1),
+                      EXTRACT(EPOCH FROM (now() - d.ts)) / 3600.0
                FROM journal.decisions d
                JOIN (SELECT DISTINCT item_id FROM news.cluster_members
                      WHERE cluster_id = %s) cm ON cm.item_id = d.item_id
@@ -79,10 +97,11 @@ async def find_prior_verdict(cluster_id: int,
         row = await cur.fetchone()
     if row is None:
         return None
-    decision_id, action, tickers, outlets = row
+    decision_id, action, tickers, outlets, age_hours = row
     return PriorVerdict(decision_id=decision_id, action=action,
                         tickers=tuple(t for t in (tickers or []) if isinstance(t, str)),
-                        independent_outlets=int(outlets))
+                        independent_outlets=int(outlets),
+                        age_hours=float(age_hours))
 
 
 def corroboration_bypass(outlets_now: int, outlets_prior: int,

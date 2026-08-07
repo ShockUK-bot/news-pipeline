@@ -56,5 +56,11 @@ router:
 # crossing the threshold, or a held-ticker touch — those always re-triage).
 suppression:
   enabled: true
-  window_hours: 24                        # session-scoped: one verdict per story
+  window_hours: 24                        # ESCALATE priors: one verdict per story
+  discard_window_hours: 2                 # v0.12.18: DISCARD priors are only a
+                                          # reprint-flood shield -- after this,
+                                          # follow-ups get a fresh triage (SPCX
+                                          # 2026-08-07: post-upgrade item was
+                                          # suppressed into a cluster discarded
+                                          # long before)
   corroboration_reescalate_threshold: 3   # outlets crossing this => re-triage
