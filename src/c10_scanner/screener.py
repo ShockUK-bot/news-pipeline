@@ -49,10 +49,42 @@ class AlpacaScreener:
                         "change_pct": float(m["percent_change"]) / 100.0})
         return out
 
+    SNAPSHOTS_URL = "https://data.alpaca.markets/v2/stocks/snapshots"
+
     async def most_actives(self, top: int = 20) -> list[dict]:
+        """Top names by share volume, price/change_pct filled from ONE batch
+        snapshot call (v0.12.17) so the service can pre-filter non-movers
+        cheaply — most actives are not moving 4%+, and they must cost one
+        HTTP request per scan in total, not a full measurement each.
+        Snapshot failure degrades gracefully: change_pct stays None and the
+        service measures the ticker the expensive way."""
         data = await self._get("/most-actives", {"by": "volume", "top": top})
-        return [{"symbol": str(m["symbol"]).upper(), "price": None,
-                 "change_pct": None} for m in data.get("most_actives") or []]
+        out = [{"symbol": str(m["symbol"]).upper(), "price": None,
+                "change_pct": None} for m in data.get("most_actives") or []]
+        if not out:
+            return out
+        try:
+            async with httpx.AsyncClient(timeout=15.0,
+                                         headers=self._headers) as client:
+                resp = await client.get(
+                    self.SNAPSHOTS_URL,
+                    params={"symbols": ",".join(r["symbol"] for r in out)})
+                resp.raise_for_status()
+                body = resp.json() or {}
+            snaps = body.get("snapshots", body)
+            for r in out:
+                s = snaps.get(r["symbol"]) or {}
+                price = (s.get("latestTrade") or {}).get("p")
+                prev_close = (s.get("prevDailyBar") or {}).get("c")
+                if price is not None:
+                    r["price"] = float(price)
+                if price and prev_close:
+                    r["change_pct"] = (float(price) - float(prev_close)) \
+                        / float(prev_close)
+        except Exception as e:                                # noqa: BLE001
+            log.warning("snapshot enrich failed; actives pass through unpriced",
+                        extra={"error": repr(e)[:150]})
+        return out
 
     ASSETS_BASE = "https://paper-api.alpaca.markets"   # same creds as broker
 
@@ -82,6 +114,9 @@ class FakeScreener:
 
     def set_movers(self, movers: list[dict]) -> None:
         self._movers = movers
+
+    def set_actives(self, actives: list[dict]) -> None:
+        self._actives = actives
 
     def set_asset_names(self, names: dict) -> None:
         self._names = names

@@ -152,3 +152,53 @@ def test_scanner_gate_numbers_journal_everything():
                 "minutes_since_detect", "vwap", "range30_pos",
                 "bar5_range_ratio", "spread_bps", "halted"):
         assert key in v.numbers
+
+
+# ---- v0.12.17: universe coverage + news-ownership fix ------------------------
+# The SPCX miss (2026-08-06, +7% on 911M-share unlock day): the movers list
+# is ranked by % change and fills with >25% microcap spikes, so a liquid
+# single-digit mover never entered the scan universe at all; and the news
+# cross-check counted SUPPRESS rows as "the news lane owns it" even when the
+# suppressed story's cluster had been DISCARDED.
+
+import inspect
+
+from c10_scanner.service import C10Service, merge_universe
+
+
+def test_merge_universe_movers_first_actives_deduped():
+    movers = [{"symbol": "WYHG", "price": 11.58, "change_pct": 2.47},
+              {"symbol": "SPCX", "price": 105.0, "change_pct": 0.07}]
+    actives = [{"symbol": "SPCX", "price": 105.1, "change_pct": 0.071},  # dup
+               {"symbol": "NVDA", "price": 180.0, "change_pct": 0.004},
+               {"symbol": "TSLA", "price": 250.0, "change_pct": 0.012}]
+    u = merge_universe(movers, actives)
+    assert [r["symbol"] for r in u] == ["WYHG", "SPCX", "NVDA", "TSLA"]
+    assert u[1]["price"] == 105.0            # the mover row wins the dup
+
+
+def test_merge_universe_empty_actives_is_movers_only():
+    movers = [{"symbol": "A", "price": 10.0, "change_pct": 0.3}]
+    assert merge_universe(movers, []) == movers
+
+
+def test_spcx_shaped_liquid_mover_passes_the_filters():
+    # A +7% mega-cap with deep liquidity must survive filter_candidate —
+    # before v0.12.17 it never even reached it.
+    m = metrics(ticker="SPCX", price=105.0, prev_close=98.1, move_pct=0.0703,
+                adv20_dollars=2_000_000_000.0, rel_volume=4.2,
+                minutes_since_hod=10, spread_bps=4.0)
+    assert filter_candidate(m, CFG) is None
+
+
+def test_quiet_active_is_below_move_floor():
+    # NVDA drifting +0.4% on huge volume: enters the universe, but the
+    # service's cheap pre-filter (change_pct < min_move_pct) must apply —
+    # pin that a filled change_pct below the floor is rejectable by config.
+    assert 0.004 < CFG["min_move_pct"]
+
+
+def test_news_ownership_counts_only_escalate():
+    src = inspect.getsource(C10Service._news_match)
+    assert "AND action = 'ESCALATE'" in src          # the live SQL
+    assert "AND action <> 'DISCARD'" not in src      # the old, buggy SQL

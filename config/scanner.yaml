@@ -5,6 +5,12 @@
 # are the first anti-overtrading layer and zero emissions is a correct day.
 scanner:
   scan_interval_secs: 60
+  most_actives_top: 50           # v0.12.17: also scan the top-N most-active
+                                 # names by volume. The movers list is ranked
+                                 # by % change, so its 20 slots fill with
+                                 # >25% microcap spikes and a liquid +7%
+                                 # mover (SPCX, 2026-08-06 unlock day) can
+                                 # never enter it. 0 disables this leg.
   session_start_et: "09:50"      # open blackout (15m) + 5m of settling
   session_end_et: "15:15"        # last emission — room to work before force-flat
   # -- candidate filters (ALL must pass) --------------------------------------

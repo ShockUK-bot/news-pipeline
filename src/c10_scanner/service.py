@@ -3,7 +3,9 @@
 Every scan_interval_secs during the scan window (09:50–15:15 ET):
   1. read controls — scanner_enabled off or kill_switch on -> idle
   2. circuit breaker — >= N losing scanner trades today -> idle until tomorrow
-  3. fetch top gainers from the Alpaca Screener API
+  3. fetch top gainers UNION top most-actives-by-volume from the Alpaca
+     Screener API (v0.12.17 — the gainers list alone fills with >25%
+     microcap spikes, blinding the scanner to liquid single-digit movers)
   4. per ticker: deterministic metrics (quote/daily/minute via MarketData +
      common.ta), filters (rules.filter_candidate), news cross-check
   5. rank survivors, apply emission caps (top-N/scan, M/day, 1/ticker/day,
@@ -45,6 +47,14 @@ log = get_logger("c10.service")
 OUT_QUEUE = "signal.scanner"
 CONTRACT_SCANNER = "signal.scanner/1"
 ET = ZoneInfo("America/New_York")
+
+
+def merge_universe(movers: list[dict], actives: list[dict]) -> list[dict]:
+    """v0.12.17: the scan universe is top-gainers UNION most-actives.
+    Movers come first (they carry the screener's own change_pct); actives
+    that duplicate a mover are dropped. Pure — unit-tested without a DB."""
+    seen = {m["symbol"] for m in movers}
+    return list(movers) + [a for a in actives if a["symbol"] not in seen]
 
 
 class C10Service:
@@ -173,15 +183,23 @@ class C10Service:
             detected_ts=now.isoformat())
 
     async def _news_match(self, ticker: str) -> tuple[str, list[dict]]:
-        """strong: the news pipeline already escalated something for this
-        ticker recently (it owns the move). weak: news naming the ticker
-        exists but was not escalated — attach headlines as A2 context.
-        none: a true dark mover."""
+        """strong: the news pipeline ESCALATED something for this ticker
+        recently (it genuinely owns the move — an analyst saw or will see
+        it). weak: news naming the ticker exists but was not escalated —
+        attach headlines as A2 context. none: a true dark mover.
+
+        v0.12.17: only action='ESCALATE' counts as ownership. The old test
+        (action <> 'DISCARD') also matched SUPPRESS rows, so a suppressed
+        duplicate of a DISCARDED story told the scanner the news lane was
+        handling the ticker when it had actually thrown it away (SPCX and
+        AEVA, 2026-08-06: scanner stood down NEWS_OWNS_IT behind discarded
+        clusters). A discard/suppress history is exactly when the scanner
+        backstop must stay live."""
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
                 """SELECT count(*) FROM journal.decisions
-                   WHERE ticker=%s AND stage='TRIAGE' AND action <> 'DISCARD'
+                   WHERE ticker=%s AND stage='TRIAGE' AND action = 'ESCALATE'
                      AND (item_id IS NULL OR item_id NOT LIKE 'scanner:%%')
                      AND ts > now() - make_interval(hours => %s)""",
                 (ticker, int(self.cfg["news_strong_window_hours"])))
@@ -276,12 +294,26 @@ class C10Service:
             await set_health("scanner", "DEGRADED",
                              f"screener error: {repr(e)[:120]}")
             return 0
+        # v0.12.17: the movers list is ranked by percent change, so on any
+        # normal day its 20 slots are all >25% microcap spikes — a liquid
+        # mega-cap at +7% (SPCX, 2026-08-06 unlock day) can NEVER enter it,
+        # making min_move_pct decorative. Most-actives by volume is where
+        # those names always appear; the same filter pipeline judges both.
+        actives: list[dict] = []
+        actives_top = int(self.cfg.get("most_actives_top", 50))
+        if actives_top > 0:
+            try:
+                actives = await self.screener.most_actives(top=actives_top)
+            except Exception as e:
+                log.warning("most-actives fetch failed (movers-only scan)",
+                            extra=kv(error=repr(e)[:200]))
+        universe = merge_universe(movers, actives)
         await set_health("scanner", "OK",
                          f"scanning ({emitted_count}/{self.cfg['max_per_day']} today)")
 
         open_tickers = await self._open_tickers()
         survivors: list[tuple[float, CandidateMetrics, str, list]] = []
-        for mv in movers:
+        for mv in universe:
             t = mv["symbol"]
             if t in emitted_tickers or t in self._static_reject:
                 continue
