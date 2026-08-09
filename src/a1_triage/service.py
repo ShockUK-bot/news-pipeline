@@ -138,9 +138,15 @@ class A1Service:
         tickers = sorted({*(item.get("symbols") or []), *prior.tickers})
         if tickers and await open_position_ids(tickers):
             return False
+        # v0.12.19: journal under the INCOMING item's own ticker (fallback:
+        # the prior verdict's). The 2026-08-08 Argus trace hid for a day
+        # because the SPCX suppress row was labeled KYMR — the contaminated
+        # cluster's prior ticker — making ticker-based audits misleading.
+        own_symbols = item.get("symbols") or []
         await write_decision(
             signal_id=signal_id, item_id=item["item_id"], item_revision=revision,
-            ticker=prior.tickers[0] if prior.tickers else None,
+            ticker=(own_symbols[0] if own_symbols
+                    else (prior.tickers[0] if prior.tickers else None)),
             stage="TRIAGE", agent="A1", action="SUPPRESS",
             payload={"suppressed_by": prior.decision_id,
                      "prior_action": prior.action,

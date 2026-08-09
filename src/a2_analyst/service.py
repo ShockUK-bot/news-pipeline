@@ -21,6 +21,8 @@ import asyncio
 import os
 import signal as _signal
 
+import httpx
+
 from common.clock import utcnow
 from common.config import config_path, load_yaml
 from common.contracts import envelope
@@ -123,8 +125,36 @@ class A2Service:
         if not ticker:
             raise ValueError(f"no ticker on analyst-lane signal {signal_id}")
 
-        context, regime_id = await build_context(self.md, self.store,
-                                                 self.embedder, item, ticker)
+        # v0.12.19 — data-unavailable symbols are a VERDICT, not a crash.
+        # Before: Alpaca 404 (symbol not on the feed — OTC/delisted/misparsed)
+        # or "no daily bars" raised out of build_context, the queue retried a
+        # deterministic failure 5x, and the escalation died silently in the
+        # DLQ (~10/day observed in news.quarantine on 2026-08-07). Now those
+        # two exact conditions journal a visible REJECT and stop. Transient
+        # errors (timeouts, DNS, 5xx) still raise -> retry -> DLQ, which is
+        # correct for conditions that can heal.
+        try:
+            context, regime_id = await build_context(self.md, self.store,
+                                                     self.embedder, item, ticker)
+        except (httpx.HTTPStatusError, RuntimeError) as e:
+            unavailable = (
+                (isinstance(e, httpx.HTTPStatusError)
+                 and e.response.status_code == 404)
+                or (isinstance(e, RuntimeError) and "no daily bars" in str(e)))
+            if not unavailable:
+                raise
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="ANALYST", agent="A2", action="REJECT",
+                payload={"no_trade": True, "origin": origin,
+                         "data_error": repr(e)[:300]},
+                reason=f"market data unavailable for {ticker}: "
+                       f"{'404 from data feed' if isinstance(e, httpx.HTTPStatusError) else str(e)[:120]}",
+                model_id=None, latency_ms=None, derived_from=derived_from)
+            log.warning("data-unavailable REJECT journaled",
+                        extra=kv(item_id=item_id, ticker=ticker,
+                                 error=repr(e)[:150]))
+            return
 
         schema = thesis_json_schema()
         error: ThesisValidationError | None = None

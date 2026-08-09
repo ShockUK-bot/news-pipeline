@@ -25,6 +25,13 @@ revision with semantically changed text still forwards.
 Corroboration counting (independent outlets) is the cluster_corroboration
 view in Postgres; we read it back after every membership write so the
 DedupedSignal always carries current numbers (C3's credibility input, v0.2).
+
+v0.12.19 symbol-overlap gate: joining a neighbor's cluster additionally
+requires a shared feed-tagged symbol when both sides have symbols. Evidence
+(2026-08-08 trace): cluster 8693 was a template blackhole — analyst-action
+boilerplate clustered 40+ unrelated tickers, corrupting corroboration counts
+and letting story-level suppression cross tickers (the SPCX Argus upgrade
+inherited a KYMR DISCARD). Symbol-less items are exempt.
 """
 from __future__ import annotations
 
@@ -88,6 +95,18 @@ async def _add_member(cluster_id: int, item_id: str, revision: int,
             (cluster_id, item_id, revision, source, similarity))
 
 
+async def _symbols_of(item_id: str) -> list[str]:
+    """Feed-tagged symbols of a stored item (any revision — symbols are
+    item-level). v0.12.19 symbol-overlap gate input."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT symbols FROM news.news_items WHERE item_id = %s LIMIT 1",
+            (item_id,))
+        row = await cur.fetchone()
+        return list(row[0]) if row and row[0] else []
+
+
 async def _corroboration(cluster_id: int) -> tuple[int, int]:
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -101,11 +120,20 @@ async def _corroboration(cluster_id: int) -> tuple[int, int]:
 
 class Deduper:
     def __init__(self, store: VectorStore, embedder, similarity_threshold: float = 0.90,
-                 cluster_threshold: float = 0.80):
+                 cluster_threshold: float = 0.80, require_symbol_overlap: bool = True):
         self.store = store
         self.embedder = embedder
         self.sim_threshold = similarity_threshold
         self.cluster_threshold = cluster_threshold
+        # v0.12.19 — the cluster-8693 template blackhole (2026-08-08 trace):
+        # Benzinga analyst-action boilerplate ("X Maintains Y, Raises PT to $Z")
+        # dominates the embedding, so one cluster absorbed 40+ UNRELATED
+        # tickers over a week and an Argus SpaceX UPGRADE inherited a Kymera
+        # DISCARD via story-level suppression. When True, an item and its
+        # candidate neighbor must share at least one feed-tagged symbol to
+        # join the same cluster (symbol-less items — many EDGAR/RSS — are
+        # exempt: no basis to judge).
+        self.require_symbol_overlap = require_symbol_overlap
 
     async def process(self, item: dict) -> ClusterDecision:
         """item: the NewsItem payload dict from the signal.dedup message body."""
@@ -133,9 +161,28 @@ class Deduper:
                                    revision_similarity=rev_sim,
                                    is_cosmetic_revision=cosmetic)
 
-        neighbors = [n for n in self.store.nearest(vector, limit=3)
+        neighbors = [n for n in self.store.nearest(vector, limit=5)
                      if not (n.item_id == item_id)]
-        best = neighbors[0] if neighbors else None
+
+        # v0.12.19 symbol-overlap gate: a similar-sounding neighbor about a
+        # DIFFERENT company is a template match, not the same story. Take the
+        # best qualifying neighbor; skipped ones are logged.
+        best = None
+        item_syms = set(item.get("symbols") or [])
+        for n in neighbors:
+            if n.score < self.cluster_threshold or not n.cluster_id:
+                break                        # sorted desc: nothing below qualifies
+            if self.require_symbol_overlap and item_syms:
+                n_syms = set(await _symbols_of(n.item_id))
+                if n_syms and not (item_syms & n_syms):
+                    log.info("neighbor rejected (symbol disjoint)",
+                             extra=kv(item_id=item_id, neighbor=n.item_id,
+                                      sim=round(float(n.score), 3),
+                                      item_syms=sorted(item_syms)[:5],
+                                      neighbor_syms=sorted(n_syms)[:5]))
+                    continue
+            best = n
+            break
 
         is_dup = False
         if best is not None and best.score >= self.cluster_threshold and best.cluster_id:

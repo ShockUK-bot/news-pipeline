@@ -13,6 +13,7 @@ import asyncio
 import os
 import signal as _signal
 
+from common.config import config_path, load_yaml
 from common.contracts import (CONTRACT_TRIAGE, ClusterInfo, DedupedSignal, envelope)
 from common.db import close_pool, get_pool
 from common.log import get_logger, kv
@@ -136,7 +137,18 @@ async def prune_loop(store: VectorStore, stop: asyncio.Event) -> None:
 async def main() -> None:
     embedder = get_embedder()
     store = VectorStore()
-    deduper = Deduper(store, embedder)
+    # v0.12.19: thresholds + symbol-overlap gate now read from dedup.yaml
+    # (previously the yaml thresholds were decorative — constructor defaults
+    # happened to match). Missing file/keys -> the same defaults as before.
+    try:
+        cfg = load_yaml(config_path("dedup.yaml")) or {}
+    except Exception:
+        cfg = {}
+    deduper = Deduper(
+        store, embedder,
+        similarity_threshold=float(cfg.get("similarity_threshold", 0.90)),
+        cluster_threshold=float(cfg.get("cluster_threshold", 0.80)),
+        require_symbol_overlap=bool(cfg.get("require_symbol_overlap", True)))
     log.info("C2 up", extra=kv(embedder=embedder.name, consumer=CONSUMER))
 
     stop = asyncio.Event()

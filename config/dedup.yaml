@@ -4,6 +4,11 @@ similarity_threshold: 0.90      # >= this cosine sim to an item in trailing 48h 
                                 # vs its predecessor (dropped from triage unless a held
                                 # ticker is touched — A12 override)
 cluster_threshold: 0.80         # >= this sim -> same story cluster (corroboration), below -> new cluster
+require_symbol_overlap: true    # v0.12.19: joining a cluster also requires a shared
+                                # feed-tagged symbol with the matched neighbor (both
+                                # sides symbol-tagged). Stops template blackholes --
+                                # cluster 8693 held 40+ unrelated tickers of analyst
+                                # boilerplate and cross-suppressed the SPCX upgrade.
 dedup_window_hours: 48
 prune_interval_secs: 3600       # hourly prune of the dedup_48h collection
 collections:
