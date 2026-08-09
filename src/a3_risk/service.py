@@ -242,7 +242,8 @@ class A3Service:
                                 atr: float, thesis: dict,
                                 atr_14: float | None = None,
                                 atr_method: str = "atr",
-                                origin: str = "news") -> dict:
+                                origin: str = "news",
+                                prenews_price: float | None = None) -> dict:
         """`atr` is the STOP-BASIS ATR: daily ATR(14) for news profiles,
         5-min ATR(14) (or its flagged early-session estimate) for scalp_v1.
         `atr_14` additionally carries the daily value for MIP ArmContext
@@ -282,6 +283,14 @@ class A3Service:
         }
         if profile.get("force_flat_time_et"):
             policy["force_flat_time_et"] = str(profile["force_flat_time_et"])
+        # v0.12.20 — the position-5 ARM FAILED bug (2026-07-24): the stdlib
+        # close_below_prenews predicate resolves ctx.prenews_price from
+        # exit_policy, but the live entry flow never wrote it (integration
+        # tests seeded it directly, masking the gap). Now the gate's PASS
+        # snapshot carries it and it lands here. Absent -> key omitted and
+        # only that one arm degrades, exactly as before.
+        if prenews_price is not None:
+            policy["prenews_price"] = float(prenews_price)
         return policy
 
     async def handle(self, msg) -> None:
@@ -432,7 +441,9 @@ class A3Service:
             profile_name, profile, adj, result.limit_price,
             float(sizing_atr), thesis,
             atr_14=snapshot.get("atr_14") and float(snapshot["atr_14"]),
-            atr_method=atr_method, origin=origin)
+            atr_method=atr_method, origin=origin,
+            prenews_price=(snapshot.get("prenews_price")
+                           and float(snapshot["prenews_price"])))
 
         pool = await get_pool()
         async with pool.connection() as conn:

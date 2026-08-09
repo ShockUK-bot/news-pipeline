@@ -283,7 +283,10 @@ class C3Service:
         snapshot = {"ref_price": quote.price, "bid": quote.bid, "ask": quote.ask,
                     "spread_bps": quote.spread_bps, "adv_20d": adv20(daily),
                     "atr_14": a14, "atr_5m": a5, "atr_method": atr_method,
-                    "ts": quote.ts.isoformat()}
+                    "ts": quote.ts.isoformat(),
+                    # v0.12.20: scanner lane's pre-move reference is prev
+                    # close (same convention A2's context already uses).
+                    "prenews_price": scanner.get("prev_close")}
         gate_body = {"thesis": thesis, "origin": "scanner", "scanner": scanner,
                      "regime_id": body.get("regime_id"),
                      "gate": {"verdict": "PASS", "rule": "scanner",
@@ -493,7 +496,10 @@ class C3Service:
         daily = await self.md.daily_bars(thesis["ticker"], 30)
         snapshot = {"ref_price": quote.price, "bid": quote.bid, "ask": quote.ask,
                     "spread_bps": quote.spread_bps, "adv_20d": adv20(daily),
-                    "atr_14": atr14(daily), "ts": quote.ts.isoformat()}
+                    "atr_14": atr14(daily), "ts": quote.ts.isoformat(),
+                    # v0.12.20: A3 copies this into exit_policy so the
+                    # close_below_prenews arm can resolve (position-5 bug).
+                    "prenews_price": state.prenews_price}
         gate_body = {"thesis": thesis,
                      "gate": {"verdict": "PASS", "rule": verdict.rule,
                               **(verdict.numbers or {}), "snapshot": snapshot}}
