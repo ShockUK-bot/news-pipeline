@@ -105,9 +105,29 @@ async def positions_section(blackout_warn: int) -> list[dict]:
     return out
 
 
-async def a6_section() -> dict:
-    return {"review": await _latest_payload("POSITION_REVIEW", "A6",
-                                            "REVIEW"),
+async def a6_section(open_position_ids: list[int]) -> dict:
+    """v0.12.21 — recommendations must refer to the CURRENT open book.
+
+    The latest-row lookup is deliberate (a Monday briefing shows Friday's
+    review), but A6 only writes REVIEW rows while positions are open, so
+    after the book goes flat the newest review can be days old and its
+    recos reference positions long closed. Observed 2026-08-09: every
+    briefing since Aug 3 re-served the JNJ 'exit' reco — position 5 had
+    closed via TIME stop on Aug 3 — and the narrator led with it as if
+    current. Recos are now filtered to open position_ids; the dropped
+    count is kept in the facts so the fact sheet is honest about it.
+    Stats lines stay (labeled with run_date) — history is fine, stale
+    ADVICE is not."""
+    review = await _latest_payload("POSITION_REVIEW", "A6", "REVIEW")
+    if review is not None:
+        recos = review.get("recos") or []
+        open_set = set(open_position_ids)
+        live = [r for r in recos if r.get("position_id") in open_set]
+        if len(live) != len(recos):
+            review = {**review, "recos": live,
+                      "recommendations": len(live),
+                      "stale_recos_dropped": len(recos) - len(live)}
+    return {"review": review,
             "eod": await _latest_payload("POSITION_REVIEW", "A6",
                                          "EOD_SHEET")}
 
@@ -168,7 +188,7 @@ async def build_facts(now: datetime | None = None,
         "a4": await a4_section(session_date),
         "thesis": await thesis_section(),
         "positions": positions,
-        "a6": await a6_section(),
+        "a6": await a6_section([p["position_id"] for p in positions]),
         "earnings": await earnings_section([p["ticker"] for p in positions]),
         "ops": await ops_section(),
     }
