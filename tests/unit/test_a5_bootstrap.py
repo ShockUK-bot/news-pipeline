@@ -72,6 +72,25 @@ def test_week_context_included_only_when_supplied():
     assert "week_in_review" not in build_messages([], [], deep=True)[1]["content"]
 
 
+def test_macro_context_included_only_when_supplied():
+    """v0.12.24: the macro block rides in its own top-level key, absent
+    entirely when macro data is unavailable (pre-v0.12.24 behavior)."""
+    macro = {"as_of": "2026-08-10",
+             "groups": {"rates_curve": [{"label": "10y Treasury yield",
+                                         "latest": 4.25}]}}
+    m = build_messages([], [], deep=False, macro=macro)
+    assert "macro_context" in m[1]["content"]
+    assert "10y Treasury yield" in m[1]["content"]
+    assert "macro_context" not in build_messages([], [], deep=False)[1]["content"]
+
+
+def test_prompt_explains_macro_context_in_both_modes():
+    for p in (system_prompt(0, True, 5), system_prompt(9, False, 5)):
+        assert "macro_context" in p
+        # macro is context, never a thesis subject by itself
+        assert "theses need equity beneficiaries" in p
+
+
 def test_deep_marker_and_retry_still_work():
     m = build_messages([], [{"item_id": "n:1"}], deep=True,
                        retry_error="bad json", bootstrap=True)

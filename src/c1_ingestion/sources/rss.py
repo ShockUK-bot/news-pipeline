@@ -158,10 +158,17 @@ class RssSource:
                                             raw_text=resp.text[:2000]), f"rss:{name}")
             return
 
+        # v0.12.24: per-feed tier override + static channel tags. The block
+        # tier (3) stays the default; official primary sources (Fed, BLS)
+        # declare tier 1 on their own feed entry in sources.yaml.
+        feed_tier = int(feed.get("tier", self.tier))
+        feed_tags = [str(t) for t in (feed.get("tags") or [])]
         stored = 0
         for entry in parsed.entries:
             try:
-                item = normalize_rss(dict(entry), feed_name=name, tier=self.tier)
+                item = normalize_rss(dict(entry), feed_name=name,
+                                     tier=feed_tier,
+                                     extra_channels=feed_tags)
                 result = await store_item(item)
                 if result.stored:
                     stored += 1

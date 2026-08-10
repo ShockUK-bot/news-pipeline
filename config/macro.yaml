@@ -1,0 +1,56 @@
+# Macro/economy series configuration (v0.12.24).
+#
+# Provider: FRED. Default backend is the KEYLESS fredgraph CSV endpoint
+# (https://fred.stlouisfed.org/graph/fredgraph.csv?id=...) — no account, no
+# secret, nothing to configure. If FRED_KEY is present in the environment
+# (/etc/pipeline/pipeline.env), the official API at api.stlouisfed.org is
+# used instead (same data, politer; a free key takes two minutes at
+# fred.stlouisfed.org/docs/api/api_key.html). Rule 22 as always: the key
+# only ever lives in the environment, never in git.
+
+provider:
+  key_env: "FRED_KEY"          # optional; empty/unset -> fredgraph backend
+  timeout_secs: 30
+  pause_secs: 1.0              # polite gap between per-series requests
+
+store:
+  backfill_years: 5            # first fetch of a series pulls this much
+  refetch_overlap_days: 14     # later fetches re-pull a small tail so
+                               # revisions (CPI, payrolls) are picked up
+
+context:                       # macro_context() shaping (A5 pack)
+  stale_after_days: 45         # a series whose newest obs is older than
+                               # this is EXCLUDED and counted as stale
+  round_dp: 2
+
+# The series list. group -> ordering in the context pack; transform:
+#   level    -> latest value, changes are arithmetic differences
+#   yoy_pct  -> latest is % change vs ~1 year earlier, changes are moves
+#               in that YoY rate (percentage points)
+#   mom_diff -> latest is the change vs the previous observation
+series:
+  # -- rates & curve ---------------------------------------------------------
+  - {id: DFF,          label: "Fed funds rate (effective)",   group: rates_curve,   freq: d, transform: level,    unit: "%"}
+  - {id: DGS2,         label: "2y Treasury yield",            group: rates_curve,   freq: d, transform: level,    unit: "%"}
+  - {id: DGS10,        label: "10y Treasury yield",           group: rates_curve,   freq: d, transform: level,    unit: "%"}
+  - {id: T10Y2Y,       label: "2s10s curve (10y minus 2y)",   group: rates_curve,   freq: d, transform: level,    unit: "pp"}
+  # -- inflation -------------------------------------------------------------
+  - {id: CPIAUCSL,     label: "CPI (headline, YoY)",          group: inflation,     freq: m, transform: yoy_pct,  unit: "%"}
+  - {id: CPILFESL,     label: "CPI (core, YoY)",              group: inflation,     freq: m, transform: yoy_pct,  unit: "%"}
+  - {id: T5YIE,        label: "5y breakeven inflation",       group: inflation,     freq: d, transform: level,    unit: "%"}
+  # -- labor -----------------------------------------------------------------
+  - {id: UNRATE,       label: "Unemployment rate",            group: labor,         freq: m, transform: level,    unit: "%"}
+  - {id: PAYEMS,       label: "Nonfarm payrolls (monthly chg)", group: labor,       freq: m, transform: mom_diff, unit: "k jobs"}
+  - {id: ICSA,         label: "Initial jobless claims",       group: labor,         freq: w, transform: level,    unit: "claims"}
+  # -- growth & consumer -----------------------------------------------------
+  - {id: RSAFS,        label: "Retail sales (YoY)",           group: growth,        freq: m, transform: yoy_pct,  unit: "%"}
+  - {id: INDPRO,       label: "Industrial production (YoY)",  group: growth,        freq: m, transform: yoy_pct,  unit: "%"}
+  - {id: UMCSENT,      label: "Consumer sentiment (U.Mich)",  group: growth,        freq: m, transform: level,    unit: "index"}
+  # -- credit & risk ---------------------------------------------------------
+  - {id: BAMLH0A0HYM2, label: "High-yield credit spread",     group: credit_risk,   freq: d, transform: level,    unit: "pp"}
+  - {id: VIXCLS,       label: "VIX",                          group: credit_risk,   freq: d, transform: level,    unit: "index"}
+  # -- dollar, energy, housing, money ---------------------------------------
+  - {id: DTWEXBGS,     label: "Trade-weighted dollar (YoY)",  group: dollar_energy, freq: d, transform: yoy_pct,  unit: "%"}
+  - {id: DCOILWTICO,   label: "WTI crude oil",                group: dollar_energy, freq: d, transform: level,    unit: "$/bbl"}
+  - {id: MORTGAGE30US, label: "30y mortgage rate",            group: housing_money, freq: w, transform: level,    unit: "%"}
+  - {id: M2SL,         label: "M2 money supply (YoY)",        group: housing_money, freq: m, transform: yoy_pct,  unit: "%"}

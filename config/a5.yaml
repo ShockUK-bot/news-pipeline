@@ -20,6 +20,11 @@ lane:
   wide_context: true           # include the week's trading (open positions,
                                # closed trades, A2 theses) in the pack
 
+  # v0.12.24 — macro/economy block (rates, curve, inflation, labor, credit,
+  # dollar, energy from news.macro_series) in the pack on EVERY run.
+  # Degrades silently to absent when the table is empty or unreadable.
+  macro_context: true
+
 store:
   stale_weeks: 6               # ACTIVE thesis with no evidence in N weeks
                                # -> EXPIRED (code rule, model cannot veto)

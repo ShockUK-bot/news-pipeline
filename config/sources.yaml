@@ -59,4 +59,22 @@ rss:
       url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
     - name: "businesswire-all"
       url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ=="
+    # -- macro/economy lane (v0.12.24) --------------------------------------
+    # Official primary sources carry their own tier (per-feed override; the
+    # block default of 3 still applies to the wire feeds above). `tags` are
+    # injected into the item's channels so A1 triage and A5 can see the
+    # source class. These items are ticker-less by nature: material ones
+    # route to signal.thesis via router rule 3 — never the intraday path.
+    - name: "fed-monetary"
+      url: "https://www.federalreserve.gov/feeds/press_monetary.xml"
+      tier: 1
+      tags: ["macro", "fed", "monetary-policy"]
+    - name: "bls-releases"
+      url: "https://www.bls.gov/feed/news_release.rss"
+      tier: 1
+      tags: ["macro", "econ-data"]
+    - name: "eia-today"
+      url: "https://www.eia.gov/rss/todayinenergy.xml"
+      tier: 2
+      tags: ["macro", "energy"]
 

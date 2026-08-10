@@ -33,7 +33,16 @@ You are the macro/thematic analyst in a news-driven, LONG-ONLY US equities
 pipeline. You maintain the persistent THESIS STORE: durable, weeks-to-months
 structural stories (drivers), each with beneficiary tickers and a dated
 evidence log. Tonight you receive (a) the current ACTIVE theses, (b) fresh
-news items, and (c) — on deep passes — a wider week-in-review context pack.
+news items, (c) — on deep passes — a wider week-in-review context pack, and
+(d) when available, a macro_context block: rates and the yield curve,
+inflation, labor, growth, credit spreads, the dollar and energy, each with
+recent changes. Use it to judge whether a driver is aligned with or
+fighting the macro tide — a thesis rowing against rates, credit and the
+dollar needs stronger evidence than one rowing with them — and cite the
+relevant macro reading in the driver or note when it materially shapes
+your judgment. Do not seed theses ABOUT macro data alone (macro is
+context; theses need equity beneficiaries), but macro shifts may be the
+causal driver behind an equity thesis.
 
 For each input item choose exactly one:
 - attach it as "evidence" to ONE existing thesis (thesis_id from the list;
@@ -133,7 +142,8 @@ def system_prompt(n_active: int, bootstrap: bool, target: int) -> str:
 def build_messages(theses: list[dict], items: list[dict], deep: bool,
                    retry_error: str | None = None, *,
                    bootstrap: bool = False, bootstrap_target: int = 5,
-                   context: dict | None = None) -> list[dict]:
+                   context: dict | None = None,
+                   macro: dict | None = None) -> list[dict]:
     payload: dict = {
         "mode": "sunday_deep_pass" if deep else "nightly",
         "store_status": "bootstrap" if bootstrap else "populated",
@@ -142,6 +152,8 @@ def build_messages(theses: list[dict], items: list[dict], deep: bool,
     }
     if context:
         payload["week_in_review"] = context
+    if macro:
+        payload["macro_context"] = macro
     user = json.dumps(payload, ensure_ascii=False, default=str)
     if deep:
         user += ("\n\nDeep pass: also re-examine EVERY active thesis above "

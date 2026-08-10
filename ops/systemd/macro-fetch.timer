@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh macro series daily at 20:45 ET (45 min before A5)
+
+[Timer]
+# Daily including weekends: FRED updates most daily series after the US
+# close, and the 20:45 slot puts fresh data on disk just before the 21:30
+# A5 thematic pass. ~19 keyless requests with a 1s pause — negligible.
+# A failed run degrades the 'macro' health row and A5 simply runs without
+# a macro block that night; nothing downstream breaks.
+OnCalendar=*-*-* 20:45 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

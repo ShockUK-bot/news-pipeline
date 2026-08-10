@@ -236,7 +236,8 @@ async def digest_already_done(run_date: str) -> bool:
 async def update_with_model(backend, theses: list[dict], items: list[dict],
                             deep: bool, retries: int, *,
                             bootstrap: bool = False, bootstrap_target: int = 5,
-                            context: dict | None = None):
+                            context: dict | None = None,
+                            macro: dict | None = None):
     """Returns (ThematicUpdate | None, model_id | None, latency_ms)."""
     if backend is None:
         return None, None, 0
@@ -247,7 +248,7 @@ async def update_with_model(backend, theses: list[dict], items: list[dict],
                                   retry_error=error.detail if error else None,
                                   bootstrap=bootstrap,
                                   bootstrap_target=bootstrap_target,
-                                  context=context)
+                                  context=context, macro=macro)
         try:
             reply = await backend.complete(messages, thematic_json_schema())
         except (httpx.HTTPError, asyncio.TimeoutError) as e:
@@ -435,6 +436,17 @@ async def run_thematic(cfg: dict, backend_override=None,
         context = (await fetch_week_context(now - timedelta(days=wide_days))
                    if want_context else None)
 
+        # v0.12.24: macro/economy block (rates, curve, inflation, labor,
+        # credit, dollar, energy — computed from news.macro_series by
+        # c1_ingestion.macro). Included on EVERY run when enabled — it is
+        # ~2KB and helps nightly evidence polarity as much as deep-pass
+        # authoring. Defensive by contract: no table / no rows / any
+        # error -> None, and the run proceeds exactly as pre-v0.12.24.
+        macro = None
+        if bool(lcfg.get("macro_context", True)):
+            from c1_ingestion.macro import macro_context
+            macro = await macro_context()
+
         # BOOTSTRAP: code decides the prompt mode from the store's real
         # population. Below the floor the model is told to seed; at or above
         # it, the original conservative wording. Flips both ways by itself.
@@ -449,7 +461,7 @@ async def run_thematic(cfg: dict, backend_override=None,
             update, model_id, latency = await update_with_model(
                 backend, theses, all_items, deep, retries,
                 bootstrap=bootstrap, bootstrap_target=boot_target,
-                context=context)
+                context=context, macro=macro)
             if update is None:
                 for msg in claimed:
                     await fail(msg.msg_id, "thematic model unavailable/invalid")
@@ -599,6 +611,7 @@ async def run_thematic(cfg: dict, backend_override=None,
         # 6. digest anchor + email --------------------------------------------
         active_after = len(await store.load_active())
         stats = {"run_date": run_date, "deep": deep, "slot": slot_name,
+                 "macro_context": macro is not None,
                  "bootstrap": bootstrap, "active_before": len(theses),
                  "wide_items": len(wide_items),
                  "wide_evidence": wide_evidence,
