@@ -22,7 +22,10 @@ limits:
   spread_max_bps: 40
   entry_blackout_final_min: 15
 model:                               # A3 bounded discretion (Analyst slot)
-  backend: stub                      # llamacpp on the Spark (:8081), stub for dev
+  backend: llamacpp                  # v0.12.22: was "stub" — shipped as the dev
+                                     # setting, so bounded discretion NEVER ran on
+                                     # the Spark (every trade fell back to profile
+                                     # defaults). stub remains valid for dev.
   endpoint: "http://127.0.0.1:8081"
   model_id: "qwen3.6-27b-q5_k_m"
   temperature: 0.0

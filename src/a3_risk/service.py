@@ -234,7 +234,11 @@ class A3Service:
         except Exception as e:
             log.warning("discretion fallback to defaults",
                         extra=kv(error=repr(e)[:150]))
-            defaults.reason = f"fallback: {repr(e)[:120]}"
+            # v0.12.22: journal the first line only — the multiline pydantic
+            # dump journaled on 2026-08-10 (SNDK) read as if it had caused
+            # the 1-share size, and A13 narrated it that way to the operator.
+            defaults.reason = ("fallback to profile defaults: "
+                               + str(e).splitlines()[0][:120])
             return defaults, False
 
     def materialize_exit_policy(self, profile_name: str, profile: dict,
