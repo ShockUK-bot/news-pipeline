@@ -1,4 +1,4 @@
-# A5 Macro/Thematic configuration (Phase 8).
+# A5 Macro/Thematic configuration (Phase 8; v0.12.23 bootstrap + wide pass).
 lane:
   max_age_hours: 168           # thesis-lane messages older than a week
                                # bulk-expire (also the backlog drain)
@@ -6,17 +6,44 @@ lane:
   deep_top_k: 60               # ...on the Sunday deep pass
   force_deep: false            # manual override: treat tonight as deep
 
+  # v0.12.23 — the WIDE PASS. On deep runs only, A5 additionally reads the
+  # last `wide_lookback_days` of ESCALATED news straight from the news store,
+  # READ-ONLY (no queue claim, no ack, no expiry interaction). This is the
+  # fix for deep-pass starvation: the nightly runs consume the thesis lane
+  # 1-6 items at a time, so by Sunday the queue is empty and the deep pass
+  # was firing on nothing (observed: deep=True processed=0, two Sundays
+  # running). Read-only means it can never race the nightly claims.
+  wide_pass: true
+  wide_lookback_days: 7
+  wide_max_items: 80           # HARD CEILING: schema ItemOp list max_length
+                               # is 80. Do not raise without raising that.
+  wide_context: true           # include the week's trading (open positions,
+                               # closed trades, A2 theses) in the pack
+
 store:
   stale_weeks: 6               # ACTIVE thesis with no evidence in N weeks
                                # -> EXPIRED (code rule, model cannot veto)
+
+  # v0.12.23 — bootstrap mode. Below this many ACTIVE theses the prompt
+  # flips from "new theses are rare" to "seed the store; zero is a failure".
+  # Automatic in both directions; see src/a5_thematic/prompt.py.
+  bootstrap_min_theses: 3
+  bootstrap_target: 5          # how many theses to ask for when seeding
 
 digest:
   email: true                  # nightly digest via journal.outbox (C5 mails)
 
 narrative:                     # model-call parameters (SlotManager contract)
-  max_tokens: 3000             # one call carries all ops for the night
+  max_tokens: 8000             # v0.12.23: was 3000. All five REJECTs to date
+                               # were truncation, not bad grammar — the JSON
+                               # died mid-string at ~8.2k chars (char 8206,
+                               # char 8137), i.e. exactly the 3000-token cap.
+                               # 25 items of ops nearly fills 3000; a 60-item
+                               # deep pass carrying new theses cannot fit.
   temperature: 0.0
-  timeout_secs: 600
+  timeout_secs: 900            # v0.12.23: was 600. A bigger pack on the 122B
+                               # at ~8k output tokens needs the headroom;
+                               # this is an off-hours oneshot, nothing waits.
   retries_on_invalid: 1
 
 heavy:
