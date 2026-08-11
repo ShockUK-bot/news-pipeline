@@ -89,6 +89,46 @@ def aggregate_health(feed_ok: dict, fail_streak: int, degrade_after: int,
     return ("OK", f"{total} feeds, every {int(interval)}s")
 
 
+def poll_headers(feed: dict, cache: dict) -> dict:
+    """Per-request headers for one feed poll. Unit-tested directly.
+
+    v0.12.25: per-feed User-Agent override. The block-level UA is a
+    browser impersonation because several PR wires 404/403 honest bots
+    (v0.11.1). BLS is the exact opposite: a government server that 403s
+    fake browsers and admits only clients identifying themselves WITH
+    CONTACT INFO (probe-proven 2026-08-11: plain product string 403,
+    repo-URL string 403, email-contact string 200). One global UA cannot
+    satisfy both publishers, so a feed may carry its own — request-level
+    headers override the client default in httpx.
+
+    Two spellings, because the working string contains an email address
+    and this config is in a PUBLIC repo (rule 22 applies to personal data
+    as much as to keys):
+      user_agent:     literal string in sources.yaml (fine for anything
+                      non-personal)
+      user_agent_env: NAME of an environment variable holding the string
+                      (set in /etc/pipeline/pipeline.env). Takes
+                      precedence. Unset/empty env -> fall through to any
+                      literal, else no UA header (browser default), which
+                      for BLS means a VISIBLE per-feed DEGRADED row - a
+                      loud, harmless failure mode.
+    Feeds with neither key behave byte-for-byte as before."""
+    import os
+    headers: dict = {}
+    ua = ""
+    if feed.get("user_agent_env"):
+        ua = os.environ.get(str(feed["user_agent_env"]), "").strip()
+    if not ua and feed.get("user_agent"):
+        ua = str(feed["user_agent"])
+    if ua:
+        headers["User-Agent"] = ua
+    if cache.get("etag"):
+        headers["If-None-Match"] = cache["etag"]
+    if cache.get("last_modified"):
+        headers["If-Modified-Since"] = cache["last_modified"]
+    return headers
+
+
 class RssSource:
     def __init__(self, cfg: dict, monitor: GapMonitor):
         self.tier = int(cfg.get("tier", 3))
@@ -136,13 +176,7 @@ class RssSource:
 
     async def _poll(self, client: httpx.AsyncClient, feed: dict) -> None:
         name, url = feed["name"], feed["url"]
-        headers = {}
-        cache = self._cache.get(name, {})
-        if cache.get("etag"):
-            headers["If-None-Match"] = cache["etag"]
-        if cache.get("last_modified"):
-            headers["If-Modified-Since"] = cache["last_modified"]
-
+        headers = poll_headers(feed, self._cache.get(name, {}))
         resp = await client.get(url, headers=headers)
         if resp.status_code == 304:
             self.monitor.mark_activity()

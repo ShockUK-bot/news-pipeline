@@ -124,11 +124,49 @@ def test_macro_config_covers_the_core_regime_inputs():
 def test_macro_feeds_registered_with_tier_and_tags():
     rss = yaml.safe_load(SOURCES.read_text())["rss"]
     feeds = {f["name"]: f for f in rss["feeds"]}
-    for name in ("fed-monetary", "bls-releases", "eia-today"):
+    for name in ("fed-monetary", "bls-latest", "eia-today"):
         assert name in feeds, f"missing macro feed {name}"
         assert "macro" in feeds[name].get("tags", []), name
     assert feeds["fed-monetary"]["tier"] == 1
-    assert feeds["bls-releases"]["tier"] == 1
+    assert feeds["bls-latest"]["tier"] == 1
+    # BLS admits only contact-identified UAs (v0.12.25) and the string
+    # holds an email, so it must come via the ENVIRONMENT — never a
+    # literal in this public file (rule 22), and never an email in git.
+    assert feeds["bls-latest"].get("user_agent_env") == "BLS_USER_AGENT"
+    assert "@" not in str(feeds["bls-latest"].get("user_agent", ""))
+    # ...and the wire feeds must NOT grow a UA (they need the browser one).
+    for name in ("prnewswire-news", "globenewswire-public", "businesswire-all"):
+        assert "user_agent" not in feeds[name], name
+        assert "user_agent_env" not in feeds[name], name
+
+
+def test_poll_headers_per_feed_ua_and_cache(monkeypatch):
+    from c1_ingestion.sources.rss import poll_headers
+
+    # env-var spelling (the BLS case): env value wins
+    monkeypatch.setenv("BLS_USER_AGENT", "news-pipeline/0.12 (contact: x@y.z)")
+    feed = {"name": "bls-latest", "user_agent_env": "BLS_USER_AGENT"}
+    h = poll_headers(feed, {"etag": 'W/"abc"', "last_modified": "yesterday"})
+    assert h["User-Agent"] == "news-pipeline/0.12 (contact: x@y.z)"
+    assert h["If-None-Match"] == 'W/"abc"'
+    assert h["If-Modified-Since"] == "yesterday"
+
+    # unset env + no literal -> NO UA header (browser default applies and
+    # the feed degrades visibly on its own row — loud, harmless)
+    monkeypatch.delenv("BLS_USER_AGENT", raising=False)
+    assert "User-Agent" not in poll_headers(feed, {})
+
+    # unset env falls through to a literal when one exists
+    assert poll_headers({"user_agent_env": "BLS_USER_AGENT",
+                         "user_agent": "fallback/1.0"}, {}) == \
+        {"User-Agent": "fallback/1.0"}
+
+    # literal-only spelling still works
+    assert poll_headers({"user_agent": "plain/1.0"}, {}) == \
+        {"User-Agent": "plain/1.0"}
+
+    # feeds with neither key keep exactly their old behavior
+    assert poll_headers({"name": "prnewswire-news"}, {}) == {}
 
 
 # --- per-feed tier/tags through normalize_rss ------------------------------

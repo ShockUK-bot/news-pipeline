@@ -69,10 +69,21 @@ rss:
       url: "https://www.federalreserve.gov/feeds/press_monetary.xml"
       tier: 1
       tags: ["macro", "fed", "monetary-policy"]
-    - name: "bls-releases"
-      url: "https://www.bls.gov/feed/news_release.rss"
+    # v0.12.25: BLS corrected. The v0.12.24 URL (feed/news_release.rss)
+    # does not exist (404), and BLS 403s the browser-impersonating UA the
+    # PR wires require — probe-proven: it admits ONLY clients identifying
+    # themselves with contact info. bls_latest.rss is BLS's all-releases
+    # wire (jobs report, CPI, PPI, ECI, import prices — one entry per
+    # release as published). The UA string contains an email address, so
+    # it lives in /etc/pipeline/pipeline.env as BLS_USER_AGENT (rule 22 —
+    # this file is public), read per-feed by rss.py's poll_headers. If the
+    # env var is missing the feed degrades VISIBLY on its own health row;
+    # nothing else is affected.
+    - name: "bls-latest"
+      url: "https://www.bls.gov/feed/bls_latest.rss"
       tier: 1
       tags: ["macro", "econ-data"]
+      user_agent_env: "BLS_USER_AGENT"
     - name: "eia-today"
       url: "https://www.eia.gov/rss/todayinenergy.xml"
       tier: 2
