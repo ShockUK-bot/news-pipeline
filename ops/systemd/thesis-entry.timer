@@ -1,0 +1,14 @@
+[Unit]
+Description=Plan thesis-lane entries nightly at 22:15 ET (after the A5 pass)
+
+[Timer]
+# Daily including weekends: A5 updates the store every night at 21:30 ET,
+# and the Sunday deep pass is precisely when new theses are most likely to
+# appear — Sunday night's plan buys them at Monday's open (+15 min).
+# Entries are queue-delayed intents; nothing touches the broker off-hours.
+# No model call, no heavy slot — pure code, runs in seconds.
+OnCalendar=*-*-* 22:15 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

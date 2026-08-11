@@ -29,6 +29,20 @@ profiles:
     realization:    {target_fraction: 0.7, action: review_flag}
     earnings_blackout_exit: false
     overnight_hold: default_hold
+  thesis_v1:                           # v0.12.26 — thesis-store-origin trades
+    initial_stop:   {method: atr, k: 3.0}
+    catastrophe:    {method: atr, k: 4.5}
+    breakeven_at_R: 1.0
+    trail:          {activate_at_R: 2.0, method: atr_weekly, k: 4.0}
+    time_stop:      null               # the thesis store IS the time stop:
+                                       # C11 arms an exit when the thesis
+                                       # dies (invalidated/realized/stale)
+    realization:    {target_fraction: 0.7, action: review_flag}
+    earnings_blackout_exit: false      # operator policy 2026-08-11: hold
+                                       # through earnings at half-size;
+                                       # C11 journals a trim reco when
+                                       # entering earnings with >=0.5R gain
+    overnight_hold: default_hold
 discretion_bands:
   k: [1.5, 2.5]
   realization_fraction: [0.5, 0.9]

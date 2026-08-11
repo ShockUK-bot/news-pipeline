@@ -1,0 +1,57 @@
+# C11 thesis-entry lane configuration (v0.12.26).
+#
+# The long lane's originator: converts A5's standing theses into small,
+# wide-stopped, thesis-lifetime positions. Entries are planned nightly
+# (22:15 ET, after A5's 21:30 pass) and delivered as queue-delayed intents
+# that C4 executes at the NEXT session open + blackout — through the exact
+# same preflight, limit-order, fill and stop machinery as every news trade.
+#
+# Philosophy (operator-agreed 2026-08-11, the RIOT night): the news lane
+# correctly refuses to chase a +26% gap — the only way to be IN a RIOT
+# morning is to already own the beneficiary because of the thesis. So this
+# lane buys the QUIET beneficiaries and holds while the thesis lives. The
+# don't-chase gate below would have SKIPPED RIOT itself that morning — by
+# design; the basket exists to catch the next one.
+
+entry:
+  min_confidence: 0.5          # ACTIVE, direction='up' theses only
+  min_evidence: 0              # 0 = anchor-only theses may trade (operator
+                               # chose to start immediately; raise to demand
+                               # N confirming evidence items first)
+  max_new_per_day: 2
+  max_open_positions: 4        # total origin='thesis' positions
+  max_per_thesis: 2            # per thesis_id
+  risk_pct: 0.0025             # 0.25% of effective capital per position —
+                               # HALF the news lane's 0.5%: thesis positions
+                               # hold through earnings (see management)
+  min_viable_risk: 200         # skip if the ATR stop can't risk this much
+  chase_buffer_pct: 0.02       # limit = prev_close * 1.02; a gap beyond
+                               # this simply never fills (C4 cancels at its
+                               # fill timeout) — chase protection at the
+                               # execution layer too
+  entry_blackout_min: 15       # never in the first 15 min after open
+  stagger_min: 5               # successive entries 5 min apart
+  expected_move: 0.20          # magnitude_est for the exit engine's
+                               # realization math (review_flag at ~+14%)
+
+liquidity:
+  min_price: 3.0
+  min_adv_dollars: 20000000    # 20-day average dollar volume floor
+
+extended:                      # the don't-chase gate (either trips = skip)
+  max_above_sma20_pct: 0.10    # last close > 10% above 20-session mean
+  max_5session_gain_pct: 0.15  # or up > 15% over the last 5 sessions
+
+management:                    # nightly pass over open thesis positions
+  exit_dead_theses: true       # thesis no longer ACTIVE -> stop tightened
+                               # to just under last price: the existing L1
+                               # stop machinery exits it next session.
+                               # Tighten-only, never widens.
+  trim_before_earnings: true   # operator policy: into earnings WITH a gain,
+  trim_min_gain_R: 0.5         # lock half; reassess re-entry after the
+  trim_fraction: 0.5           # print. v1 journals + emails the TRIM RECO
+                               # (partial-exit automation is deliberately
+                               # deferred — it needs C4 surgery).
+
+digest:
+  email: true                  # nightly plan digest via journal.outbox
