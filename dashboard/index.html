@@ -179,10 +179,17 @@ const QORDER=['signal.dedup','signal.triage','signal.synthetic','signal.scanner'
               'signal.guard','signal.thesis','chat.request'];
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toLocaleString(undefined,{maximumFractionDigits:0});
 const px=v=>v==null?'—':Number(v).toFixed(2);
-// origin: which INPUT produced the trade — news pipeline vs momentum scanner
+// origin: which INPUT produced the trade — news pipeline, momentum scanner,
+// or the thesis store (v0.12.27: the v0.12.26 lane's 'thesis' rows were
+// falling through this chip's old two-way default and rendering as NEWS).
+// Unknown future origins render as themselves in grey instead of lying.
 const originChip=o=>o==='scanner'
   ?'<span class="chip" style="background:var(--chip-gate)">SCAN</span>'
-  :'<span class="chip" style="background:var(--chip-triage)">NEWS</span>';
+  :o==='thesis'
+  ?'<span class="chip" style="background:var(--chip-analyst)">THESIS</span>'
+  :o==='news'
+  ?'<span class="chip" style="background:var(--chip-triage)">NEWS</span>'
+  :`<span class="chip" style="background:var(--muted,#8a8f98)">${String(o||'?').toUpperCase().slice(0,8)}</span>`;
 let lastDecisionId=0, histTimer=null;
 
 function setConn(mode){const c=$('conn');
