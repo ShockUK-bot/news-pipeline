@@ -34,6 +34,35 @@ gate:
                                # session has closed (what did the stock do
                                # after each veto — the §14 tuning dataset).
                                # <=0 disables the sweep (recording stays on).
+  abandon_when_extended: true  # v0.12.28: stop re-checking once pct_move has
+                               # passed extended_pct. Nothing the re-check
+                               # waits for (outlets, volume, bars) can produce
+                               # a PASS any more — GATE_EXTENDED fires the
+                               # instant the other condition clears. WDAY
+                               # 2026-08-13 spent 25 minutes and 9 re-checks
+                               # in this dead state, then journaled
+                               # CREDIBILITY at minute 29 when the real
+                               # blocker had been GATE_EXTENDED since minute 4.
+  max_bar_age_secs: 120        # v0.12.28: a PASS may not be built on a bar
+                               # older than this. Same incident: consecutive
+                               # re-checks 3 minutes apart returned identical
+                               # pct_move AND vol_mult (0.07392/34.3, then
+                               # 0.18377/60.48) on a stock printing 60x
+                               # relative volume — a cache, not a quiet tape.
+                               # Stale data can no longer manufacture an entry;
+                               # it defers instead (STALE_MARKETDATA).
+                               # <=0 disables the check.
+  fast_confirm_bars: 1         # v0.12.28: min_confirm_bars for high-urgency
+                               # catalysts (see fast_urgency). Still >=1 —
+                               # this shortens the maturity wait, it does not
+                               # evaluate on zero bars (the v0.11.10 fix
+                               # stands). 14:36 WDAY: min_confirm_bars=3 put
+                               # the first legal look at 14:40:00, by which
+                               # time the stock was +7.39% and past
+                               # extended_pct. The tradeable band opened and
+                               # closed INSIDE the deferral.
+  fast_urgency: [high]         # A1 urgency values that take fast_confirm_bars.
+                               # Empty list disables the fast path entirely.
   extended_pct: 0.06           # baseline v0.5: skip if >= +6% from pre-news
   open_blackout_min: 15        # no entries first 15 min after open (baseline)
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN
@@ -43,6 +72,30 @@ gate:
     low:    {2: 1, 3: 1}
     medium: {2: 1, 3: 2}
     high:   {2: 2, 3: 3}       # Tier-3 single-source high-impact NEVER passes alone
+  # -- cluster-growth corroboration credit (v0.12.28) -------------------------
+  # WDAY 2026-08-13 exposed a structural fact: alpaca_benzinga is our ONLY
+  # journalistic feed (EDGAR = filings, RSS = PR wires + macro). For a story
+  # a reporter breaks rather than a company announcing itself,
+  # independent_outlets is pinned at 1 FOREVER — so required_outlets: 2 made
+  # every high-impact media catalyst permanently unreachable. That is not the
+  # anti-fake-news rule the baseline specified; it is an unsatisfiable one.
+  #
+  # The credit rests on what cluster membership already means: C2 drops
+  # anything >= 0.9 cosine to a seen item, so a member that JOINS a cluster is
+  # necessarily a substantively different article about the same story
+  # (WDAY's follow-ons: 0.810 and 0.866). One wire filing three distinct
+  # articles is real evidence a story is not fabricated — just not
+  # independent-outlet evidence. It is credited as such: capped, and never
+  # enough to carry a single item on its own.
+  cluster_growth:
+    enabled: true
+    items_per_credit: 1        # additional distinct items on the cluster (by
+                               # item_id, revisions excluded) per +1 effective
+                               # outlet
+    max_credit: 1              # hard cap. With required high/tier-3 = 3, a
+                               # single-source Tier-3 high-impact claim STILL
+                               # never passes alone — the baseline invariant
+                               # is preserved by arithmetic, not by promise.
   # -- extended-hours SHADOW lane (v0.12.11): observe-only. During pre
   # (4:00-9:30 ET) and post (16:00-20:00 ET) sessions, escalated news is
   # ALSO evaluated at arrival with quote-based rules; the verdict

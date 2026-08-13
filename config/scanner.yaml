@@ -5,12 +5,35 @@
 # are the first anti-overtrading layer and zero emissions is a correct day.
 scanner:
   scan_interval_secs: 60
+  movers_top: 50                 # v0.12.28: was hard-coded 20. The movers
+                                 # list is ranked by % change, so 20 slots
+                                 # are all >25% microcap spikes on any
+                                 # volatile day; 50 reaches past them.
   most_actives_top: 50           # v0.12.17: also scan the top-N most-active
-                                 # names by volume. The movers list is ranked
+                                 # names. The movers list is ranked
                                  # by % change, so its 20 slots fill with
                                  # >25% microcap spikes and a liquid +7%
                                  # mover (SPCX, 2026-08-06 unlock day) can
                                  # never enter it. 0 disables this leg.
+  most_actives_by: [volume, trades]
+                                 # v0.12.28: one leg per ranking. 'volume' is
+                                 # SHARE count and structurally favours cheap
+                                 # stock — WDAY (2026-08-13) did +25% on
+                                 # ~$1.8bn and 8.75m shares, the best setup of
+                                 # the day, and appeared in NO leg: never
+                                 # measured, never journaled, invisible.
+                                 # 'trades' ranks by trade count, which is
+                                 # price-neutral. Legs are fetched
+                                 # independently; a failing leg is skipped,
+                                 # not fatal.
+  exclude_derivative_shapes: true  # v0.12.28: drop warrants / rights / units /
+                                 # preferreds on SYMBOL SHAPE before any
+                                 # market-data call (BBBY.WS, DAVEW, AHT.PRD).
+                                 # The spec always excluded them; nothing
+                                 # enforced it, so on 2026-08-13 they were
+                                 # essentially the entire day's scan budget —
+                                 # four market-data calls each to reach a
+                                 # guaranteed PRICE_FLOOR reject.
   session_start_et: "09:50"      # open blackout (15m) + 5m of settling
   session_end_et: "15:15"        # last emission — room to work before force-flat
   # -- candidate filters (ALL must pass) --------------------------------------
@@ -30,6 +53,14 @@ scanner:
   # -- news cross-check -------------------------------------------------------
   news_strong_window_hours: 4    # escalated news item in this window -> news owns it
   news_weak_window_hours: 24     # any news naming the ticker -> weak match, attach
+  news_owns_it_until_veto: true  # v0.12.28: news ownership EXPIRES when C3
+                                 # vetoes. WDAY 2026-08-13: the news lane
+                                 # escalated at 14:36 and vetoed at 15:05 —
+                                 # the scanner would have stood down all the
+                                 # way through for a lane that was declining
+                                 # the trade, and after the veto no lane
+                                 # owned the name at all. false restores the
+                                 # v0.12.17 behaviour.
   # -- emission caps (anti-overtrading, layer 1) ------------------------------
   max_per_scan: 2                # top-N by composite score per scan cycle
   max_per_day: 6                 # global daily escalation cap

@@ -6,6 +6,12 @@ Check order (cheapest first, all journaled on veto):
   2. CREDIBILITY      corroboration matrix: required independent outlets =
                       f(impact bucket, source tier); Tier-1 passes alone;
                       source_risk="high" raises the requirement one level
+                      (v0.12.28: EFFECTIVE outlets = independent outlets +
+                      capped cluster-growth credit. We subscribe to exactly
+                      one journalistic wire, so independent_outlets can never
+                      exceed 1 on a reported story and the high-impact
+                      requirement of 2 was unsatisfiable by arithmetic —
+                      WDAY/Silver Lake, 2026-08-13. See growth_credit().)
   3. intraday vs open-handoff branch on whether the news arrived in-session:
      intraday:  GATE_WINDOW    minutes_since_publish > N
                 GATE_EXTENDED  already >= extended_pct from pre-news
@@ -18,6 +24,10 @@ Check order (cheapest first, all journaled on veto):
                 bars, so this veto only fires when a MATURE window is empty —
                 a trading halt or a genuine data outage, not a fast signal.)
                 GATE_NO_CONFIRM pct_move < X or vol_mult < Y
+                STALE_MARKETDATA (v0.12.28) every other check passed but the
+                newest bar backing the decision is older than
+                max_bar_age_secs. Re-checkable: a cache heals, and stale data
+                must never be the thing that MANUFACTURES an entry.
      handoff:   GATE_OPEN_WINDOW first 15 minutes after open
                 PRICED_IN      gap >= gap_ratio * magnitude_est
 
@@ -42,6 +52,12 @@ class MarketState:
     gap_pct: Optional[float]           # today's open vs prev close (handoff)
     corroboration_outlets: int
     tier_min: int                      # best (lowest) tier in the cluster
+    cluster_items: int = 1             # v0.12.28: distinct items on the
+                                       # cluster (by item_id; revisions of the
+                                       # same item are NOT growth)
+    bar_age_secs: Optional[float] = None  # v0.12.28: age of the newest minute
+                                       # bar backing this evaluation. None =
+                                       # unknown (staleness check skipped)
 
 
 @dataclass
@@ -50,6 +66,16 @@ class GateVerdict:
     rule: str                          # intraday | open_handoff
     veto_reason: Optional[str] = None
     numbers: dict | None = None        # journaled either way
+
+
+def _bar_stale(bar_age_secs: Optional[float], cfg: dict) -> bool:
+    """v0.12.28: is the market data behind this evaluation too old to justify
+    an entry? Unknown age (None) is NOT stale — the check is additive and must
+    not veto callers that don't supply the field."""
+    max_age = float(cfg.get("max_bar_age_secs", 0) or 0)
+    if max_age <= 0 or bar_age_secs is None:
+        return False
+    return float(bar_age_secs) > max_age
 
 
 def _impact_bucket(magnitude_est: float, cfg: dict) -> str:
@@ -72,13 +98,45 @@ def credibility_required(impact: str, tier_min: int, source_risk: str,
     return int(cfg["required_outlets"][impact][tier_min])
 
 
+def growth_credit(independent_outlets: int, cluster_items: int,
+                  cfg: dict) -> int:
+    """v0.12.28: effective-outlet credit earned by a story cluster GROWING.
+
+    A cluster member is, by C2's construction, an article similar enough to be
+    the same story and different enough to survive the >=0.9 cosine dedup — a
+    substantively distinct write-up, not a repost. Follow-on articles are
+    therefore evidence the story is real, even when they all come from the one
+    wire we subscribe to. They are worth less than an independent outlet, so
+    the credit is capped (default +1) and can never carry a lone item.
+
+    Pure. Returns 0 when disabled, when the cluster has not grown, or when
+    inputs are degenerate."""
+    gcfg = cfg.get("cluster_growth") or {}
+    if not gcfg.get("enabled", False):
+        return 0
+    per = int(gcfg.get("items_per_credit", 1))
+    cap = int(gcfg.get("max_credit", 1))
+    if per <= 0 or cap <= 0:
+        return 0
+    # growth = distinct items beyond the outlets already counted independently
+    extra = max(int(cluster_items) - max(int(independent_outlets), 1), 0)
+    return min(extra // per, cap)
+
+
 def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
     pct_move = ((state.last_price - state.prenews_price) / state.prenews_price
                 if state.prenews_price else 0.0)
+    credit = growth_credit(state.corroboration_outlets, state.cluster_items,
+                           cfg)
+    effective_outlets = state.corroboration_outlets + credit
     numbers = {"pct_move": round(pct_move, 5), "vol_mult": state.vol_mult,
                "minutes": state.minutes_since_publish,
                "gap_pct": state.gap_pct,
+               "bar_age_secs": state.bar_age_secs,
                "corroboration": {"independent_outlets": state.corroboration_outlets,
+                                 "cluster_items": state.cluster_items,
+                                 "growth_credit": credit,
+                                 "effective_outlets": effective_outlets,
                                  "tier_min": state.tier_min}}
     rule = "intraday" if state.news_in_session else "open_handoff"
 
@@ -91,7 +149,7 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
     required = credibility_required(impact, state.tier_min,
                                     thesis["source_risk"], cfg)
     numbers["credibility"] = {"impact": impact, "required_outlets": required}
-    if state.corroboration_outlets < required:
+    if effective_outlets < required:
         return GateVerdict("VETO", rule, "CREDIBILITY", numbers)
 
     # 3a. intraday confirmation
@@ -106,6 +164,11 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
         if pct_move < cfg["intraday_move_pct"] \
                 or state.vol_mult < cfg["intraday_vol_mult"]:
             return GateVerdict("VETO", rule, "GATE_NO_CONFIRM", numbers)
+        # v0.12.28: last gate before a PASS — an entry may not be built on a
+        # stale bar. Re-checkable, so a transient cache heals instead of
+        # killing the signal.
+        if _bar_stale(state.bar_age_secs, cfg):
+            return GateVerdict("VETO", rule, "STALE_MARKETDATA", numbers)
         return GateVerdict("PASS", rule, None, numbers)
 
     # 3b. open handoff
@@ -140,6 +203,7 @@ class EHState:
     session: str                       # 'pre' | 'post'
     corroboration_outlets: int
     tier_min: int
+    cluster_items: int = 1             # v0.12.28 (same growth credit as RTH)
 
 
 def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
@@ -156,10 +220,15 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
     ecfg = cfg.get("eh_shadow") or {}
     pct_move = ((s.last_price - s.prenews_price) / s.prenews_price
                 if s.prenews_price else 0.0)
+    credit = growth_credit(s.corroboration_outlets, s.cluster_items, cfg)
+    effective_outlets = s.corroboration_outlets + credit
     numbers = {"pct_move": round(pct_move, 5), "bid": s.bid, "ask": s.ask,
                "spread_bps": s.spread_bps,
                "minutes": s.minutes_since_publish, "session": s.session,
                "corroboration": {"independent_outlets": s.corroboration_outlets,
+                                 "cluster_items": s.cluster_items,
+                                 "growth_credit": credit,
+                                 "effective_outlets": effective_outlets,
                                  "tier_min": s.tier_min}}
     rule = "eh_shadow"
 
@@ -170,7 +239,7 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
     required = credibility_required(impact, s.tier_min,
                                     thesis["source_risk"], cfg)
     numbers["credibility"] = {"impact": impact, "required_outlets": required}
-    if s.corroboration_outlets < required:
+    if effective_outlets < required:
         return GateVerdict("VETO", rule, "CREDIBILITY", numbers)
 
     if s.minutes_since_publish > float(ecfg.get("window_min", 30)):

@@ -39,7 +39,8 @@ from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
 
 from .rules import (CandidateMetrics, filter_candidate, in_scan_window,
-                    luld_headroom, scanner_headline, score_candidate)
+                    looks_like_derivative, luld_headroom, scanner_headline,
+                    score_candidate)
 from .screener import get_screener
 
 log = get_logger("c10.service")
@@ -49,12 +50,24 @@ CONTRACT_SCANNER = "signal.scanner/1"
 ET = ZoneInfo("America/New_York")
 
 
-def merge_universe(movers: list[dict], actives: list[dict]) -> list[dict]:
+def merge_universe(movers: list[dict], *active_legs: list[dict]) -> list[dict]:
     """v0.12.17: the scan universe is top-gainers UNION most-actives.
-    Movers come first (they carry the screener's own change_pct); actives
-    that duplicate a mover are dropped. Pure — unit-tested without a DB."""
-    seen = {m["symbol"] for m in movers}
-    return list(movers) + [a for a in actives if a["symbol"] not in seen]
+    Movers come first (they carry the screener's own change_pct); anything
+    that duplicates an earlier entry is dropped. Pure — unit-tested without
+    a DB.
+
+    v0.12.28: variadic, so additional most-actives rankings (by=trades) join
+    the same union. Called with one actives list it behaves exactly as
+    before."""
+    out = list(movers)
+    seen = {m["symbol"] for m in out}
+    for leg in active_legs:
+        for a in leg or []:
+            if a["symbol"] in seen:
+                continue
+            seen.add(a["symbol"])
+            out.append(a)
+    return out
 
 
 class C10Service:
@@ -194,17 +207,38 @@ class C10Service:
         handling the ticker when it had actually thrown it away (SPCX and
         AEVA, 2026-08-06: scanner stood down NEWS_OWNS_IT behind discarded
         clusters). A discard/suppress history is exactly when the scanner
-        backstop must stay live."""
+        backstop must stay live.
+
+        v0.12.28 — ownership EXPIRES on a veto. WDAY 2026-08-13: the news
+        lane escalated at 14:36 and the gate vetoed at 15:05. For that whole
+        half hour the scanner would have stood down NEWS_OWNS_IT for a lane
+        that was in the process of declining the trade, and after the veto
+        nobody owned it at all. Both lanes behaved correctly on their own
+        terms and the combination traded nothing. An escalation only counts
+        as ownership while it is still ALIVE: a later terminal GATE VETO on
+        the same ticker hands the name back to the scanner, which then judges
+        it on its own tape-based merits (and may well still reject it)."""
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
-                """SELECT count(*) FROM journal.decisions
+                """SELECT max(ts) FROM journal.decisions
                    WHERE ticker=%s AND stage='TRIAGE' AND action = 'ESCALATE'
                      AND (item_id IS NULL OR item_id NOT LIKE 'scanner:%%')
                      AND ts > now() - make_interval(hours => %s)""",
                 (ticker, int(self.cfg["news_strong_window_hours"])))
-            if (await cur.fetchone())[0] > 0:
-                return "strong", []
+            escalated_ts = (await cur.fetchone())[0]
+            if escalated_ts is not None:
+                if not self.cfg.get("news_owns_it_until_veto", True):
+                    return "strong", []
+                cur = await conn.execute(
+                    """SELECT count(*) FROM journal.decisions
+                       WHERE ticker=%s AND stage='GATE' AND action='VETO'
+                         AND ts >= %s""", (ticker, escalated_ts))
+                if (await cur.fetchone())[0] == 0:
+                    return "strong", []      # still live in the news lane
+                log.info("news ownership released by gate veto",
+                         extra=kv(ticker=ticker,
+                                  escalated_ts=escalated_ts.isoformat()))
             cur = await conn.execute(
                 """SELECT headline, source, published_ts FROM news.news_items
                    WHERE %s = ANY(symbols) AND source <> 'scanner'
@@ -288,7 +322,8 @@ class C10Service:
             return 0
 
         try:
-            movers = await self.screener.movers(top=20)
+            movers = await self.screener.movers(
+                top=int(self.cfg.get("movers_top", 50)))
         except Exception as e:
             log.warning("screener fetch failed", extra=kv(error=repr(e)[:200]))
             await set_health("scanner", "DEGRADED",
@@ -299,15 +334,25 @@ class C10Service:
         # mega-cap at +7% (SPCX, 2026-08-06 unlock day) can NEVER enter it,
         # making min_move_pct decorative. Most-actives by volume is where
         # those names always appear; the same filter pipeline judges both.
-        actives: list[dict] = []
+        # v0.12.28: one leg per ranking. 'volume' ranks by share count and is
+        # structurally blind to high-priced large caps (WDAY 2026-08-13: +25%
+        # on ~$1.8bn, absent from every leg, never even journaled); 'trades'
+        # is price-neutral and is where those names appear. A failing leg
+        # degrades the scan, it never aborts it.
+        active_legs: list[list[dict]] = []
         actives_top = int(self.cfg.get("most_actives_top", 50))
+        legs = [str(b) for b in (self.cfg.get("most_actives_by")
+                                 or ["volume"])]
         if actives_top > 0:
-            try:
-                actives = await self.screener.most_actives(top=actives_top)
-            except Exception as e:
-                log.warning("most-actives fetch failed (movers-only scan)",
-                            extra=kv(error=repr(e)[:200]))
-        universe = merge_universe(movers, actives)
+            for by in legs:
+                try:
+                    active_legs.append(
+                        await self.screener.most_actives(top=actives_top,
+                                                         by=by))
+                except Exception as e:
+                    log.warning("most-actives fetch failed (leg skipped)",
+                                extra=kv(by=by, error=repr(e)[:200]))
+        universe = merge_universe(movers, *active_legs)
         await set_health("scanner", "OK",
                          f"scanning ({emitted_count}/{self.cfg['max_per_day']} today)")
 
@@ -319,6 +364,16 @@ class C10Service:
                 continue
             if t in open_tickers:
                 continue                    # never add to a held name
+            # v0.12.28: warrants / rights / units / preferreds are excluded by
+            # the spec and can never clear min_price or ADV, but before this
+            # they still cost four market-data calls each to discover that.
+            # Rejected on symbol shape alone, before any I/O.
+            if self.cfg.get("exclude_derivative_shapes", True) \
+                    and looks_like_derivative(t):
+                self._static_reject[t] = "INSTRUMENT_SHAPE"
+                await self._journal_candidate(t, "FILTERED",
+                                              "INSTRUMENT_SHAPE", dict(mv))
+                continue
             # cheap pre-filters straight off the screener row
             if mv.get("change_pct") is not None \
                     and mv["change_pct"] < float(self.cfg["min_move_pct"]):

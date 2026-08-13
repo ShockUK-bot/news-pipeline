@@ -6,7 +6,9 @@ that lands in journal.scanner_candidates so A9 can tune thresholds from
 evidence instead of vibes.
 
 Reject codes (FILTERED): PRICE_FLOOR, DOLLAR_VOLUME, MOVE_PCT, REL_VOLUME,
-MOVE_STALE_HOD, SPREAD, LULD_HEADROOM, ETF_EXCLUDED, EARNINGS_SOON, NO_TAPE.
+MOVE_STALE_HOD, SPREAD, LULD_HEADROOM, ETF_EXCLUDED, EARNINGS_SOON, NO_TAPE,
+INSTRUMENT_SHAPE (v0.12.28 — journaled by the service before measurement,
+not by filter_candidate; see looks_like_derivative below).
 """
 from __future__ import annotations
 
@@ -49,6 +51,40 @@ _ETF_ISSUER_PREFIXES = (
     "GLOBAL X", "ISHARES", "SPDR", "VANGUARD", "INVESCO", "WISDOMTREE",
     "FIRST TRUST", "VANECK", "SIMPLIFY", "AXS ",
 )
+
+
+# Non-common-stock instrument shapes (v0.12.28). The spec has always said
+# "listed exchange, common stock/ADR — no OTC, no warrants/units", but nothing
+# enforced it before the expensive per-ticker measurement. On 2026-08-13 the
+# scanner spent its entire session on these: BBBY.WS, PSQH.WS, DAVEW, EDBLW,
+# HOLOW, KWMWW, MRNOW, ASTLW, DFDVW, BBLGW, PECEW, AHT.PRD/PRG/PRH/PRI. Every
+# one is a guaranteed PRICE_FLOOR or DOLLAR_VOLUME reject, and each one cost
+# four market-data calls to reach that conclusion.
+#
+# Deliberately narrow: the dotted CQS/CMS suffixes, plus the Nasdaq
+# fifth-letter convention where a FIVE-character root ending W/R/U means
+# warrant / right / unit. Four-letter tickers are never matched — this is a
+# cheap first pass, not the whole filter, and a false positive costs a real
+# trade while a false negative costs only the measurement we already pay.
+_DERIVATIVE_SUFFIX_RE = (
+    r"(?:"
+    r"\.(?:WS|WSA|WSB|U|UN|RT|RTS|PR[A-Z]?)$"   # BBBY.WS, XYZ.U, AHT.PRD
+    r"|^[A-Z]{4}[WRU]$"                          # DAVEW, EDBLW, KWMWW, HOLOW
+    r")"
+)
+
+
+def looks_like_derivative(symbol: Optional[str]) -> bool:
+    """True for warrants, rights, units and preferred shares — instruments the
+    scanner spec excludes and that can never clear min_price/ADV anyway.
+
+    Pure, and conservative by construction: it matches SUFFIX SHAPE only, so
+    an operating company with a normal 1-4 letter ticker is never caught. The
+    point is to spend the scan budget on names that could actually trade, not
+    to be exhaustive."""
+    if not symbol:
+        return False
+    return bool(re.search(_DERIVATIVE_SUFFIX_RE, symbol.upper()))
 
 
 def looks_like_etf(asset_name: Optional[str]) -> bool:

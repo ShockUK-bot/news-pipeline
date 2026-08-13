@@ -51,14 +51,23 @@ class AlpacaScreener:
 
     SNAPSHOTS_URL = "https://data.alpaca.markets/v2/stocks/snapshots"
 
-    async def most_actives(self, top: int = 20) -> list[dict]:
+    async def most_actives(self, top: int = 20,
+                           by: str = "volume") -> list[dict]:
         """Top names by share volume, price/change_pct filled from ONE batch
         snapshot call (v0.12.17) so the service can pre-filter non-movers
         cheaply — most actives are not moving 4%+, and they must cost one
         HTTP request per scan in total, not a full measurement each.
         Snapshot failure degrades gracefully: change_pct stays None and the
-        service measures the ticker the expensive way."""
-        data = await self._get("/most-actives", {"by": "volume", "top": top})
+        service measures the ticker the expensive way.
+
+        v0.12.28: `by` selects the ranking. 'volume' ranks by SHARE count,
+        which structurally favours low-priced names — WDAY traded ~$1.8bn on
+        2026-08-13 (+25%, the best single-day move on the tape) and never
+        entered a top-50 by shares, because 8.75m shares is unremarkable next
+        to sub-$10 tickers. 'trades' ranks by trade COUNT, which is a
+        price-neutral proxy for "something is happening here" and is where a
+        high-priced large cap in a news explosion actually shows up."""
+        data = await self._get("/most-actives", {"by": by, "top": top})
         out = [{"symbol": str(m["symbol"]).upper(), "price": None,
                 "change_pct": None} for m in data.get("most_actives") or []]
         if not out:
@@ -110,6 +119,7 @@ class FakeScreener:
     """Programmable fixture. set_movers([...]) with normalized mover dicts."""
     _movers: list[dict] = field(default_factory=list)
     _actives: list[dict] = field(default_factory=list)
+    _actives_by: dict = field(default_factory=dict)
     _names: dict = field(default_factory=dict)
 
     def set_movers(self, movers: list[dict]) -> None:
@@ -127,8 +137,16 @@ class FakeScreener:
     async def movers(self, top: int = 20) -> list[dict]:
         return self._movers[:top]
 
-    async def most_actives(self, top: int = 20) -> list[dict]:
+    async def most_actives(self, top: int = 20,
+                           by: str = "volume") -> list[dict]:
+        """v0.12.28: set_actives_by({'trades': [...]}) programs a per-leg
+        fixture; plain set_actives() answers every leg (back-compatible)."""
+        if by in self._actives_by:
+            return self._actives_by[by][:top]
         return self._actives[:top]
+
+    def set_actives_by(self, by_leg: dict) -> None:
+        self._actives_by = dict(by_leg)
 
 
 def get_screener():

@@ -223,6 +223,11 @@ class A2Service:
         gate_body = {"item_ref": item_ref,
                      "thesis": thesis.model_dump(),
                      "regime_id": regime_id,
+                     # v0.12.28: A1's urgency rides through to C3, which uses
+                     # it to pick the maturity requirement (fast_confirm_bars
+                     # for high-urgency catalysts). Additive and nullable —
+                     # C3 treats a missing key exactly as it behaved before.
+                     "urgency": (triage or {}).get("urgency"),
                      "origin": origin}
         if scanner:
             gate_body["scanner"] = scanner

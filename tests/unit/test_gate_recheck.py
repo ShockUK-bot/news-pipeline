@@ -86,9 +86,10 @@ def test_future_skewed_publish_cannot_park_message():
 def test_recheckable_set_is_exactly_the_changeable_verdicts():
     # inputs that can change inside the window: price/volume build
     # (NO_CONFIRM), outlets corroborate (CREDIBILITY), bar gaps heal
-    # (MARKETDATA_MISSING). Everything else is terminal by nature.
+    # (MARKETDATA_MISSING), a cached bar refreshes (STALE_MARKETDATA,
+    # v0.12.28). Everything else is terminal by nature.
     assert RECHECKABLE_VETOES == {"GATE_NO_CONFIRM", "MARKETDATA_MISSING",
-                                  "CREDIBILITY"}
+                                  "CREDIBILITY", "STALE_MARKETDATA"}
     for terminal in ("LONG_ONLY", "GATE_EXTENDED", "GATE_WINDOW",
                      "PRICED_IN", "GATE_OPEN_WINDOW", "SCANNER_STALE"):
         assert terminal not in RECHECKABLE_VETOES

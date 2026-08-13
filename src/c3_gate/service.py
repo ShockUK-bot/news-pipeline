@@ -53,8 +53,14 @@ def _session_window(ts: datetime) -> tuple[datetime, datetime] | None:
     return _schedule_cache[day_key]
 
 
-async def _corroboration(item_id: str) -> tuple[int, int]:
-    """(independent_outlets, tier_min) for the item's cluster."""
+async def _corroboration(item_id: str) -> tuple[int, int, int]:
+    """(independent_outlets, tier_min, cluster_items) for the item's cluster.
+
+    v0.12.28 adds cluster_items — DISTINCT item_id on the cluster, so a
+    revised item (corrections bump `revision`, and cluster_members is keyed
+    (cluster_id, item_id, revision)) can never masquerade as story growth.
+    The cluster_corroboration view's total_items counts member ROWS and is
+    deliberately not used for this."""
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
@@ -62,10 +68,11 @@ async def _corroboration(item_id: str) -> tuple[int, int]:
                WHERE cm.item_id = %s LIMIT 1""", (item_id,))
         row = await cur.fetchone()
         if row is None:
-            return 1, 3
+            return 1, 3, 1
         cluster_id = row[0]
         cur = await conn.execute(
-            """SELECT c.independent_outlets, min(ni.source_tier)
+            """SELECT c.independent_outlets, min(ni.source_tier),
+                      count(DISTINCT cm.item_id)
                FROM news.cluster_corroboration c
                JOIN news.cluster_members cm ON cm.cluster_id = c.cluster_id
                JOIN news.news_items ni ON ni.item_id = cm.item_id
@@ -73,7 +80,7 @@ async def _corroboration(item_id: str) -> tuple[int, int]:
                WHERE c.cluster_id = %s
                GROUP BY c.independent_outlets""", (cluster_id,))
         row = await cur.fetchone()
-        return (row[0], row[1]) if row else (1, 3)
+        return (row[0], row[1], max(int(row[2]), 1)) if row else (1, 3, 1)
 
 
 class DeferEvaluation(Exception):
@@ -134,7 +141,47 @@ def defer_delay(published_ts: datetime, now: datetime,
 # terminal, as does everything on the open-handoff and scanner branches.
 
 RECHECKABLE_VETOES = frozenset(
-    {"GATE_NO_CONFIRM", "MARKETDATA_MISSING", "CREDIBILITY"})
+    {"GATE_NO_CONFIRM", "MARKETDATA_MISSING", "CREDIBILITY",
+     "STALE_MARKETDATA"})          # v0.12.28
+
+
+def confirm_bars_for(urgency: Optional[str], cfg: dict) -> int:
+    """v0.12.28 fast-catalyst path: minute bars of maturity to demand before
+    the first evaluation.
+
+    WDAY 2026-08-13: A1 classified a Silver Lake takeover report in 30
+    seconds and A2 wrote a correct thesis at 14:37:16 with the stock still at
+    its pre-news price. The gate then waited for min_confirm_bars=3 and did
+    not look until 14:40:00 — by which time the move was +7.39%, past
+    extended_pct, and unreachable forever. The entire tradeable band lived
+    inside the deferral.
+
+    High-urgency catalysts now mature on fast_confirm_bars instead. This is
+    NOT a return to pre-v0.11.10 behaviour: the floor is 1 completed bar, so
+    the window still physically contains data and MARKETDATA_MISSING remains
+    the thing it was made to prevent."""
+    fast = [str(u).lower() for u in (cfg.get("fast_urgency") or [])]
+    default = int(cfg.get("min_confirm_bars", 3))
+    if not fast or urgency is None or str(urgency).lower() not in fast:
+        return default
+    return max(1, min(int(cfg.get("fast_confirm_bars", 1)), default))
+
+
+def abandon_recheck(pct_move: Optional[float], cfg: dict) -> bool:
+    """v0.12.28: is further re-checking provably pointless?
+
+    Once pct_move has passed extended_pct there is no state the re-check
+    waits on — corroboration, volume, a healing bar gap — that can produce a
+    PASS, because GATE_EXTENDED fires the moment the pending condition
+    clears. WDAY spent 25 minutes and 9 re-checks in exactly this state and
+    then journaled CREDIBILITY at minute 29, when the operative blocker had
+    been GATE_EXTENDED since minute 4. Abandoning early costs nothing and
+    makes the journal tell the truth."""
+    if not cfg.get("abandon_when_extended", True):
+        return False
+    if pct_move is None:
+        return False
+    return float(pct_move) >= float(cfg["extended_pct"])
 
 
 def recheck_delay(published_ts: datetime, now: datetime,
@@ -226,13 +273,20 @@ class C3Service:
             if day_bars and prev:
                 gap_pct = round((day_bars[0]["open"] - prev) / prev, 5)
 
-        outlets, tier_min = await _corroboration(item_id)
+        outlets, tier_min, cluster_items = await _corroboration(item_id)
+        # v0.12.28: how old is the freshest bar this verdict rests on? The
+        # since-window is the one that moves fastest, so it is the honest
+        # measure; fall back to the baseline window, then to unknown (None,
+        # which disables the staleness check rather than guessing).
+        newest = since[-1]["ts"] if since else None
+        bar_age = (now - newest).total_seconds() if newest else None
         return MarketState(
             prenews_price=prenews, last_price=quote.price, vol_mult=vol_mult,
             minutes_since_publish=int((now - published_ts).total_seconds() // 60),
             news_in_session=news_in_session,
             minutes_since_open=minutes_since_open, gap_pct=gap_pct,
-            corroboration_outlets=outlets, tier_min=tier_min)
+            corroboration_outlets=outlets, tier_min=tier_min,
+            cluster_items=cluster_items, bar_age_secs=bar_age)
 
     async def _handle_scanner(self, msg, body: dict, thesis: dict,
                                   item_ref: dict, signal_id: str) -> None:
@@ -344,13 +398,14 @@ class C3Service:
         pre_bars = await self.md.minute_bars(
             ticker, published_ts - timedelta(minutes=30), published_ts)
         prenews = pre_bars[-1]["close"] if pre_bars else prev
-        outlets, tier_min = await _corroboration(item_id)
+        outlets, tier_min, cluster_items = await _corroboration(item_id)
 
         state = EHState(
             prenews_price=prenews, last_price=quote.price,
             bid=quote.bid, ask=quote.ask, spread_bps=quote.spread_bps,
             minutes_since_publish=int((now - published_ts).total_seconds() // 60),
-            session=session, corroboration_outlets=outlets, tier_min=tier_min)
+            session=session, corroboration_outlets=outlets, tier_min=tier_min,
+            cluster_items=cluster_items)
         verdict = evaluate_eh(thesis, state, self.cfg)
 
         would = verdict.verdict == "WOULD_TRADE"
@@ -424,12 +479,17 @@ class C3Service:
         # (gap-based, no vol_mult) and is never deferred.
         pub_session = _session_window(published_ts)
         if pub_session and pub_session[0] <= published_ts < pub_session[1]:
-            min_bars = int(self.cfg.get("min_confirm_bars", 3))
+            # v0.12.28: A1's urgency (carried through A2's gate body) selects
+            # the maturity requirement. Absent on messages enqueued before
+            # this release -> None -> unchanged min_confirm_bars behaviour.
+            urgency = body.get("urgency")
+            min_bars = confirm_bars_for(urgency, self.cfg)
             delay = defer_delay(published_ts, now, min_bars)
             if delay is not None:
                 mature = bars_mature_ts(published_ts, min_bars)
                 log.info("gate DEFER", extra=kv(
                     signal_id=signal_id, ticker=thesis["ticker"],
+                    urgency=urgency, min_bars=min_bars,
                     delay_secs=round(delay, 1), mature_ts=mature.isoformat()))
                 raise DeferEvaluation(delay, mature)
 
@@ -448,11 +508,20 @@ class C3Service:
             # inputs can still change (price/volume building, more outlets
             # corroborating, a bar gap healing) is a SCHEDULING event, not an
             # outcome — defer and look again. Only a FINAL verdict journals.
-            if (verdict.rule == "intraday"
+            nums = verdict.numbers or {}
+            # v0.12.28: abandon a re-check loop that provably cannot succeed,
+            # and journal the reason that is actually blocking the trade
+            # rather than the one that happens to be checked first.
+            abandoned = abandon_recheck(nums.get("pct_move"), self.cfg)
+            if abandoned and verdict.veto_reason != "GATE_EXTENDED":
+                nums["masked_reason"] = verdict.veto_reason
+                nums["abandoned_recheck"] = True
+                verdict = GateVerdict("VETO", verdict.rule, "GATE_EXTENDED",
+                                      nums)
+            if (verdict.rule == "intraday" and not abandoned
                     and verdict.veto_reason in RECHECKABLE_VETOES):
                 delay = recheck_delay(published_ts, now, self.cfg)
                 if delay is not None:
-                    nums = verdict.numbers or {}
                     log.info("gate RECHECK", extra=kv(
                         signal_id=signal_id, ticker=thesis["ticker"],
                         reason=verdict.veto_reason,
