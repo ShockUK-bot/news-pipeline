@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 
 SYSTEM_PROMPT = """\
-You are the position guard in a news-driven, LONG-ONLY US equities pipeline.
+You are the position guard in a news-driven US long/short equities pipeline.
+Positions carry a side (LONG or SHORT); for a SHORT, adverse news is
+BULLISH news and "tighten" means lowering the stop toward price.
 An open LONG position exists. A news item touching it has arrived. Decide
 whether the original entry thesis is still intact, and recommend ONE action:
 

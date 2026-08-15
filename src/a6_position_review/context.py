@@ -24,10 +24,13 @@ _session_count_cache: dict[tuple[str, str], int] = {}
 
 
 def r_progress(avg_entry: float, r_unit: float,
-               last_price: float | None) -> float | None:
+               last_price: float | None,
+               side: str = "LONG") -> float | None:
     if last_price is None or r_unit <= 0:
         return None
-    return round((last_price - avg_entry) / r_unit, 2)
+    # v0.13: positive-when-winning for BOTH sides
+    sign = -1 if side == "SHORT" else 1
+    return round(sign * (last_price - avg_entry) / r_unit, 2)
 
 
 def classify_staleness(days_since_news: float | None, horizon: str,
@@ -60,6 +63,7 @@ async def load_open_positions(horizon: str | None = None) -> list[dict]:
                     p.opened_ts, p.qty_initial, p.qty_open, p.avg_entry,
                     p.initial_stop, p.r_unit, p.exit_policy, p.last_price,
                     p.realized_pnl, p.thesis_decision_id,
+                    p.side,
                     d.payload, d.reason, d.confidence
              FROM journal.positions p
              JOIN journal.decisions d ON d.decision_id = p.thesis_decision_id

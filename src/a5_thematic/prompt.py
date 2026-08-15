@@ -29,7 +29,7 @@ import json
 # --------------------------------------------------------------------------
 
 _CORE = """\
-You are the macro/thematic analyst in a news-driven, LONG-ONLY US equities
+You are the macro/thematic analyst in a news-driven US long/short equities
 pipeline. You maintain the persistent THESIS STORE: durable, weeks-to-months
 structural stories (drivers), each with beneficiary tickers and a dated
 evidence log. Tonight you receive (a) the current ACTIVE theses, (b) fresh

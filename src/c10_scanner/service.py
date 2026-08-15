@@ -175,25 +175,33 @@ class C10Service:
         last = quote.price or price_hint or 0.0
         elapsed = (now - open_utc).total_seconds() / 60
         adv_sh = adv20(daily)
-        hod_min = None
-        day_high = None
+        hod_min = lod_min = None
+        day_high = day_low = None
         if minute:
             day_high = max(b["high"] for b in minute)
             hod_bar = max(minute, key=lambda b: b["high"])
             hod_min = int((now - hod_bar["ts"]).total_seconds() // 60)
+            # v0.13: the loser leg's freshness reference is the day's LOW
+            day_low = min(b["low"] for b in minute)
+            lod_bar = min(minute, key=lambda b: b["low"])
+            lod_min = int((now - lod_bar["ts"]).total_seconds() // 60)
         bars5 = resample_5m(minute, now)
         ref5 = bars5[-1]["close"] if bars5 else None
+        move = round(last / prev - 1, 5) if (prev and last) else None
         return CandidateMetrics(
             ticker=ticker, price=last, prev_close=prev,
-            move_pct=round(last / prev - 1, 5) if (prev and last) else None,
+            move_pct=move,
             adv20_dollars=round(adv_sh * prev, 0) if (adv_sh and prev) else None,
             rel_volume=rel_volume_day(minute, daily, elapsed),
             minutes_since_hod=hod_min,
             spread_bps=quote.spread_bps,
-            luld_headroom_pct=luld_headroom(last, ref5),
+            luld_headroom_pct=luld_headroom(
+                last, ref5, "down" if (move or 0) < 0 else "up"),
             vwap=day_vwap(minute),
             day_high=day_high,
-            detected_ts=now.isoformat())
+            detected_ts=now.isoformat(),
+            minutes_since_lod=lod_min,
+            day_low=day_low)
 
     async def _news_match(self, ticker: str) -> tuple[str, list[dict]]:
         """strong: the news pipeline ESCALATED something for this ticker
@@ -323,7 +331,8 @@ class C10Service:
 
         try:
             movers = await self.screener.movers(
-                top=int(self.cfg.get("movers_top", 50)))
+                top=int(self.cfg.get("movers_top", 50)),
+                include_losers=bool(self.cfg.get("include_losers", False)))
         except Exception as e:
             log.warning("screener fetch failed", extra=kv(error=repr(e)[:200]))
             await set_health("scanner", "DEGRADED",
@@ -374,9 +383,11 @@ class C10Service:
                 await self._journal_candidate(t, "FILTERED",
                                               "INSTRUMENT_SHAPE", dict(mv))
                 continue
-            # cheap pre-filters straight off the screener row
+            # cheap pre-filters straight off the screener row (v0.13: the
+            # move bar applies to MAGNITUDE — a -6% loser clears a 4% bar;
+            # down-movers only exist in the universe when include_losers)
             if mv.get("change_pct") is not None \
-                    and mv["change_pct"] < float(self.cfg["min_move_pct"]):
+                    and abs(mv["change_pct"]) < float(self.cfg["min_move_pct"]):
                 continue
             if mv.get("price") is not None \
                     and mv["price"] < float(self.cfg["min_price"]):

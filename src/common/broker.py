@@ -37,13 +37,18 @@ class Account:
     equity: float
     settled_cash: float          # cash-account rule: buying power = settled cash
     currency: str = "USD"
+    regt_buying_power: float = 0.0   # (v0.13) margin BP — clips SHORT entries
+    multiplier: float = 1.0          # (v0.13) 1 = cash, 2 = Reg-T margin
+    shorting_enabled: bool = False   # (v0.13) account-level short permission
 
 
 @dataclass
 class BrokerPosition:
     ticker: str
-    qty: int
+    qty: int                     # (v0.13) always positive; direction in `side`
     avg_entry: float
+    side: str = "LONG"           # (v0.13) LONG | SHORT (Alpaca reports shorts
+                                 #         as negative qty + side="short")
 
 
 @dataclass
@@ -123,12 +128,21 @@ class AlpacaBroker:
         a = await self._req("GET", "/v2/account")
         # cash-account settled funds: Alpaca exposes non_marginable_buying_power
         settled = float(a.get("non_marginable_buying_power") or a.get("cash") or 0)
-        return Account(equity=float(a["equity"]), settled_cash=settled)
+        return Account(
+            equity=float(a["equity"]), settled_cash=settled,
+            regt_buying_power=float(a.get("regt_buying_power") or 0),
+            multiplier=float(a.get("multiplier") or 1),
+            shorting_enabled=bool(a.get("shorting_enabled", False)))
 
     async def get_positions(self) -> list[BrokerPosition]:
         rows = await self._req("GET", "/v2/positions")
-        return [BrokerPosition(p["symbol"], int(float(p["qty"])),
-                               float(p["avg_entry_price"])) for p in rows]
+        # (v0.13) Alpaca reports shorts as negative qty + side="short"; we
+        # normalize to positive qty + explicit side so no caller ever has to
+        # reason about signed quantities from the broker.
+        return [BrokerPosition(p["symbol"], abs(int(float(p["qty"]))),
+                               float(p["avg_entry_price"]),
+                               side=(p.get("side") or "long").upper())
+                for p in rows]
 
     async def get_open_orders(self) -> list[BrokerOrder]:
         rows = await self._req("GET", "/v2/orders?status=open&limit=500")
@@ -202,9 +216,10 @@ class FakeBroker:
         px = price if price is not None else (o.limit_price or o.stop_price)
         self._apply_fill(o, fill_qty, px)
 
-    def inject_position(self, ticker: str, qty: int, avg_entry: float) -> None:
+    def inject_position(self, ticker: str, qty: int, avg_entry: float,
+                        side: str = "LONG") -> None:
         """Reconciliation-drift fixture: a position the DB doesn't know about."""
-        self.positions[ticker] = BrokerPosition(ticker, qty, avg_entry)
+        self.positions[ticker] = BrokerPosition(ticker, qty, avg_entry, side=side)
 
     def drop_position(self, ticker: str) -> None:
         """Reconciliation-drift fixture: broker lost/closed a position."""
@@ -221,17 +236,23 @@ class FakeBroker:
         o.status = "filled" if o.filled_qty >= o.qty else "partially_filled"
         sign = 1 if o.side == "BUY" else -1
         pos = self.positions.get(o.ticker)
-        if pos is None and sign > 0:
-            self.positions[o.ticker] = BrokerPosition(o.ticker, qty, price)
-        elif pos is not None:
-            new_qty = pos.qty + sign * qty
-            if new_qty <= 0:
-                self.positions.pop(o.ticker, None)
+        # (v0.13) signed arithmetic: LONG holdings are +, SHORT holdings are −.
+        # A SELL from flat opens a short (Alpaca behavior); crossing zero flips.
+        held = 0 if pos is None else (pos.qty if pos.side == "LONG" else -pos.qty)
+        new_held = held + sign * qty
+        if new_held == 0:
+            self.positions.pop(o.ticker, None)
+        else:
+            new_side = "LONG" if new_held > 0 else "SHORT"
+            if pos is None or new_side != pos.side:
+                # opened fresh (or flipped through zero): basis resets
+                self.positions[o.ticker] = BrokerPosition(
+                    o.ticker, abs(new_held), price, side=new_side)
             else:
-                if sign > 0:
+                if abs(new_held) > pos.qty:      # increased same-direction
                     pos.avg_entry = ((pos.avg_entry * pos.qty + price * qty)
-                                     / new_qty)
-                pos.qty = new_qty
+                                     / abs(new_held))
+                pos.qty = abs(new_held)
         self.settled_cash -= sign * qty * price
 
     def _submit(self, ticker, side, qty, order_type, limit_price, stop_price,
@@ -261,7 +282,9 @@ class FakeBroker:
 
     # -- Broker interface ----------------------------------------------------------
     async def get_account(self) -> Account:
-        return Account(equity=self.equity, settled_cash=self.settled_cash)
+        return Account(equity=self.equity, settled_cash=self.settled_cash,
+                       regt_buying_power=self.equity * 2, multiplier=2.0,
+                       shorting_enabled=True)
 
     async def get_positions(self) -> list[BrokerPosition]:
         return list(self.positions.values())

@@ -2,7 +2,16 @@
 control). Pure functions over a MarketState snapshot; the service does I/O.
 
 Check order (cheapest first, all journaled on veto):
-  1. LONG_ONLY        direction != "up" -> no entry path exists (long-only book)
+  1. direction gate   (v0.13) "up" theses pass through untouched. "down"
+                      theses: LONG_ONLY when shorting (or this lane) is off —
+                      the historical veto string keeps its exact meaning;
+                      SHORT_UNAVAILABLE when the name is not easy-to-borrow
+                      shortable at Alpaca; SSR_RESTRICTED when the stock is
+                      down >= 10% from prior close (Reg SHO rule 201 — we
+                      veto rather than implement uptick-compliant execution).
+                      Confirmation math below is DIRECTION-SIGNED: a "down"
+                      thesis confirms by falling, is GATE_EXTENDED by having
+                      already fallen, is PRICED_IN by gapping down.
   2. CREDIBILITY      corroboration matrix: required independent outlets =
                       f(impact bucket, source tier); Tier-1 passes alone;
                       source_risk="high" raises the requirement one level
@@ -58,6 +67,10 @@ class MarketState:
     bar_age_secs: Optional[float] = None  # v0.12.28: age of the newest minute
                                        # bar backing this evaluation. None =
                                        # unknown (staleness check skipped)
+    pct_from_prior_close: Optional[float] = None  # v0.13: today's move vs
+                                       # prior close — feeds the SSR check
+                                       # for down-theses. None = unknown
+                                       # (fails CLOSED for shorts)
 
 
 @dataclass
@@ -66,6 +79,43 @@ class GateVerdict:
     rule: str                          # intraday | open_handoff
     veto_reason: Optional[str] = None
     numbers: dict | None = None        # journaled either way
+
+
+@dataclass
+class ShortContext:
+    """v0.13: everything the direction gate needs to admit a 'down' thesis.
+    Built by the service ONLY for down-theses (no asset-API calls on the long
+    path); None means 'shorting off' and reproduces long-only behavior
+    exactly."""
+    enabled: bool                      # master switch AND this lane's flag
+    etb_ok: bool                       # tradable + shortable + easy_to_borrow
+    ssr_veto: bool = True              # config shorting.ssr_veto
+    pct_from_prior_close: Optional[float] = None   # None = unknown
+    ssr_trigger_pct: float = -0.10     # Reg SHO rule 201 trigger
+
+
+def direction_gate(direction: str, short: Optional[ShortContext]) -> Optional[str]:
+    """First check in every branch. Returns a veto reason or None.
+
+    Fail-closed policy: a down-thesis PROPOSES a short entry, so missing
+    evidence (unknown borrow status, unknown prior-close move while the SSR
+    veto is on) vetoes rather than passes."""
+    if direction == "up":
+        return None
+    if short is None or not short.enabled:
+        return "LONG_ONLY"             # historical meaning: no short path here
+    if not short.etb_ok:
+        return "SHORT_UNAVAILABLE"
+    if short.ssr_veto and (short.pct_from_prior_close is None
+                           or short.pct_from_prior_close <= short.ssr_trigger_pct):
+        return "SSR_RESTRICTED"
+    return None
+
+
+def _dm(direction: str) -> int:
+    """Thesis-direction multiplier: +1 up, -1 down. Signed-move convention:
+    positive signed move = moved the way the thesis predicted."""
+    return 1 if direction == "up" else -1
 
 
 def _bar_stale(bar_age_secs: Optional[float], cfg: dict) -> bool:
@@ -123,13 +173,19 @@ def growth_credit(independent_outlets: int, cluster_items: int,
     return min(extra // per, cap)
 
 
-def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
+def evaluate(thesis: dict, state: MarketState, cfg: dict,
+             short: Optional[ShortContext] = None) -> GateVerdict:
     pct_move = ((state.last_price - state.prenews_price) / state.prenews_price
                 if state.prenews_price else 0.0)
+    dm = _dm(thesis["direction"])
+    signed_move = dm * pct_move        # v0.13: + = moved the thesis's way
     credit = growth_credit(state.corroboration_outlets, state.cluster_items,
                            cfg)
     effective_outlets = state.corroboration_outlets + credit
-    numbers = {"pct_move": round(pct_move, 5), "vol_mult": state.vol_mult,
+    numbers = {"pct_move": round(pct_move, 5),
+               "signed_move": round(signed_move, 5),
+               "direction": thesis["direction"],
+               "vol_mult": state.vol_mult,
                "minutes": state.minutes_since_publish,
                "gap_pct": state.gap_pct,
                "bar_age_secs": state.bar_age_secs,
@@ -140,9 +196,10 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
                                  "tier_min": state.tier_min}}
     rule = "intraday" if state.news_in_session else "open_handoff"
 
-    # 1. long-only
-    if thesis["direction"] != "up":
-        return GateVerdict("VETO", rule, "LONG_ONLY", numbers)
+    # 1. direction gate (v0.13; long-only when shorting is off)
+    dveto = direction_gate(thesis["direction"], short)
+    if dveto is not None:
+        return GateVerdict("VETO", rule, dveto, numbers)
 
     # 2. credibility
     impact = _impact_bucket(float(thesis["magnitude_est"]), cfg)
@@ -152,16 +209,17 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
     if effective_outlets < required:
         return GateVerdict("VETO", rule, "CREDIBILITY", numbers)
 
-    # 3a. intraday confirmation
+    # 3a. intraday confirmation (v0.13: signed — a down-thesis confirms by
+    #     falling and is "extended" by having already fallen)
     if rule == "intraday":
         if state.minutes_since_publish > cfg["intraday_window_min"]:
             return GateVerdict("VETO", rule, "GATE_WINDOW", numbers)
-        if pct_move >= cfg["extended_pct"]:
+        if signed_move >= cfg["extended_pct"]:
             return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
         if state.vol_mult is None:
             # v0.5.9: no volume data is NOT the same as no confirmation.
             return GateVerdict("VETO", rule, "MARKETDATA_MISSING", numbers)
-        if pct_move < cfg["intraday_move_pct"] \
+        if signed_move < cfg["intraday_move_pct"] \
                 or state.vol_mult < cfg["intraday_vol_mult"]:
             return GateVerdict("VETO", rule, "GATE_NO_CONFIRM", numbers)
         # v0.12.28: last gate before a PASS — an entry may not be built on a
@@ -171,14 +229,14 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict) -> GateVerdict:
             return GateVerdict("VETO", rule, "STALE_MARKETDATA", numbers)
         return GateVerdict("PASS", rule, None, numbers)
 
-    # 3b. open handoff
+    # 3b. open handoff (v0.13: gap measured in the thesis's direction)
     if state.minutes_since_open is None or state.minutes_since_open < cfg["open_blackout_min"]:
         return GateVerdict("VETO", rule, "GATE_OPEN_WINDOW", numbers)
     if state.gap_pct is not None and \
-            state.gap_pct >= cfg["handoff_gap_ratio"] * float(thesis["magnitude_est"]):
+            dm * state.gap_pct >= cfg["handoff_gap_ratio"] * float(thesis["magnitude_est"]):
         return GateVerdict("VETO", rule, "PRICED_IN", numbers)
     # small gap on rated news = the opportunity; still demand some confirmation
-    if pct_move >= cfg["extended_pct"]:
+    if signed_move >= cfg["extended_pct"]:
         return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
     return GateVerdict("PASS", rule, None, numbers)
 
@@ -206,7 +264,8 @@ class EHState:
     cluster_items: int = 1             # v0.12.28 (same growth credit as RTH)
 
 
-def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
+def evaluate_eh(thesis: dict, s: EHState, cfg: dict,
+                short: Optional[ShortContext] = None) -> GateVerdict:
     """Would we have traded this in extended hours? Verdict WOULD_TRADE is
     journaled and measured (counterfactuals) but NEVER executed — no
     signal.risk message exists on this branch, by construction.
@@ -220,9 +279,14 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
     ecfg = cfg.get("eh_shadow") or {}
     pct_move = ((s.last_price - s.prenews_price) / s.prenews_price
                 if s.prenews_price else 0.0)
+    dm = _dm(thesis["direction"])
+    signed_move = dm * pct_move
     credit = growth_credit(s.corroboration_outlets, s.cluster_items, cfg)
     effective_outlets = s.corroboration_outlets + credit
-    numbers = {"pct_move": round(pct_move, 5), "bid": s.bid, "ask": s.ask,
+    numbers = {"pct_move": round(pct_move, 5),
+               "signed_move": round(signed_move, 5),
+               "direction": thesis["direction"],
+               "bid": s.bid, "ask": s.ask,
                "spread_bps": s.spread_bps,
                "minutes": s.minutes_since_publish, "session": s.session,
                "corroboration": {"independent_outlets": s.corroboration_outlets,
@@ -232,8 +296,9 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
                                  "tier_min": s.tier_min}}
     rule = "eh_shadow"
 
-    if thesis["direction"] != "up":
-        return GateVerdict("VETO", rule, "LONG_ONLY", numbers)
+    dveto = direction_gate(thesis["direction"], short)
+    if dveto is not None:
+        return GateVerdict("VETO", rule, dveto, numbers)
 
     impact = _impact_bucket(float(thesis["magnitude_est"]), cfg)
     required = credibility_required(impact, s.tier_min,
@@ -244,7 +309,7 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
 
     if s.minutes_since_publish > float(ecfg.get("window_min", 30)):
         return GateVerdict("VETO", rule, "GATE_WINDOW", numbers)
-    if pct_move >= cfg["extended_pct"]:
+    if signed_move >= cfg["extended_pct"]:
         return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
 
     # liquidity: a real, two-sided, tradeable quote — the EH equivalent of
@@ -256,7 +321,9 @@ def evaluate_eh(thesis: dict, s: EHState, cfg: dict) -> GateVerdict:
     if s.spread_bps > float(ecfg.get("max_spread_bps", 100)):
         return GateVerdict("VETO", rule, "EH_LIQUIDITY", numbers)
 
-    numbers["hypothetical_entry"] = s.ask     # a marketable EH limit buys the ask
+    # v0.13: a marketable EH limit buys the ASK for a long, sells the BID for
+    # a short — the shadow measures the entry we would actually have gotten.
+    numbers["hypothetical_entry"] = s.ask if dm > 0 else s.bid
     return GateVerdict("WOULD_TRADE", rule, None, numbers)
 
 
@@ -278,39 +345,56 @@ class ScannerState:
     halted: bool = False
 
 
-def evaluate_scanner(thesis: dict, s: ScannerState, cfg: dict) -> GateVerdict:
+def evaluate_scanner(thesis: dict, s: ScannerState, cfg: dict,
+                     short: Optional[ShortContext] = None) -> GateVerdict:
     """The scanner branch asks "is this still tradeable", not "did the move
     happen" — a scanner signal is BORN confirmed (the move IS the signal), so
-    confirmation, credibility and the extended-skip do not apply. LONG_ONLY
-    survives unchanged. Every check re-measures the tape at gate time.
+    confirmation, credibility and the extended-skip do not apply. The
+    direction gate (v0.13; LONG_ONLY when shorting is off) survives
+    unchanged in position. Every check re-measures the tape at gate time.
+
+    v0.13 mirroring: a "down" scanner thesis (a loser continuing lower, or
+    an exhausted spike A2 wants to fade) inverts the structure checks —
+    continuation is BELOW VWAP and in the LOWER part of the recent range;
+    staleness measures the run in the thesis's direction.
 
     Null policy: this branch PROPOSES an entry, so missing evidence fails
     CLOSED (contrast v0.11.10's defer, which protects news signals from
     missing TIME — here the bars exist or the setup is wrong)."""
     run_since_detect = ((s.last_price - s.detect_price) / s.detect_price
                         if s.detect_price else 0.0)
+    dm = _dm(thesis["direction"])
+    signed_run = dm * run_since_detect
     numbers = {"last": s.last_price, "detect_price": s.detect_price,
                "run_since_detect_pct": round(run_since_detect, 5),
+               "signed_run_pct": round(signed_run, 5),
+               "direction": thesis["direction"],
                "minutes_since_detect": round(s.minutes_since_detect, 1),
                "vwap": s.vwap, "range30_pos": s.range30_pos,
                "bar5_range_ratio": s.bar5_range_ratio,
                "spread_bps": s.spread_bps, "halted": s.halted}
     rule = "scanner"
 
-    if thesis["direction"] != "up":
-        return GateVerdict("VETO", rule, "LONG_ONLY", numbers)
+    dveto = direction_gate(thesis["direction"], short)
+    if dveto is not None:
+        return GateVerdict("VETO", rule, dveto, numbers)
 
     # 1. staleness — chasing is how mean reversion collects its fee
     if s.minutes_since_detect > float(cfg["stale_max_min"]) \
-            or run_since_detect > float(cfg["stale_run_pct"]):
+            or signed_run > float(cfg["stale_run_pct"]):
         return GateVerdict("VETO", rule, "SCANNER_STALE", numbers)
 
-    # 2. structure — below VWAP or lower half of the recent range is
-    #    distribution, not continuation
+    # 2. structure — the wrong side of VWAP, or the wrong end of the recent
+    #    range, is mean reversion, not continuation (mirrored for shorts)
     if cfg.get("require_above_vwap", True):
-        if s.vwap is None or s.last_price < s.vwap:
+        if s.vwap is None \
+                or (dm > 0 and s.last_price < s.vwap) \
+                or (dm < 0 and s.last_price > s.vwap):
             return GateVerdict("VETO", rule, "SCANNER_STRUCTURE", numbers)
-    if s.range30_pos is None or s.range30_pos < float(cfg["range30_min_pos"]):
+    range_pos = s.range30_pos
+    if range_pos is not None and dm < 0:
+        range_pos = 1.0 - range_pos    # shorts: strength = LOWER in range
+    if range_pos is None or range_pos < float(cfg["range30_min_pos"]):
         return GateVerdict("VETO", rule, "SCANNER_STRUCTURE", numbers)
 
     # 3. parabolic — a vertical bar is the exhaustion print, not the entry

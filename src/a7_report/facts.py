@@ -95,16 +95,18 @@ async def build_facts(now: datetime | None = None) -> dict:
             """SELECT position_id, ticker, horizon, qty_open, avg_entry,
                       r_unit, last_price, realized_pnl,
                       exit_policy->>'current_stop', exit_policy->>'stop_basis',
-                      opened_ts
+                      opened_ts, side
                FROM journal.positions WHERE status='OPEN'
                ORDER BY opened_ts"""):
-        (pid, t, h, q, entry, r_unit, last, rpnl, stop, basis, ots) = row
+        (pid, t, h, q, entry, r_unit, last, rpnl, stop, basis, ots, side) = row
         entry, r_unit, last = _f(entry), _f(r_unit), _f(last)
-        unreal = (round((last - entry) * int(q), 2) if last else None)
-        unreal_r = (round((last - entry) / r_unit, 2)
+        sign = -1 if side == "SHORT" else 1        # v0.13
+        unreal = (round(sign * (last - entry) * int(q), 2) if last else None)
+        unreal_r = (round(sign * (last - entry) / r_unit, 2)
                     if (last and r_unit) else None)
         open_positions.append({
             "position_id": pid, "ticker": t, "horizon": h, "qty_open": int(q),
+            "side": side or "LONG",
             "avg_entry": entry, "last_price": last,
             "unrealized_pnl": unreal, "unrealized_r": unreal_r,
             "current_stop": _f(stop), "stop_basis": basis,

@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 SYSTEM_PROMPT = """\
-You narrate the end-of-day report for a news-driven, LONG-ONLY US equities
+You narrate the end-of-day report for a news-driven US long/short equities
 paper-trading pipeline. You receive a fact sheet of code-computed numbers.
 
 Rules:

@@ -29,6 +29,7 @@ from typing import Optional
 from common.broker import BrokerReject, get_broker
 from common.clock import utcnow
 from common.config import config_path, load_yaml
+from common.direction import BROKER_SIDE, entry_stop
 from common.db import get_pool, close_pool
 from common.journal import (active_config_version, register_config_version,
                             write_decision)
@@ -84,9 +85,15 @@ class C4Service:
         notional = body["qty"] * body["limit_price"]
         deployed = sum(p["qty_open"] * float(p["avg_entry"])
                        for p in await open_positions())
+        # GROSS exposure: shorts count fully against effective capital
         if deployed + notional > effective:
             return "CAPITAL_PREFLIGHT"
-        if notional > settled:
+        if body.get("side") in ("SELL_SHORT",):
+            # v0.13: a short spends margin buying power, not settled cash
+            bp = float(await get_flag("regt_buying_power", "0") or 0)
+            if notional > bp:
+                return "BUYING_POWER"
+        elif notional > settled:
             return "SETTLED_CASH"
         return None
 
@@ -128,9 +135,13 @@ class C4Service:
                                                     reason=veto))
             return
 
+        # v0.13: BUY opens a long; SELL_SHORT maps to the broker's "sell"
+        # from flat, which opens the short (BROKER_SIDE in common.direction).
+        intent_side = body.get("side") or "BUY"
         try:
             border = await self.broker.submit_limit(
-                body["ticker"], "BUY", int(body["qty"]),
+                body["ticker"], BROKER_SIDE.get(intent_side, "BUY"),
+                int(body["qty"]),
                 float(body["limit_price"]), client_order_id=intent_id,
                 tif="day")
         except BrokerReject as e:
@@ -183,15 +194,18 @@ class C4Service:
                              entry_order_id: int, qty: int,
                              fill_price: float) -> None:
         policy = dict(body["exit_policy"])
+        # v0.13: LONG or SHORT rides in exit_policy from A3
+        side = policy.get("side") or "LONG"
         # v0.12.1: atr_value is the stop-basis ATR (5-min for scalp_v1,
         # daily for news profiles); pre-v0.12.1 policies only carry atr_14.
         atr = float(policy.get("atr_value") or policy["atr_14"])
-        # re-materialize stops off the ACTUAL fill (A3 anticipated the limit)
+        # re-materialize stops off the ACTUAL fill (A3 anticipated the limit);
+        # below the fill for longs, ABOVE it for shorts (entry_stop).
         k = float(policy["initial_stop"]["k"])
         cat_k = float(policy["catastrophe_stop_broker"]["k"])
-        policy["initial_stop"]["price"] = round(fill_price - k * atr, 2)
-        policy["catastrophe_stop_broker"]["price"] = round(
-            fill_price - cat_k * atr, 2)
+        policy["initial_stop"]["price"] = entry_stop(side, fill_price, k * atr)
+        policy["catastrophe_stop_broker"]["price"] = entry_stop(
+            side, fill_price, cat_k * atr)
 
         pool = await get_pool()
         async with pool.connection() as conn:
@@ -206,7 +220,7 @@ class C4Service:
                     exit_policy=policy,
                     config_version=active_config_version(),
                     opened_ts=self.now_fn(),
-                    origin=body.get("origin") or "news", conn=conn)
+                    origin=body.get("origin") or "news", side=side, conn=conn)
                 await conn.execute(
                     """UPDATE journal.orders SET position_id=%s
                        WHERE order_id=%s""", (position_id, entry_order_id))
@@ -223,8 +237,10 @@ class C4Service:
         # retried, not rolled back (the position exists at the broker either way)
         cat_price = policy["catastrophe_stop_broker"]["price"]
         try:
+            # v0.13: a short's catastrophe is a BUY stop above the market
             stop_order = await self.broker.submit_stop(
-                body["ticker"], "SELL", qty, cat_price,
+                body["ticker"], "BUY" if side == "SHORT" else "SELL",
+                qty, cat_price,
                 client_order_id=f"cat-{intent_id}")
             stop_row_id = await create_order(None, "CATASTROPHE_STOP",
                                              stop_order,
@@ -367,15 +383,22 @@ async def main() -> None:
 
     cfg = load_yaml(config_path("deadman.yaml"))
     exit_cfg = load_yaml(config_path("exit_profiles.yaml"))
+    # v0.13: shorting block (borrow re-check + dividend blackout knobs)
+    try:
+        shorting_cfg = (load_yaml(config_path("shorting.yaml"))
+                        or {}).get("shorting") or {}
+    except FileNotFoundError:
+        shorting_cfg = {}
     await register_config_version("c4 exec service startup")
     await ensure_defaults()
     svc = C4Service(cfg)
+    svc.shorting = shorting_cfg
     engine = PositionEngine(
         svc.broker, now_fn=svc.now_fn,
         unprotected_max_secs=float(cfg["c4"]["exit_unprotected_max_secs"]))
     marketdata = get_marketdata()
     # reconciliation gate: NO intents accepted before this completes
-    await reconcile(svc.broker)
+    await reconcile(svc.broker, shorting_cfg=shorting_cfg)
     log.info("C4 up (reconciled)", extra=kv(consumer=CONSUMER))
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -389,7 +412,7 @@ async def main() -> None:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 try:
-                    await reconcile(svc.broker)
+                    await reconcile(svc.broker, shorting_cfg=shorting_cfg)
                 except Exception as e:
                     log.error("periodic reconcile failed",
                               extra=kv(error=repr(e)[:200]))

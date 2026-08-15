@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo
 
 from common.clock import utcnow
 from common.db import get_pool, jb
+from common.direction import (is_tighter, marketable_exit, r_progress,
+                              trail_from)
 from common.invalidation_dsl import ArmContext, Bar, compile_predicate
 from common.log import get_logger, kv
 
@@ -191,15 +193,16 @@ class PositionEngine:
         to = fire.action.get("to", {})
         policy = pos["exit_policy"]
         state = policy_state(policy, float(pos["avg_entry"]))
+        side = pos.get("side") or policy.get("side") or "LONG"    # v0.13
         if to == {"ref": "breakeven"}:
             new_stop = round(float(pos["avg_entry"]), 2)
             basis = "breakeven"
         else:
             atr = float(policy["atr_14"])
-            new_stop = round(state["hwm"] - float(to["atr_k"]) * atr, 2)
+            new_stop = trail_from(side, state["hwm"], float(to["atr_k"]) * atr)
             basis = "trail"
-        if new_stop <= state["current_stop"]:
-            return None                               # tighten-only
+        if not is_tighter(side, new_stop, state["current_stop"]):
+            return None                               # tighten-only (side-aware)
         return ExitAction("SET_STOP", "", 0, new_stop=new_stop,
                           new_basis=basis,
                           reason=f"MIP tighten_stop {fire.predicate_id}")
@@ -233,11 +236,19 @@ class PositionEngine:
     async def _apply(self, pos: dict, actions: list[ExitAction],
                      bar: dict) -> list[str]:
         applied = []
+        side = pos.get("side") or pos["exit_policy"].get("side") or "LONG"
         for a in actions:
             if a.kind in ("EXIT", "SCALE_OUT"):
-                bid = bar.get("bid") or round(bar["close"] * 0.999, 2)
+                # v0.13: sell a long at/under the bid; cover a short at/OVER
+                # the ask — both are marketable toward the fill.
+                if side == "SHORT":
+                    px = bar.get("ask") or marketable_exit(side, bar["close"],
+                                                           0.001)
+                else:
+                    px = bar.get("bid") or marketable_exit(side, bar["close"],
+                                                           0.001)
                 outcome = await execute_exit(
-                    self.broker, pos, a.qty, a.layer, a.reason, bid,
+                    self.broker, pos, a.qty, a.layer, a.reason, px,
                     self.now_fn, self.unprotected_max_secs, self.poll_sleep)
                 applied.append(f"{a.kind}:{a.layer}:{outcome}")
                 if a.kind == "EXIT" or outcome == "CATASTROPHE_FILLED":
@@ -279,8 +290,9 @@ class PositionEngine:
         if a.new_hwm is not None:
             updates["hwm"] = a.new_hwm
         await self._update_policy(pos, updates)
-        r_prog = ((float(pos.get("last_price") or pos["avg_entry"]))
-                  - float(pos["avg_entry"])) / float(pos["r_unit"])
+        r_prog = r_progress(pos.get("side") or "LONG",
+                            float(pos["avg_entry"]), float(pos["r_unit"]),
+                            float(pos.get("last_price") or pos["avg_entry"]))
         await position_event(pos["position_id"], event_type, "C4",
                              old_value={"stop": state["current_stop"],
                                         "basis": state["stop_basis"]},
@@ -388,14 +400,16 @@ class PositionEngine:
             if hhmm < str(policy.get("force_flat_time_et", "15:50")):
                 continue
             mark = float(pos.get("last_price") or pos["avg_entry"])
-            bid = round(mark * 0.997, 2)
+            # v0.13: flat means SELL under the mark for a long, BUY over it
+            # for a short — same 30bps concession either way.
+            px = marketable_exit(pos.get("side") or "LONG", mark, 0.003)
             await position_event(
                 pos["position_id"], "FORCE_FLAT", "C4",
                 new_value={"time_et": hhmm, "mark": mark},
                 detail=f"force-flat @ {hhmm} ET (no-overnight scalp rule)")
             outcome = await execute_exit(
                 self.broker, pos, int(pos["qty_open"]), "FORCE_FLAT",
-                f"force_flat {hhmm} ET", bid, self.now_fn,
+                f"force_flat {hhmm} ET", px, self.now_fn,
                 self.unprotected_max_secs, self.poll_sleep)
             self.monitors.pop(pos["position_id"], None)
             flattened.append(f"{pos['ticker']}:{outcome}")
@@ -418,11 +432,14 @@ class PositionEngine:
             if policy.get("overnight_hold") == "force_flat":
                 continue        # v0.12.1: force_flat_pass owns these (belt+braces)
             avg_entry = float(pos["avg_entry"])
+            side = pos.get("side") or policy.get("side") or "LONG"   # v0.13
             mark = float(pos.get("last_price") or avg_entry)
-            unrealized_r = (mark - avg_entry) / float(pos["r_unit"])
+            unrealized_r = r_progress(side, avg_entry,
+                                      float(pos["r_unit"]), mark)
             age = self.session_age_fn(pos["opened_ts"], self.now_fn())
             frac = realized_move_fraction(mark, avg_entry,
-                                          float(policy.get("magnitude_est") or 0))
+                                          float(policy.get("magnitude_est") or 0),
+                                          side)
             earn = await earnings_fn(pos["ticker"]) if earnings_fn else None
             decision, rule = overnight_decision(unrealized_r, age, frac,
                                                 earn, cfg)
@@ -436,10 +453,10 @@ class PositionEngine:
                 r_progress=round(unrealized_r, 3),
                 detail=f"{decision} ({rule}) @ {pass_label}")
             if decision == "EXIT":
-                bid = round(mark * 0.999, 2)
+                px = marketable_exit(side, mark, 0.001)     # v0.13 side-aware
                 outcome = await execute_exit(
                     self.broker, pos, int(pos["qty_open"]), "OVERNIGHT",
-                    f"D1 {rule}", bid, self.now_fn,
+                    f"D1 {rule}", px, self.now_fn,
                     self.unprotected_max_secs, self.poll_sleep)
                 if outcome == "REINSTATED" and pass_label == "15:55":
                     await position_event(

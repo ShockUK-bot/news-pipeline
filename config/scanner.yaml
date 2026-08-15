@@ -39,7 +39,13 @@ scanner:
   # -- candidate filters (ALL must pass) --------------------------------------
   min_price: 5.0                 # no penny-stock tape games
   min_adv20_dollars: 25000000    # $25M avg daily dollar volume — exits must be liquid
-  min_move_pct: 0.04             # >= +4% vs prev close = "big mover"
+  min_move_pct: 0.04             # >= 4% MAGNITUDE vs prev close = "big
+                                 # mover" (v0.13: applies to both directions)
+  include_losers: true           # v0.13: also scan top LOSERS — the short
+                                 # book's momentum candidates. Gate-kept by
+                                 # shorting.lanes.scanner: with the lane off,
+                                 # every down candidate vetoes LONG_ONLY at
+                                 # C3 (and is measured in counterfactuals).
   min_rel_volume: 3.0            # day volume vs ADV(20) pace at this session time
   max_minutes_since_hod: 60      # move still in progress, not a morning spike flatlining
   max_spread_bps: 40             # mirrors risk.yaml limits.spread_max_bps

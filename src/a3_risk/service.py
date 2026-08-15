@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from common.clock import utcnow
 from common.config import config_path, load_yaml
 from common.contracts import envelope
+from common.direction import ENTRY_INTENT, entry_stop, side_for
 from common.db import get_pool, close_pool
 from common.journal import (active_config_version, register_config_version,
                             write_decision)
@@ -77,10 +78,15 @@ def adjustments_schema() -> dict:
 
 
 DISCRETION_PROMPT = """\
-You are the risk sizing adjuster in a long-only news pipeline. Given the
-thesis and gate confirmation numbers, choose within the allowed bands:
+You are the risk sizing adjuster in a news-driven US equities pipeline that
+trades long AND short (v0.13). The thesis direction is in the input; "down"
+means a SHORT entry. Given the thesis and gate confirmation numbers, choose
+within the allowed bands:
 - k: stop width multiplier on ATR(14). Wider (higher k) for volatile/gappy
   setups or lower confidence; tighter for clean high-confidence confirmations.
+  On SHORT entries bias k toward the LOWER half of the band unless conviction
+  is high — shorts face squeeze risk and losses are uncapped, so stops earn
+  their keep by being close.
 - realization_fraction: fraction of the predicted move at which to scale out.
 - time_window_sessions: sessions to allow before the time stop.
 Bands: k {k_band}, realization_fraction {rf_band}, time_window_sessions {tw_band}.
@@ -101,22 +107,30 @@ async def read_controls() -> dict:
     return {k: v for k, v in rows}
 
 
-async def portfolio_state() -> tuple[dict, float]:
-    """(open heat per lane from CURRENT stops, deployed notional)."""
+async def portfolio_state() -> tuple[dict, float, float, float]:
+    """(open heat per HORIZON lane from CURRENT stops, gross deployed
+    notional, short-book heat, gross short notional). v0.13: shorts count
+    fully into deployed notional (gross exposure) and additionally
+    accumulate their own two numbers for the short-book caps."""
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
             """SELECT horizon, qty_open, avg_entry,
-                      (exit_policy->'initial_stop'->>'price')::numeric
+                      (exit_policy->'initial_stop'->>'price')::numeric,
+                      side
                FROM journal.positions WHERE status='OPEN'""")
         rows = await cur.fetchall()
     heat = {"SHORT": 0.0, "LONG": 0.0}
-    notional = 0.0
-    for horizon, qty_open, avg_entry, stop in rows:
-        heat[horizon] += open_risk_dollars(qty_open, float(avg_entry),
-                                           float(stop or 0))
+    notional = short_heat = short_notional = 0.0
+    for horizon, qty_open, avg_entry, stop, side in rows:
+        risk = open_risk_dollars(qty_open, float(avg_entry),
+                                 float(stop or 0), side or "LONG")
+        heat[horizon] += risk
         notional += qty_open * float(avg_entry)
-    return heat, notional
+        if (side or "LONG") == "SHORT":
+            short_heat += risk
+            short_notional += qty_open * float(avg_entry)
+    return heat, notional, short_heat, short_notional
 
 
 async def open_scanner_positions() -> int:
@@ -133,7 +147,8 @@ async def trades_today() -> int:
     async with pool.connection() as conn:
         cur = await conn.execute(
             """SELECT count(*) FROM journal.intents
-               WHERE side='BUY' AND ts::date = (now() AT TIME ZONE 'UTC')::date
+               WHERE side IN ('BUY','SELL_SHORT')   -- v0.13: entries, both books
+                 AND ts::date = (now() AT TIME ZONE 'UTC')::date
                  AND status NOT IN ('REJECTED')""")
         return (await cur.fetchone())[0]
 
@@ -177,6 +192,15 @@ async def earnings_next_sessions(ticker: str) -> Optional[int]:
     return await _lookup(ticker)
 
 
+async def ex_dividend_next_sessions(ticker: str) -> Optional[int]:
+    """v0.13: sessions until the next ex-dividend date. NO DATA SOURCE YET —
+    always None, which journals the DIVIDEND_UNKNOWN flag on short entries
+    (same D7 deferred-nullable pattern earnings followed before v0.10.0).
+    The EX_DIVIDEND veto in sizing.hard_gates is live code waiting on this
+    one function; wiring a calendar source later changes nothing else."""
+    return None
+
+
 async def thesis_decision_id(signal_id: str) -> Optional[int]:
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -197,6 +221,12 @@ class A3Service:
         self.capital = cfg["capital"]
         self.limits = cfg["limits"]
         self.scanner_cfg = cfg.get("scanner") or {}
+        # v0.13: shorting block (config/shorting.yaml, merged in main()).
+        # mode 'shadow' -> shorts journal SHADOW_SHORT and stop before the
+        # intent; 'live' -> real SELL_SHORT intents; anything else -> a
+        # down-thesis reaching A3 is a bug (C3 vetoes them) and is refused.
+        self.shorting = cfg.get("shorting") or {}
+        self.short_mode = str(self.shorting.get("mode") or "").lower()
         self.profiles = profiles["profiles"]
         self.bands = profiles["discretion_bands"]
         self.backend = backend or get_backend(cfg["model"])
@@ -247,14 +277,18 @@ class A3Service:
                                 atr_14: float | None = None,
                                 atr_method: str = "atr",
                                 origin: str = "news",
-                                prenews_price: float | None = None) -> dict:
+                                prenews_price: float | None = None,
+                                side: str = "LONG") -> dict:
         """`atr` is the STOP-BASIS ATR: daily ATR(14) for news profiles,
         5-min ATR(14) (or its flagged early-session estimate) for scalp_v1.
         `atr_14` additionally carries the daily value for MIP ArmContext
         regardless of basis. v0.12.1: minutes-based time stops + force-flat
         fields flow through for scalp_v1."""
-        stop_price = round(limit_price - adj.k * atr, 2)
-        cat_price = round(limit_price - profile["catastrophe"]["k"] * atr, 2)
+        # v0.13: stops below entry for longs, above for shorts (one sign,
+        # one place: common.direction.entry_stop)
+        stop_price = entry_stop(side, limit_price, adj.k * atr)
+        cat_price = entry_stop(side, limit_price,
+                               profile["catastrophe"]["k"] * atr)
         ts_cfg = profile.get("time_stop")
         if ts_cfg and "window_minutes" in ts_cfg:
             time_stop = {"window_minutes": int(ts_cfg["window_minutes"]),
@@ -267,6 +301,7 @@ class A3Service:
         policy = {
             "profile": profile_name,
             "origin": origin,
+            "side": side,                        # v0.13: LONG | SHORT
             "initial_stop": {"method": atr_method, "k": adj.k,
                              "price": stop_price},
             "catastrophe_stop_broker": {"k": profile["catastrophe"]["k"],
@@ -312,9 +347,25 @@ class A3Service:
         horizon = thesis["horizon"]
         origin = body.get("origin") or trace.get("origin") or "news"
         profile_name, profile = self.profile_for(horizon, origin)
+        # v0.13: direction -> side. Down-theses only reach A3 past C3's
+        # direction gate, so shorting is on for this lane — but mode decides
+        # below whether a short becomes an intent or a SHADOW_SHORT journal.
+        side = side_for(thesis.get("direction") or "up")
+        if side == "SHORT" and self.short_mode not in ("shadow", "live"):
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="RISK", agent="A3", action="VETO",
+                veto_reason="LONG_ONLY",
+                payload={"detail": "down-thesis reached A3 with shorting off",
+                         "origin": origin},
+                reason="shorting disabled (defense in depth)",
+                regime_id=body.get("regime_id"))
+            log.warning("risk VETO short with shorting off",
+                        extra=kv(signal_id=signal_id))
+            return
 
         controls = await read_controls()
-        heat, deployed = await portfolio_state()
+        heat, deployed, short_heat, short_notional = await portfolio_state()
 
         # v0.12.1: scanner-lane concurrency cap — checked before anything
         # burns tokens; the scanner borrows SHORT-lane heat, it does not
@@ -366,11 +417,22 @@ class A3Service:
                 str(self.limits["max_trades_per_day_default"]))),
             minutes_to_close=minutes_to_close(self.now_fn()),
             earnings_next_sessions=await earnings_next_sessions(ticker),
+            side=side,
+            regt_buying_power=float(
+                controls.get("regt_buying_power", "0") or 0),
+            open_short_heat=short_heat,
+            gross_short_notional=short_notional,
+            ex_dividend_next_sessions=(
+                await ex_dividend_next_sessions(ticker)
+                if side == "SHORT" else None),
         )
 
         # hard gates BEFORE the model call: no tokens burned under a kill
         # switch, and operational vetoes dominate in the journal
-        gate_veto, _, _ = hard_gates(inp, self.limits, profile)
+        gate_veto, _, _ = hard_gates(
+            inp, self.limits, profile,
+            dividend_blackout_sessions=int(
+                self.shorting.get("dividend_blackout_sessions", 2)))
         if gate_veto is not None:
             await write_decision(
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
@@ -418,12 +480,13 @@ class A3Service:
             adj, model_used = await self.discretion(thesis, gate, profile)
             capital_cfg = self.capital
         result = size_entry(inp, capital_cfg, self.limits, profile,
-                            horizon, adj.k)
+                            horizon, adj.k, shorting_cfg=self.shorting)
 
         payload = {"sizing": result.numbers, "flags": result.flags,
                    "adjustments": adj.model_dump(),
                    "model_used": model_used,
                    "origin": origin, "atr_method": atr_method,
+                   "side": side,
                    "effective_capital": effective_capital}
 
         if result.verdict == "VETO":
@@ -447,7 +510,44 @@ class A3Service:
             atr_14=snapshot.get("atr_14") and float(snapshot["atr_14"]),
             atr_method=atr_method, origin=origin,
             prenews_price=(snapshot.get("prenews_price")
-                           and float(snapshot["prenews_price"])))
+                           and float(snapshot["prenews_price"])),
+            side=side)
+
+        # -------------------------------------------------------------------
+        # v0.13 SHADOW fork: a fully-sized short in shadow mode journals
+        # everything a live one would — sizing payload, stops, exit policy —
+        # then STOPS. No intents row, no exec.intent enqueue: C4 cannot see
+        # it by construction (the v0.12.11 EH-shadow guarantee, applied to
+        # the whole short book). The counterfactual row reuses the existing
+        # sweep: rule='shadow_short', veto_reason='WOULD_TRADE' is the same
+        # sentinel the EH shadow uses, priced from the REAL computed limit.
+        # -------------------------------------------------------------------
+        if side == "SHORT" and self.short_mode != "live":
+            decision_id = await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="RISK", agent="A3",
+                action="SHADOW_SHORT",
+                payload={**payload, "exit_policy": exit_policy,
+                         "thesis_decision_id": tdid,
+                         "shadow": True, "mode": self.short_mode},
+                reason=f"shadow short (mode={self.short_mode}): {adj.reason}",
+                model_id=self.backend.model_id if model_used else None,
+                regime_id=body.get("regime_id"))
+            from c3_gate.counterfactual import record_veto
+            await record_veto(
+                decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+                ticker=ticker, direction="down", rule="shadow_short",
+                veto_reason="WOULD_TRADE", veto_ts=self.now_fn(),
+                price_at_veto=result.limit_price,
+                prenews_price=(snapshot.get("prenews_price")
+                               and float(snapshot["prenews_price"])),
+                pct_move=gate.get("pct_move"),
+                vol_mult=gate.get("vol_mult"))
+            log.info("SHADOW short", extra=kv(
+                signal_id=signal_id, ticker=ticker, qty=result.qty,
+                limit=result.limit_price, stop=result.initial_stop,
+                risk=result.actual_risk))
+            return
 
         pool = await get_pool()
         async with pool.connection() as conn:
@@ -461,21 +561,23 @@ class A3Service:
                     reason=adj.reason,
                     model_id=self.backend.model_id if model_used else None,
                     regime_id=body.get("regime_id"), conn=conn)
+                # v0.13: BUY for longs, SELL_SHORT for shorts
+                intent_side = ENTRY_INTENT[side]
                 await conn.execute(
                     """INSERT INTO journal.intents
                        (intent_id, decision_id, ticker, side, qty, limit_price,
                         gate_snapshot, exit_policy, horizon, effective_capital,
                         risk_budget, status, config_version)
-                       VALUES (%s,%s,%s,'BUY',%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
                        ON CONFLICT (intent_id) DO NOTHING""",
-                    (intent_id, decision_id, ticker, result.qty,
+                    (intent_id, decision_id, ticker, intent_side, result.qty,
                      result.limit_price, json.dumps(snapshot),
                      json.dumps(exit_policy), horizon, effective_capital,
                      result.risk_budget, config_version))
                 out = envelope(CONTRACT_INTENT, "A3", signal_id, item_id,
                                revision, {
                                    "intent_id": intent_id,
-                                   "ticker": ticker, "side": "BUY",
+                                   "ticker": ticker, "side": intent_side,
                                    "qty": result.qty,
                                    "limit_price": result.limit_price,
                                    "exit_policy": exit_policy,
@@ -516,6 +618,12 @@ async def consume_loop(svc: A3Service, stop: asyncio.Event) -> None:
 async def main() -> None:
     cfg = load_yaml(config_path("risk.yaml"))
     profiles = load_yaml(config_path("exit_profiles.yaml"))
+    # v0.13: the shorting block (absent file / empty block = shorting off)
+    try:
+        cfg["shorting"] = (load_yaml(config_path("shorting.yaml"))
+                           or {}).get("shorting") or {}
+    except FileNotFoundError:
+        cfg["shorting"] = {}
     await register_config_version("a3 risk service startup")
     svc = A3Service(cfg, profiles)
     log.info("A3 up", extra=kv(consumer=CONSUMER))

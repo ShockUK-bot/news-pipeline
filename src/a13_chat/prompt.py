@@ -16,7 +16,7 @@ from .schema import QUERY_NAMES
 
 PLANNER_SYSTEM = f"""\
 You are the query planner for the operator-chat agent of a news-driven,
-LONG-ONLY US equities trading pipeline. Given one operator question, choose
+US long/short equities trading pipeline. Given one operator question, choose
 which read-only retrieval packs the code should run. You cannot write SQL —
 only pick pack names and parameters.
 
@@ -48,7 +48,7 @@ Respond with ONLY a JSON object matching the required schema."""
 
 
 ANSWER_SYSTEM = """\
-You are the operator-chat agent of a locally-hosted, news-driven, LONG-ONLY
+You are the operator-chat agent of a locally-hosted, news-driven long/short
 US equities trading pipeline. You answer the single operator's questions about
 what the system did (trades placed/closed, vetoes and their reasons, decision
 traces) and give ADVISORY reviews of prospective tickers against recent news.

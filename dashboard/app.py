@@ -125,7 +125,8 @@ async def _state() -> dict:
             SELECT
               (SELECT value::numeric FROM journal.control WHERE key='trading_capital') AS trading_capital,
               (SELECT count(*) FROM journal.positions WHERE status='OPEN')             AS open_positions,
-              (SELECT COALESCE(sum((COALESCE(last_price, avg_entry) - avg_entry) * qty_open), 0)
+              (SELECT COALESCE(sum((COALESCE(last_price, avg_entry) - avg_entry) * qty_open
+                                    * CASE WHEN side='SHORT' THEN -1 ELSE 1 END), 0)
                  FROM journal.positions WHERE status='OPEN')                           AS unrealized_pnl,
               (SELECT COALESCE(sum(realized_pnl), 0) FROM journal.exits
                  WHERE ts::date = current_date)                                        AS realized_today,

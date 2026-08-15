@@ -36,7 +36,8 @@ async def snapshot(dsn: str) -> None:
             "WHERE ts::date <= current_date")).fetchone()
         unrealized = await (await conn.execute(
             "SELECT COALESCE(SUM((COALESCE(last_price, avg_entry) - avg_entry) "
-            "* qty_open),0) AS v FROM journal.positions "
+            "* qty_open * CASE WHEN side='SHORT' THEN -1 ELSE 1 END),0) "
+            "AS v FROM journal.positions "
             "WHERE status='OPEN'")).fetchone()
         total = float(realized["v"]) + float(unrealized["v"])
         await conn.execute(

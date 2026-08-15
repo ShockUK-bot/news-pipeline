@@ -14,6 +14,7 @@ from typing import Optional
 
 from common.broker import BrokerOrder
 from common.db import get_pool, jb
+from common.direction import pnl as _pnl, r_unit as _r_unit
 from common.log import get_logger, kv
 
 log = get_logger("c4.state")
@@ -86,19 +87,23 @@ async def create_position(ticker: str, horizon: str, profile: str,
                           item_id: Optional[str], qty: int, avg_entry: float,
                           initial_stop: float, exit_policy: dict,
                           config_version: str, opened_ts: datetime,
-                          origin: str = "news", conn=None) -> int:
-    r_unit = round(avg_entry - initial_stop, 4)
+                          origin: str = "news", side: str = "LONG",
+                          conn=None) -> int:
+    # v0.13: r_unit stays POSITIVE for both sides (schema CHECK r_unit > 0):
+    # a short's stop is above entry, so the sign flips the subtraction.
+    r_unit = _r_unit(side, avg_entry, initial_stop)
     async def _run(c):
         cur = await c.execute(
             """INSERT INTO journal.positions
                (ticker, horizon, profile, status, opened_ts, entry_intent_id,
                 thesis_decision_id, item_id, qty_initial, qty_open, avg_entry,
-                initial_stop, r_unit, exit_policy, config_version, origin)
-               VALUES (%s,%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                initial_stop, r_unit, exit_policy, config_version, origin,
+                side)
+               VALUES (%s,%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING position_id""",
             (ticker, horizon, profile, opened_ts, entry_intent_id,
              thesis_decision_id, item_id, qty, qty, avg_entry, initial_stop,
-             r_unit, jb(exit_policy), config_version, origin))
+             r_unit, jb(exit_policy), config_version, origin, side))
         return (await cur.fetchone())[0]
     if conn is not None:
         return await _run(conn)
@@ -133,8 +138,9 @@ async def position_event(position_id: int, event_type: str, actor: str,
 async def record_exit(position_id: int, order_id: Optional[int], ts: datetime,
                       exit_layer: str, qty: int, price: float,
                       avg_entry: float, r_unit: float, is_partial: bool,
-                      conn=None) -> None:
-    pnl = round((price - avg_entry) * qty, 4)
+                      side: str = "LONG", conn=None) -> None:
+    # v0.13: covering below entry is the short's profit
+    pnl = _pnl(side, avg_entry, price, qty)
     r_multiple = round(pnl / (r_unit * qty), 3) if r_unit else 0.0
     async def _run(c):
         await c.execute(
@@ -173,7 +179,7 @@ async def open_positions() -> list[dict]:
             """SELECT position_id, ticker, horizon, profile, qty_open,
                       avg_entry, initial_stop, r_unit, exit_policy,
                       catastrophe_stop_order_id, opened_ts, realized_pnl,
-                      last_price
+                      last_price, side
                FROM journal.positions WHERE status='OPEN'""")
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, r)) for r in await cur.fetchall()]

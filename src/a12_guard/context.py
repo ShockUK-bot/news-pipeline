@@ -95,7 +95,8 @@ async def build_guard_context(md: MarketData, item: dict, pos: dict) -> dict:
 
     avg_entry = float(pos["avg_entry"])
     r_unit = float(pos["r_unit"])
-    unrealized_r = round((last - avg_entry) / r_unit, 2) if last else None
+    sign = -1 if (pos.get("side") or "LONG") == "SHORT" else 1   # v0.13
+    unrealized_r = round(sign * (last - avg_entry) / r_unit, 2) if last else None
     pct_since_news = (round((last - prenews) / prenews, 5)
                       if (last and prenews) else None)
 

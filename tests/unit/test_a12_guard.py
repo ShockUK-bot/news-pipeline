@@ -82,7 +82,7 @@ def test_prompt_carries_watchlist_and_position():
     assert "counterparty_denial" in user
     assert "Acme deal denied" in user
     assert '"avg_entry": 100.0' in user
-    assert "LONG-ONLY" in SYSTEM_PROMPT
+    assert "long/short" in SYSTEM_PROMPT   # v0.13: book trades both sides
     assert "cannot widen stops" in SYSTEM_PROMPT
 
 

@@ -31,12 +31,14 @@ EVENT_TYPES = {
     "POSITION_REVIEW", "STALE_FLAG",          # added 004, lost 007/008, restored 009
     "FORCE_FLAT",                             # added 007
     "PROMOTED",                               # added 008
+    "BORROW_LOST",                            # added 013 (short selling)
 }
 EXIT_LAYERS = {
     "STOP", "CATASTROPHE", "BREAKEVEN", "TRAIL", "TIME", "TARGET",
     "INVALIDATION", "GUARD", "REVIEW", "EARNINGS", "OVERNIGHT",
     "BREAKER", "KILL", "OPERATOR",
     "FORCE_FLAT",                             # added 007
+    "DIVIDEND", "BORROW",                     # added 013 (short selling)
 }
 STAGES = {
     "TRIAGE", "ANALYST", "GATE", "RISK", "ORDER", "GUARD",

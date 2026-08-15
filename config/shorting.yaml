@@ -1,0 +1,50 @@
+# Short selling (v0.13.0). Read by C3 (direction gate), A3 (sizing + the
+# shadow fork) and C4 (dividend blackout, borrow re-check).
+#
+# THE SWITCH: `mode` is the whole rollout control.
+#   shadow -> the full pipeline runs for down-theses (gate, sizing, stops,
+#             exit policy) but A3 journals a SHADOW_SHORT decision + a
+#             counterfactual row instead of enqueueing exec.intent. C4 never
+#             sees a short. Zero orders, by construction.
+#   live   -> down-theses that pass gate + sizing become real SELL_SHORT
+#             intents.
+#   anything else (off, absent file, empty block) -> long-only, exactly as
+#             before v0.13: bearish theses veto LONG_ONLY at the gate.
+#
+# Flip shadow -> live: edit this one line, then restart a3-risk (C3/C4 read
+# their parts at startup too — restart all three to keep journals coherent).
+# Per-lane flags let lanes go live independently: e.g. news_short live first
+# while scanner + news_long keep shadowing.
+
+shorting:
+  mode: shadow
+  lanes:
+    news_short: true          # news lane, SHORT horizon (intraday-days)
+    news_long: true           # news lane, LONG horizon (weeks-months)
+    scanner: true             # scanner lane (incl. losers, scalp profile)
+  etb_only: true              # only easy-to-borrow names (no locate fees);
+                              # non-ETB -> SHORT_UNAVAILABLE (measured)
+  ssr_veto: true              # veto short entries on names down >= 10% from
+                              # prior close (Reg SHO rule 201) rather than
+                              # implementing uptick-compliant execution
+  ssr_trigger_pct: -0.10
+  assets_ttl_secs: 1800       # borrow-flag cache TTL (30 min — borrow
+                              # status moves intraday, names ~never do)
+
+  # risk (consumed by A3 sizing; ALL of these are clips on top of the
+  # existing long-book caps, never replacements)
+  max_short_heat_pct: 0.015   # sum of open-short risk-to-stop vs capital
+  max_gross_short_notional_pct: 0.30   # gross short notional vs capital
+
+  # short-position housekeeping
+  dividend_blackout_sessions: 2     # A3 vetoes EX_DIVIDEND this close to an
+                                    # ex-date. NOTE: no dividend-calendar
+                                    # source exists yet, so the lookup
+                                    # returns unknown and short entries carry
+                                    # the DIVIDEND_UNKNOWN flag (same D7
+                                    # pattern earnings had before v0.10.0).
+                                    # The veto goes live the day a source is
+                                    # wired into a3_risk.ex_dividend_next_sessions.
+  borrow_recheck: true              # each C4 reconcile pass: open short no
+                                    # longer ETB -> BORROW_LOST event +
+                                    # DEGRADED health (operator decides)

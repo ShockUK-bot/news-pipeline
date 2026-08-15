@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+from common.direction import dir_mult, entry_stop, open_risk
+
 
 @dataclass
 class SizingInputs:
@@ -46,6 +48,13 @@ class SizingInputs:
     earnings_next_sessions: Optional[int] = None   # sessions until earnings; None unknown
     sector: Optional[str] = None
     sector_heat: Optional[float] = None
+    # v0.13 short selling -----------------------------------------------------
+    side: str = "LONG"                 # position DIRECTION (not horizon)
+    regt_buying_power: float = 0.0     # margin BP (clips SHORT entries; a
+                                       # short spends no settled cash)
+    open_short_heat: float = 0.0       # $ risk-to-stop across open shorts
+    gross_short_notional: float = 0.0  # $ notional across open shorts
+    ex_dividend_next_sessions: Optional[int] = None  # None = unknown (flag)
 
 
 @dataclass
@@ -63,15 +72,23 @@ class SizingResult:
     flags: list[str] = field(default_factory=list)
 
 
-def limit_price_from_snapshot(ask: float, spread_bps: float) -> float:
-    """Snapshot ask + min(half-spread, 10bps) buffer — priced off the C3
-    snapshot per baseline; buffer bounds chase without paying full spread."""
+def limit_price_from_snapshot(ask: float, spread_bps: float,
+                              side: str = "LONG", bid: float | None = None) -> float:
+    """Marketable entry limit priced off the C3 snapshot per baseline;
+    buffer bounds chase without paying full spread. A LONG buys the ask plus
+    the buffer; a SHORT (v0.13) sells the bid minus it — same concession,
+    mirrored."""
+    if side == "SHORT":
+        ref = bid if bid else ask
+        buffer = min((spread_bps / 2) / 10_000, 0.0010) * ref
+        return round(ref - buffer, 2)
     buffer = min((spread_bps / 2) / 10_000, 0.0010) * ask
     return round(ask + buffer, 2)
 
 
 def hard_gates(inp: SizingInputs, limits_cfg: dict, profile: dict,
-               earnings_blackout_sessions: int = 1
+               earnings_blackout_sessions: int = 1,
+               dividend_blackout_sessions: int = 2
                ) -> tuple[Optional[SizingResult], dict, list[str]]:
     """Absolute vetoes, cheapest first — separable so A3 can run them BEFORE
     the discretion model call (no LLM tokens burned under a kill switch).
@@ -104,6 +121,16 @@ def hard_gates(inp: SizingInputs, limits_cfg: dict, profile: dict,
         n["earnings_next_sessions"] = inp.earnings_next_sessions
         return SizingResult("VETO", "EARNINGS_BLACKOUT", numbers=n,
                             flags=flags), n, flags
+    if inp.side == "SHORT":
+        # v0.13: a short pays any dividend that goes ex while it is open —
+        # don't enter into one. Same D7 convention as earnings: unknown is
+        # allow + flag during paper, known-and-imminent is a veto.
+        if inp.ex_dividend_next_sessions is None:
+            flags.append("DIVIDEND_UNKNOWN")
+        elif inp.ex_dividend_next_sessions <= dividend_blackout_sessions:
+            n["ex_dividend_next_sessions"] = inp.ex_dividend_next_sessions
+            return SizingResult("VETO", "EX_DIVIDEND", numbers=n,
+                                flags=flags), n, flags
     if inp.atr_14 is None or inp.atr_14 <= 0:
         return SizingResult("VETO", "NO_ATR", numbers=n, flags=flags), n, flags
     return None, n, flags
@@ -111,20 +138,25 @@ def hard_gates(inp: SizingInputs, limits_cfg: dict, profile: dict,
 
 def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
                profile: dict, horizon: str, k_adj: float,
-               earnings_blackout_sessions: int = 1) -> SizingResult:
-    veto, n, flags = hard_gates(inp, limits_cfg, profile,
-                                earnings_blackout_sessions)
+               earnings_blackout_sessions: int = 1,
+               shorting_cfg: dict | None = None) -> SizingResult:
+    scfg = shorting_cfg or {}
+    veto, n, flags = hard_gates(
+        inp, limits_cfg, profile, earnings_blackout_sessions,
+        int(scfg.get("dividend_blackout_sessions", 2)))
     if veto is not None:
         return veto
 
     # ---- the chain -------------------------------------------------------------
     risk_budget = capital_cfg["risk_per_trade_pct"] * inp.effective_capital
     stop_distance = k_adj * inp.atr_14
-    limit_price = limit_price_from_snapshot(inp.ask, inp.spread_bps)
+    limit_price = limit_price_from_snapshot(inp.ask, inp.spread_bps,
+                                            inp.side, inp.bid)
     raw_qty = risk_budget / stop_distance
     n.update(risk_budget=round(risk_budget, 2),
              stop_distance=round(stop_distance, 4),
-             limit_price=limit_price, k_adj=k_adj, raw_qty=round(raw_qty, 2))
+             limit_price=limit_price, k_adj=k_adj, raw_qty=round(raw_qty, 2),
+             side=inp.side)
 
     clips: dict[str, float] = {}
     # notional cap
@@ -133,9 +165,22 @@ def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
     # liquidity cap
     if inp.adv_20d:
         clips["adv"] = limits_cfg["adv_participation_max"] * inp.adv_20d
-    # settled buying power (cash account)
-    clips["settled_cash"] = max(inp.settled_cash, 0.0) / limit_price
-    # deployed-notional pre-flight headroom
+    if inp.side == "LONG":
+        # settled buying power (cash account) — longs spend settled cash
+        clips["settled_cash"] = max(inp.settled_cash, 0.0) / limit_price
+    else:
+        # v0.13: a short spends margin buying power, not settled cash
+        clips["buying_power"] = max(inp.regt_buying_power, 0.0) / limit_price
+        # short-book caps (on TOP of every shared cap below)
+        short_heat_cap = (float(scfg.get("max_short_heat_pct", 0.015))
+                          * inp.effective_capital)
+        clips["short_heat"] = max(short_heat_cap - inp.open_short_heat,
+                                  0.0) / stop_distance
+        gross_cap = (float(scfg.get("max_gross_short_notional_pct", 0.30))
+                     * inp.effective_capital)
+        clips["gross_short"] = max(gross_cap - inp.gross_short_notional,
+                                   0.0) / limit_price
+    # deployed-notional pre-flight headroom (GROSS: shorts count fully)
     clips["capital_headroom"] = max(
         inp.effective_capital - inp.deployed_notional, 0.0) / limit_price
     # portfolio heat, per-lane split
@@ -164,9 +209,11 @@ def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
         n["min_viable_risk_fraction"] = capital_cfg["min_viable_risk_fraction"]
         return SizingResult("VETO", "SIZE_CLIPPED", numbers=n, flags=flags)
 
-    initial_stop = round(limit_price - stop_distance, 2)
+    # v0.13: stops sit below entry for longs, ABOVE it for shorts — the one
+    # sign lives in common.direction.entry_stop.
+    initial_stop = entry_stop(inp.side, limit_price, stop_distance)
     cat_k = profile["catastrophe"]["k"]
-    catastrophe_stop = round(limit_price - cat_k * inp.atr_14, 2)
+    catastrophe_stop = entry_stop(inp.side, limit_price, cat_k * inp.atr_14)
     n["catastrophe_k"] = cat_k
 
     return SizingResult("SIZE", None, qty=qty, limit_price=limit_price,
@@ -178,8 +225,11 @@ def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
                         numbers=n, flags=flags)
 
 
-def open_risk_dollars(qty_open: int, avg_entry: float, current_stop: float) -> float:
+def open_risk_dollars(qty_open: int, avg_entry: float, current_stop: float,
+                      side: str = "LONG") -> float:
     """A position's contribution to portfolio heat: current stop distance x
-    open shares (stop at/above entry contributes zero — house money)."""
-    return max(avg_entry - current_stop, 0.0) * qty_open
+    open shares (a stop at/through entry contributes zero — house money).
+    v0.13: side-aware — the long-only formula returned 0 for every short,
+    which would have let a short book defeat every heat cap silently."""
+    return open_risk(side, avg_entry, current_stop, qty_open)
 

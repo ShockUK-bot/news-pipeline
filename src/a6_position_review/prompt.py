@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 
 EOD_SYSTEM_PROMPT = """\
-You are the end-of-day position reviewer in a news-driven, LONG-ONLY US
+You are the end-of-day position reviewer in a news-driven long/short US
 equities pipeline. It is ~15:45 ET. For EACH open SHORT-horizon position
 you receive code-computed facts: entry, R-progress, current stop, the
 original thesis (magnitude estimate and expected move window), how many
@@ -40,7 +40,7 @@ Rules:
 Respond with ONLY a JSON object matching the required schema."""
 
 NIGHTLY_SYSTEM_PROMPT = """\
-You are the nightly position reviewer in a news-driven, LONG-ONLY US
+You are the nightly position reviewer in a news-driven long/short US
 equities pipeline. Markets are closed. You receive ONE open position's full
 fact pack: the original thesis and its invalidation conditions, R-progress
 and stop state, sessions held, news recency on the name (the staleness
@@ -57,8 +57,10 @@ Return one judgment:
   too cautious, or too permissive? ("none" if there were none.)
 
 Rules:
-- LONG-ONLY book. You cannot widen stops or add size — those are not
-  verdict options.
+- Long/short book (v0.13); each position states its side. You cannot
+  widen stops or add size — those are not verdict options. For a SHORT,
+  "tighten" means LOWERING the stop toward price, and bullish news on the
+  name is the adverse evidence.
 - Judge against the ORIGINAL thesis and its stated invalidation conditions,
   not against generic market opinion. Price alone does not invalidate a
   thesis; evidence does. Adverse price WITH confirming adverse news does.

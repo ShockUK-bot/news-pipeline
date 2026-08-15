@@ -38,15 +38,21 @@ class AlpacaScreener:
             resp.raise_for_status()
             return resp.json()
 
-    async def movers(self, top: int = 20) -> list[dict]:
-        """Top gainers (long-only book: losers are journal-only downstream,
-        so we don't fetch them at all)."""
+    async def movers(self, top: int = 20,
+                     include_losers: bool = False) -> list[dict]:
+        """Top gainers — and (v0.13, config scanner.include_losers) top
+        LOSERS, the short book's momentum candidates. One API call returns
+        both lists; before v0.13 the losers were simply discarded."""
         data = await self._get("/movers", {"top": top})
         out = []
-        for m in data.get("gainers") or []:
-            out.append({"symbol": str(m["symbol"]).upper(),
-                        "price": float(m["price"]),
-                        "change_pct": float(m["percent_change"]) / 100.0})
+        legs = [data.get("gainers") or []]
+        if include_losers:
+            legs.append(data.get("losers") or [])
+        for leg in legs:
+            for m in leg:
+                out.append({"symbol": str(m["symbol"]).upper(),
+                            "price": float(m["price"]),
+                            "change_pct": float(m["percent_change"]) / 100.0})
         return out
 
     SNAPSHOTS_URL = "https://data.alpaca.markets/v2/stocks/snapshots"

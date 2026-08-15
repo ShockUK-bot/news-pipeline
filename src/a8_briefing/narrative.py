@@ -12,7 +12,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 SYSTEM_PROMPT = """\
-You are the morning-briefing narrator for a news-driven, LONG-ONLY US
+You are the morning-briefing narrator for a news-driven long/short US
 equities pipeline, writing minutes before the operator's trading day
 starts. You receive the code-computed fact sheet: today's pre-market
 action sheet, the standing thesis store, open positions (with R-progress

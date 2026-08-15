@@ -38,8 +38,12 @@ def overnight_decision(unrealized_r: float, session_age: int,
 
 
 def realized_move_fraction(mark: float, avg_entry: float,
-                           magnitude_est: float) -> float:
+                           magnitude_est: float,
+                           side: str = "LONG") -> float:
     if magnitude_est <= 0:
         return 0.0
-    return ((mark - avg_entry) / avg_entry) / magnitude_est
+    # v0.13: fraction of the PREDICTED move achieved — a short realizes its
+    # move by falling (common.direction.move_fraction carries the sign).
+    from common.direction import move_fraction
+    return move_fraction(side, avg_entry, mark) / magnitude_est
 

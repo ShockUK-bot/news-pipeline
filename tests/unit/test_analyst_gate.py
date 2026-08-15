@@ -123,6 +123,8 @@ def test_intraday_pass():
 
 
 def test_long_only_veto():
+    # v0.13: with no ShortContext (shorting off) the historical veto —
+    # and its exact string — is preserved.
     v = evaluate(thesis_d(direction="down"), state(), GATE_CFG)
     assert v.veto_reason == "LONG_ONLY"
 

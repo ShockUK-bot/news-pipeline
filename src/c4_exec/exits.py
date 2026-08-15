@@ -1,30 +1,43 @@
 """C4 exit engine — pure per-bar evaluator (Phase 4 chunk 2).
 
 Layers per baseline v0.3 §5, evaluated in strict priority on each bar:
-  L1 synthetic hard stop   bar.low <= current_stop -> full exit. Attribution
-                           follows stop_basis: initial->STOP, breakeven->
-                           BREAKEVEN, trail->TRAIL.
+  L1 synthetic hard stop   bar touches current_stop on the LOSING side (low
+                           for longs, high for shorts, v0.13) -> full exit.
+                           Attribution follows stop_basis: initial->STOP,
+                           breakeven->BREAKEVEN, trail->TRAIL.
   L5 machine invalidation  compiled MIP predicates fire -> full exit
                            (INVALIDATION). Runs second: an invalidation on the
                            same bar as a stop is moot — the stop already got us.
   L3 time stop             session age >= window AND progress < min_progress_R
                            -> full exit (TIME). Short profile only.
-  L4 realization           bar.high >= target -> scale_out_50 (TARGET, partial)
-                           or review_flag (EVENT only, long lane).
+  L4 realization           bar touches target on the WINNING side (high for
+                           longs, low for shorts) -> scale_out_50 (TARGET,
+                           partial) or review_flag (EVENT only, long lane).
   L2 ratchets              breakeven move at >= breakeven_at_R; trail from
-                           activate_at_R at k x ATR below high-water mark.
-                           TIGHTEN-ONLY: a proposed stop below current is
+                           activate_at_R at k x ATR beyond the best-excursion
+                           watermark. TIGHTEN-ONLY: "tighter" means closer to
+                           price from the losing side — HIGHER for longs,
+                           LOWER for shorts (v0.13); a looser proposal is
                            discarded, never applied.
 
 The evaluator is pure: (position snapshot, bar, session_age, fired
 invalidations) -> ordered actions. All broker mechanics live in mechanics.py;
 all persistence in the service. Runtime policy state rides in exit_policy:
 current_stop, stop_basis, hwm, scale_out_done.
+
+v0.13 sign convention: every directional comparison routes through
+common.direction; `progress_r` is positive-when-winning for BOTH sides. The
+watermark keeps its historical key "hwm" but holds the LOW-water mark for a
+short — the name records where the money is, not the arithmetic direction.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Optional
+
+from common.direction import (dir_mult, is_tighter, r_progress, stop_hit,
+                              target_hit, trail_from, watermark)
+from common.direction import realization_target as _dir_target
 
 
 @dataclass
@@ -57,7 +70,8 @@ def policy_state(exit_policy: dict, avg_entry: float) -> dict:
 def realization_target(avg_entry: float, exit_policy: dict) -> float:
     rf = float(exit_policy["realization"]["target_fraction"])
     magnitude = float(exit_policy.get("magnitude_est") or 0)
-    return round(avg_entry * (1.0 + rf * magnitude), 4)
+    side = exit_policy.get("side") or "LONG"     # v0.13: below entry for shorts
+    return _dir_target(side, avg_entry, rf, magnitude)
 
 
 def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
@@ -75,17 +89,22 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
     avg_entry = float(pos["avg_entry"])
     r_unit = float(pos["r_unit"])
     qty_open = int(pos["qty_open"])
+    side = pos.get("side") or policy.get("side") or "LONG"   # v0.13
     state = policy_state(policy, avg_entry)
     actions: list[ExitAction] = []
 
-    progress_r = (bar["close"] - avg_entry) / r_unit if r_unit else 0.0
-    new_hwm = max(state["hwm"], bar["high"])
+    progress_r = (r_progress(side, avg_entry, r_unit, bar["close"])
+                  if r_unit else 0.0)
+    new_hwm = watermark(side, state["hwm"], bar)
 
     # ---- L1 synthetic hard stop ------------------------------------------------
-    if bar["low"] <= state["current_stop"]:
+    if stop_hit(side, bar, state["current_stop"]):
         layer = STOP_ATTRIBUTION[state["stop_basis"]]
+        edge = bar["low"] if side == "LONG" else bar["high"]
+        rel = "<=" if side == "LONG" else ">="
         actions.append(ExitAction("EXIT", layer, qty_open,
-                                  reason=f"bar low {bar['low']} <= stop "
+                                  reason=f"bar {'low' if side == 'LONG' else 'high'} "
+                                         f"{edge} {rel} stop "
                                          f"{state['current_stop']} "
                                          f"({state['stop_basis']})"))
         return actions
@@ -123,13 +142,16 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
     # ---- L4 realization ------------------------------------------------------------
     if not state["scale_out_done"]:
         target = realization_target(avg_entry, policy)
-        if bar["high"] >= target:
+        if target_hit(side, bar, target):
             action = policy["realization"]["action"]
+            edge = bar["high"] if side == "LONG" else bar["low"]
+            rel = ">=" if side == "LONG" else "<="
             if action == "scale_out_50":
                 half = qty_open // 2
                 if half > 0:
                     actions.append(ExitAction("SCALE_OUT", "TARGET", half,
-                                              reason=f"high {bar['high']} >= "
+                                              reason=f"{'high' if side == 'LONG' else 'low'} "
+                                                     f"{edge} {rel} "
                                                      f"target {target}"))
             else:                               # review_flag (long lane)
                 actions.append(ExitAction(
@@ -143,19 +165,21 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
     proposed: Optional[tuple[float, str]] = None
     trail_cfg = policy.get("trail") or {}
     if trail_cfg and progress_r >= float(trail_cfg["activate_at_R"]):
-        trail_stop = round(new_hwm - float(trail_cfg["k"]) * atr, 2)
+        trail_stop = trail_from(side, new_hwm, float(trail_cfg["k"]) * atr)
         proposed = (trail_stop, "trail")
     elif progress_r >= float(policy["breakeven_at_R"]) \
             and state["stop_basis"] == "initial":
         proposed = (round(avg_entry, 2), "breakeven")
 
-    if proposed and proposed[0] > state["current_stop"]:
+    # v0.13: tighten-only is side-aware — "tighter" is HIGHER for a long,
+    # LOWER for a short (common.direction.is_tighter).
+    if proposed and is_tighter(side, proposed[0], state["current_stop"]):
         actions.append(ExitAction("SET_STOP", "", 0,
                                   new_stop=proposed[0], new_basis=proposed[1],
                                   reason=f"{proposed[1]} ratchet to "
                                          f"{proposed[0]} at {progress_r:.2f}R",
                                   new_hwm=new_hwm))
-    elif new_hwm > state["hwm"]:
+    elif dir_mult(side) * (new_hwm - state["hwm"]) > 0:
         actions.append(ExitAction("EVENT", "", 0, event_type=None,
                                   new_hwm=new_hwm, reason="hwm update"))
     return actions

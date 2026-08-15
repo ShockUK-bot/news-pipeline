@@ -29,8 +29,8 @@ from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
 from .counterfactual import record_veto, sweep as counterfactual_sweep
-from .rules import (EHState, GateVerdict, MarketState, ScannerState, evaluate,
-                    evaluate_eh, evaluate_scanner)
+from .rules import (EHState, GateVerdict, MarketState, ScannerState,
+                    ShortContext, evaluate, evaluate_eh, evaluate_scanner)
 
 log = get_logger("c3.service")
 
@@ -237,10 +237,47 @@ async def probe_marketdata(md, symbol: str = PROBE_DEFAULT_SYMBOL) -> bool:
 
 
 class C3Service:
-    def __init__(self, cfg: dict, md=None, now_fn=None):
+    def __init__(self, cfg: dict, md=None, now_fn=None, assets=None):
         self.cfg = cfg["gate"]
         self.md = md or get_marketdata()
         self.now_fn = now_fn or utcnow
+        # v0.13: shorting block (config/shorting.yaml, merged in main()).
+        # Absent/empty block == shorting off == long-only behavior, exactly.
+        self.shorting = cfg.get("shorting") or {}
+        self._assets = assets                  # injected in tests
+
+    def _shorting_on(self, lane: str) -> bool:
+        mode = str(self.shorting.get("mode") or "").lower()
+        if mode not in ("shadow", "live"):
+            return False
+        return bool((self.shorting.get("lanes") or {}).get(lane, False))
+
+    def _lane_for(self, thesis: dict, origin: str) -> str:
+        if origin == "scanner":
+            return "scanner"
+        return ("news_long" if str(thesis.get("horizon")).upper() == "LONG"
+                else "news_short")
+
+    async def short_ctx(self, thesis: dict, lane: str,
+                        pct_from_prior_close: Optional[float]) -> Optional[ShortContext]:
+        """Build the direction-gate context for a down-thesis. None for "up"
+        theses (zero overhead on the long path — no asset API call)."""
+        if thesis.get("direction") == "up":
+            return None
+        if not self._shorting_on(lane):
+            return ShortContext(enabled=False, etb_ok=False)
+        if self._assets is None:
+            from common.assets import AssetsClient
+            self._assets = AssetsClient(
+                ttl_secs=int(self.shorting.get("assets_ttl_secs", 1800)))
+        a = await self._assets.get(thesis["ticker"])
+        etb_ok = bool(a.tradable and a.shortable and
+                      (a.easy_to_borrow or not self.shorting.get("etb_only", True)))
+        return ShortContext(
+            enabled=True, etb_ok=etb_ok,
+            ssr_veto=bool(self.shorting.get("ssr_veto", True)),
+            pct_from_prior_close=pct_from_prior_close,
+            ssr_trigger_pct=float(self.shorting.get("ssr_trigger_pct", -0.10)))
 
     async def build_state(self, thesis: dict, item_id: str,
                           published_ts: datetime, now: datetime) -> MarketState:
@@ -280,13 +317,17 @@ class C3Service:
         # which disables the staleness check rather than guessing).
         newest = since[-1]["ts"] if since else None
         bar_age = (now - newest).total_seconds() if newest else None
+        # v0.13: today's move vs prior close (SSR check for down-theses)
+        prior_close_pct = (round((quote.price - prev) / prev, 5)
+                           if prev and quote.price else None)
         return MarketState(
             prenews_price=prenews, last_price=quote.price, vol_mult=vol_mult,
             minutes_since_publish=int((now - published_ts).total_seconds() // 60),
             news_in_session=news_in_session,
             minutes_since_open=minutes_since_open, gap_pct=gap_pct,
             corroboration_outlets=outlets, tier_min=tier_min,
-            cluster_items=cluster_items, bar_age_secs=bar_age)
+            cluster_items=cluster_items, bar_age_secs=bar_age,
+            pct_from_prior_close=prior_close_pct)
 
     async def _handle_scanner(self, msg, body: dict, thesis: dict,
                                   item_ref: dict, signal_id: str) -> None:
@@ -298,7 +339,12 @@ class C3Service:
         scfg = self.cfg.get("scanner") or {}
 
         state, minute, bars5 = await _scanner_state(self.md, ticker, scanner, now)
-        verdict = evaluate_scanner(thesis, state, scfg)
+        # v0.13: SSR input from the detection snapshot's prev close
+        prev = scanner.get("prev_close")
+        prior_close_pct = (round((state.last_price - prev) / prev, 5)
+                           if prev and state.last_price else None)
+        short = await self.short_ctx(thesis, "scanner", prior_close_pct)
+        verdict = evaluate_scanner(thesis, state, scfg, short)
 
         if verdict.verdict == "VETO":
             decision_id = await write_decision(
@@ -406,7 +452,11 @@ class C3Service:
             minutes_since_publish=int((now - published_ts).total_seconds() // 60),
             session=session, corroboration_outlets=outlets, tier_min=tier_min,
             cluster_items=cluster_items)
-        verdict = evaluate_eh(thesis, state, self.cfg)
+        prior_close_pct = (round((quote.price - prev) / prev, 5)
+                           if prev and quote.price else None)
+        short = await self.short_ctx(thesis, self._lane_for(thesis, "news"),
+                                     prior_close_pct)
+        verdict = evaluate_eh(thesis, state, self.cfg, short)
 
         would = verdict.verdict == "WOULD_TRADE"
         decision_id = await write_decision(
@@ -501,7 +551,9 @@ class C3Service:
             # froze whenever no positions were open and confused deadman).
             await set_health("marketdata", "OK",
                              f"volume bars ok ({thesis['ticker']})")
-        verdict = evaluate(thesis, state, self.cfg)
+        short = await self.short_ctx(thesis, self._lane_for(thesis, "news"),
+                                     state.pct_from_prior_close)
+        verdict = evaluate(thesis, state, self.cfg, short)
 
         if verdict.verdict == "VETO":
             # v0.12.10: inside the confirmation window, a verdict whose
@@ -512,7 +564,9 @@ class C3Service:
             # v0.12.28: abandon a re-check loop that provably cannot succeed,
             # and journal the reason that is actually blocking the trade
             # rather than the one that happens to be checked first.
-            abandoned = abandon_recheck(nums.get("pct_move"), self.cfg)
+            # (v0.13: signed_move — a down-thesis is "extended" by falling.)
+            abandoned = abandon_recheck(
+                nums.get("signed_move", nums.get("pct_move")), self.cfg)
             if abandoned and verdict.veto_reason != "GATE_EXTENDED":
                 nums["masked_reason"] = verdict.veto_reason
                 nums["abandoned_recheck"] = True
@@ -698,6 +752,13 @@ async def consume_loop(svc: C3Service, stop: asyncio.Event) -> None:
 
 async def main() -> None:
     cfg = load_yaml(config_path("gate.yaml"))
+    # v0.13: the shorting block lives in its own file (A3 and C4 read it
+    # too); an absent file or empty block means shorting off — long-only.
+    try:
+        cfg["shorting"] = (load_yaml(config_path("shorting.yaml"))
+                           or {}).get("shorting") or {}
+    except FileNotFoundError:
+        cfg["shorting"] = {}
     await register_config_version("c3 gate service startup")
     svc = C3Service(cfg)
     log.info("C3 up", extra=kv(consumer=CONSUMER))

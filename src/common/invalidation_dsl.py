@@ -34,6 +34,22 @@ STDLIB: dict[str, dict[str, Any]] = {
         "persist": {"bars": 1},
         "action": {"type": "exit"},
     },
+    # v0.13 short-book mirrors: a SHORT thesis is invalidated by strength —
+    # a close back ABOVE the pre-news price, or above the prior day's high.
+    "close_above_prenews": {
+        "id": "close_above_prenews",
+        "when": {"metric": "close", "tf": "session", "op": ">",
+                 "value": {"ref": "prenews_price"}},
+        "persist": {"bars": 1},
+        "action": {"type": "exit"},
+    },
+    "session_close_above_prior_high": {
+        "id": "session_close_above_prior_high",
+        "when": {"metric": "close", "tf": "session", "op": ">",
+                 "value": {"ref": "prior_day_high"}},
+        "persist": {"bars": 1},
+        "action": {"type": "exit"},
+    },
     "vwap_loss_on_volume": {
         "id": "vwap_loss_on_volume",
         "when": {"all": [

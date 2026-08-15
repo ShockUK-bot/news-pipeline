@@ -30,6 +30,13 @@ from .state import (create_order, position_event, record_exit,
 log = get_logger("c4.mechanics")
 
 
+def _broker_exit_side(pos: dict) -> str:
+    """v0.13: closing a LONG sells; closing a SHORT buys (to cover). The
+    same mapping protects the catastrophe stop: a short's catastrophe is a
+    BUY stop above the market."""
+    return "BUY" if (pos.get("side") or "LONG") == "SHORT" else "SELL"
+
+
 async def _current_catastrophe(position_id: int) -> Optional[dict]:
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -48,7 +55,8 @@ async def _current_catastrophe(position_id: int) -> Optional[dict]:
 
 async def _place_catastrophe(broker: Broker, pos: dict, qty: int,
                              stop_price: float) -> int:
-    o = await broker.submit_stop(pos["ticker"], "SELL", qty, stop_price,
+    o = await broker.submit_stop(pos["ticker"], _broker_exit_side(pos), qty,
+                                 stop_price,
                                  client_order_id=f"cat-{uuid.uuid4().hex[:12]}")
     order_row = await create_order(None, "CATASTROPHE_STOP", o,
                                    position_id=pos["position_id"])
@@ -93,14 +101,18 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
                                   "CATASTROPHE", co.filled_qty,
                                   float(co.filled_avg_price),
                                   float(pos["avg_entry"]),
-                                  float(pos["r_unit"]), is_partial=False)
+                                  float(pos["r_unit"]), is_partial=False,
+                                  side=pos.get("side") or "LONG")
                 log.warning("catastrophe had already filled",
                             extra=kv(position_id=position_id))
                 return "CATASTROPHE_FILLED"
 
     try:
+        # v0.13: `bid` is the marketable exit price the engine computed —
+        # at/under the bid to sell a long, at/OVER the ask to cover a short;
+        # the side decides which way the order crosses.
         exit_order = await broker.submit_limit(
-            pos["ticker"], "SELL", qty, round(bid, 2),
+            pos["ticker"], _broker_exit_side(pos), qty, round(bid, 2),
             client_order_id=f"exit-{uuid.uuid4().hex[:12]}", tif="day")
     except BrokerReject as e:
         # protect first, diagnose second
@@ -122,7 +134,8 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
             await record_exit(position_id, order_row, now_fn(), layer,
                               o.filled_qty, float(o.filled_avg_price),
                               float(pos["avg_entry"]), float(pos["r_unit"]),
-                              is_partial=is_partial)
+                              is_partial=is_partial,
+                              side=pos.get("side") or "LONG")
             remaining = int(pos["qty_open"]) - o.filled_qty
             if remaining > 0 and cat is not None:
                 await _place_catastrophe(broker, pos, remaining,
@@ -142,7 +155,8 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
         await record_exit(position_id, order_row, now_fn(), layer,
                           final.filled_qty, float(final.filled_avg_price),
                           float(pos["avg_entry"]), float(pos["r_unit"]),
-                          is_partial=is_partial)
+                          is_partial=is_partial,
+                          side=pos.get("side") or "LONG")
         return "FILLED"
     if cat is not None:
         await _place_catastrophe(broker, pos, int(pos["qty_open"]),
