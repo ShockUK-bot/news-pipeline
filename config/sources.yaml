@@ -52,13 +52,125 @@ rss:
   poll_interval_secs: 60
   gap_threshold_market_secs: 1800
   gap_threshold_offhours_secs: 21600
+  # -- v0.13.3 transport settings ----------------------------------------
+  # The old code used one flat 20s timeout covering connect AND read, with
+  # no retry, so a single slow body from a big wire feed logged an ERROR and
+  # painted that feed's row yellow. Split timeouts + one retry + a 3-strike
+  # rule fix that. Worst case for a total network outage is
+  # feeds x (retries+1) x connect_timeout ~ 5 min, comfortably inside the
+  # 1800s market gap threshold above, so the dead-man ladder is unaffected.
+  connect_timeout_secs: 10
+  read_timeout_secs: 25
+  retries: 1                   # extra attempts inside one poll
+  retry_base_secs: 1.5
+  feed_degrade_after: 3        # consecutive failed polls before the row goes yellow
+  aggregate_degrade_after: 2
   feeds:
-    - name: "prnewswire-news"
-      url: "https://www.prnewswire.com/rss/news-releases-list.rss"
+    # -- PR wires ----------------------------------------------------------
+    # v0.13.3: prnewswire's all-news feed (rss/news-releases-list.rss) is
+    # GONE — 404 confirmed 2026-08-15 from two independent directions, as is
+    # the alternate URL prepared in v0.11.2. Their per-category feeds work,
+    # with two traps:
+    #   * an UNKNOWN category returns valid RSS with 20 fresh items and an
+    #     EMPTY channel <title>. Hence expect_title_prefix on both — without
+    #     it we would ingest a fallback feed forever and never see an error.
+    #   * most categories are weeks-to-months stale. Of 14 that resolve, only
+    #     4 were fresh on 2026-08-15; these are the two relevant to equities.
+    #     stale_after_hours makes a feed going quiet visible on its own row.
+    - name: "prnewswire-financial"
+      url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss"
+      expect_title_prefix: "All Financial Services"
+      require_items: true
+      stale_after_hours: 48
+    - name: "prnewswire-bustech"
+      url: "https://www.prnewswire.com/rss/business-technology-latest-news/business-technology-latest-news-list.rss"
+      expect_title_prefix: "All Business Technology"
+      require_items: true
+      stale_after_hours: 48
     - name: "globenewswire-public"
       url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
+      require_items: true
+      stale_after_hours: 48
+      read_timeout_secs: 40    # the ReadTimeout offender: big body, slow origin
+    # NOTE (v0.13.3): feed.businesswire.com/robots.txt Disallows /rss/ for
+    # everyone except two named agents (NewsNow, Tiingo News). We are neither.
+    # It answers us today; treat it as a works-until-it-doesn't dependency.
     - name: "businesswire-all"
       url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ=="
+      stale_after_hours: 48
+    # Newsfile (TMX): dense US small/mid-cap coverage, which is the size band
+    # the majors under-serve. 25 items/poll, verified fresh 2026-08-15.
+    - name: "newsfile-global"
+      url: "https://feeds.newsfilecorp.com/global/Last25Stories"
+      require_items: true
+      stale_after_hours: 48
+
+    # -- GlobeNewswire subject lanes (v0.13.3) -----------------------------
+    # Same host we already poll, split by catalyst type so A1 sees the event
+    # class without having to infer it. The numeric code is what selects the
+    # content; the text after the hyphen and the whole feedTitle segment are
+    # cosmetic, so we use "x" — a label containing "/" or "'" (e.g. subject
+    # 22, "Insider's Buy/Sell") returns HTTP 400 unless double-encoded.
+    # An unknown code does NOT 404 — it returns a valid, EMPTY feed. Hence
+    # require_items on every one of these.
+    - name: "gnw-earnings"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/13-x/feedTitle/x"
+      tags: ["catalyst", "earnings"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-manda"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/27-x/feedTitle/x"
+      tags: ["catalyst", "m-and-a"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-ipo"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/21-x/feedTitle/x"
+      tags: ["catalyst", "ipo", "offering"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-clinical"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/90-x/feedTitle/x"
+      tags: ["catalyst", "clinical", "biotech"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-insider"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/22-x/feedTitle/x"
+      tags: ["catalyst", "insider"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-classaction"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/84-x/feedTitle/x"
+      tags: ["catalyst", "litigation"]
+      require_items: true
+      stale_after_hours: 72
+    - name: "gnw-management"
+      url: "https://www.globenewswire.com/RssFeed/subjectcode/86-x/feedTitle/x"
+      tags: ["catalyst", "management-change"]
+      require_items: true
+      stale_after_hours: 72
+
+    # -- Exchange market structure (v0.13.3) -------------------------------
+    # Nasdaq UTP trading halts. Tier 1: this is the exchange itself, not an
+    # aggregator, and it covers halts on ALL US venues, not just Nasdaq
+    # listings. A T1 (news pending) halt IS the event, minutes before any
+    # wire carries the release.
+    # Needs adapter=nasdaq_halts: the items have no <guid> and no <link>
+    # (normalize_rss would quarantine every one), the <title> is the bare
+    # ticker, and everything real is in an ndaq: namespace. The adapter
+    # synthesises a stable guid and a readable headline, and lifts
+    # <ndaq:IssueSymbol> into symbols — a publisher-provided field, not
+    # inference. NOTE: http, not https; the currenthalts and news variants
+    # of this feed are both retired (404).
+    - name: "nasdaq-halts"
+      url: "http://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
+      tier: 1
+      tags: ["halt", "market-structure"]
+      adapter: "nasdaq_halts"
+      symbol_fields: ["ndaq_issuesymbol"]
+      # deliberately no require_items: a genuinely halt-free session is
+      # normal and must not look like a broken feed.
+      # deliberately no stale_after_hours: quiet is the good outcome here.
+
     # -- macro/economy lane (v0.12.24) --------------------------------------
     # Official primary sources carry their own tier (per-feed override; the
     # block default of 3 still applies to the wire feeds above). `tags` are
@@ -88,4 +200,3 @@ rss:
       url: "https://www.eia.gov/rss/todayinenergy.xml"
       tier: 2
       tags: ["macro", "energy"]
-

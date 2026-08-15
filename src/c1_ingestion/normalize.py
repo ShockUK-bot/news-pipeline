@@ -186,11 +186,19 @@ def normalize_edgar(entry: dict, tier: int = 1) -> NewsItem:
 # ---------------------------------------------------------------------------
 
 def normalize_rss(entry: dict, feed_name: str, tier: int = 3,
-                  extra_channels: list[str] | None = None) -> NewsItem:
+                  extra_channels: list[str] | None = None,
+                  symbols: list[str] | None = None) -> NewsItem:
     """v0.12.24: `extra_channels` lets a feed inject static tags (e.g.
     ['macro','fed'] on the Federal Reserve feed) ahead of whatever tags the
     entry itself carries — so A1/A5 can see WHAT KIND of source this is
-    even when the publisher tags nothing. Combined list stays capped at 8."""
+    even when the publisher tags nothing. Combined list stays capped at 8.
+
+    v0.13.3: `symbols` carries tickers the PUBLISHER put in a dedicated
+    machine-readable field — today only nasdaqtrader.com's halt feed, whose
+    items ship <ndaq:IssueSymbol>. This is a feed tag in the sense of the
+    module docstring above, not inference: nothing here reads the headline
+    or body looking for tickers, which remains A1's job. Callers that pass
+    nothing get the pre-v0.13.3 empty list."""
     if not isinstance(entry, dict):
         raise NormalizeError("UNPARSEABLE_JSON", "non-object entry", raw_text=repr(entry)[:2000])
 
@@ -220,7 +228,7 @@ def normalize_rss(entry: dict, feed_name: str, tier: int = 3,
         summary=summary,
         content_hash=content_hash(title, summary),
         raw={k: str(v)[:2000] for k, v in entry.items() if isinstance(v, (str, int, float, bool))},
-        symbols=[],
+        symbols=[str(s).strip().upper() for s in (symbols or []) if str(s).strip()][:8],
         channels=(list(extra_channels or [])
                   + [t.get("term", "") for t in entry.get("tags", [])
                      if isinstance(t, dict)])[:8],
