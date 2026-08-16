@@ -134,10 +134,20 @@ def test_macro_feeds_registered_with_tier_and_tags():
     # literal in this public file (rule 22), and never an email in git.
     assert feeds["bls-latest"].get("user_agent_env") == "BLS_USER_AGENT"
     assert "@" not in str(feeds["bls-latest"].get("user_agent", ""))
-    # ...and the wire feeds must NOT grow a UA (they need the browser one).
-    for name in ("prnewswire-news", "globenewswire-public", "businesswire-all"):
-        assert "user_agent" not in feeds[name], name
-        assert "user_agent_env" not in feeds[name], name
+    # ...and the feeds that NEED the browser UA must not override it.
+    # v0.13.4: this used to be a hand-written list of three names, and
+    # v0.13.3's retirement of `prnewswire-news` turned it into a KeyError
+    # during a deploy. It now derives the list, so a rename can't break it.
+    # GlobeNewswire is excluded because it deliberately DOES carry its own UA
+    # from v0.13.4 (Akamai tarpits browser impersonation) — that exclusion is
+    # asserted positively in tests/unit/test_rss_hardening.py, so the two
+    # tests cannot both be satisfied by a feed simply going missing.
+    macro_feeds = {"fed-monetary", "bls-latest", "eia-today"}
+    for name, feed in feeds.items():
+        if name in macro_feeds or "globenewswire.com" in feed["url"]:
+            continue
+        assert "user_agent" not in feed, name
+        assert "user_agent_env" not in feed, name
 
 
 def test_poll_headers_per_feed_ua_and_cache(monkeypatch):

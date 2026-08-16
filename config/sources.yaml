@@ -87,11 +87,31 @@ rss:
       expect_title_prefix: "All Business Technology"
       require_items: true
       stale_after_hours: 48
+    # v0.13.4 — THE globenewswire ReadTimeout, root cause found 2026-08-15.
+    # GlobeNewswire is behind Akamai, and Akamai TARPITS the browser User-Agent
+    # v0.11.1 introduced: TLS completes, the request goes out, and the server
+    # then sends ZERO bytes until the client gives up. No timeout value fixes
+    # that. Probed from the Spark, same URL, same second:
+    #     Chrome/124 browser string ....... 0 bytes, timeout
+    #     no User-Agent header at all ..... 0 bytes, timeout
+    #     curl/8.5.0 ...................... 200, 36772 bytes, 0.19s
+    #     python-httpx/0.28.1 ............. 200, 36772 bytes, 0.24s
+    #     news-pipeline/... (below) ....... 200, 36772 bytes, 0.16s
+    #     Mozilla/5.0 (compatible; news-pipeline/...) 200, 36772 bytes
+    # So it is browser IMPERSONATION being refused, not the word "Mozilla" and
+    # not bots as such. This is the exact inverse of prnewswire (v0.11.1, which
+    # 404s honest bots) and the same shape as BLS (v0.12.25) — three publishers,
+    # three incompatible demands, which is why poll_headers does this per feed.
+    # The string identifies us honestly and gives their ops a way to reach us
+    # instead of silently escalating. It is a STATIC identifier: the version in
+    # it does not track releases, and it should only be edited after re-probing.
+    # Not personal data, so a literal here is fine (contrast BLS, rule 22).
     - name: "globenewswire-public"
       url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       require_items: true
       stale_after_hours: 48
-      read_timeout_secs: 40    # the ReadTimeout offender: big body, slow origin
+      read_timeout_secs: 40    # generous, but the real fix is the UA above
     # NOTE (v0.13.3): feed.businesswire.com/robots.txt Disallows /rss/ for
     # everyone except two named agents (NewsNow, Tiingo News). We are neither.
     # It answers us today; treat it as a works-until-it-doesn't dependency.
@@ -115,36 +135,43 @@ rss:
     # require_items on every one of these.
     - name: "gnw-earnings"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/13-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "earnings"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-manda"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/27-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "m-and-a"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-ipo"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/21-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "ipo", "offering"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-clinical"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/90-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "clinical", "biotech"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-insider"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/22-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "insider"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-classaction"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/84-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "litigation"]
       require_items: true
       stale_after_hours: 72
     - name: "gnw-management"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/86-x/feedTitle/x"
+      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "management-change"]
       require_items: true
       stale_after_hours: 72

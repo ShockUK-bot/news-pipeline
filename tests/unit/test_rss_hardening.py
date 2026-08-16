@@ -19,8 +19,10 @@ Pure functions only — no database, no network, no clock of their own.
 """
 import httpx
 import pytest
+import yaml
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from c1_ingestion.normalize import NormalizeError, normalize_rss
 from c1_ingestion.sources.rss import (
@@ -30,6 +32,128 @@ from c1_ingestion.sources.rss import (
 )
 
 NOW = datetime(2026, 8, 15, 20, 0, tzinfo=timezone.utc)
+
+SOURCES = Path(__file__).resolve().parents[2] / "config" / "sources.yaml"
+BROWSER_UA_MARKERS = ("Chrome/", "Safari/", "AppleWebKit/", "Gecko/")
+
+
+def _rss_block() -> dict:
+    return yaml.safe_load(SOURCES.read_text())["rss"]
+
+
+def _rss_feeds() -> dict:
+    return {f["name"]: f for f in _rss_block()["feeds"]}
+
+
+# --- config registration ----------------------------------------------------
+# v0.13.4: these exist because v0.13.3 renamed a feed and the breakage
+# surfaced in test_macro.py on the Spark mid-deploy instead of here. Config
+# that other tests assert on by name is an interface; it gets its own tests.
+
+def test_dead_prnewswire_all_news_feed_is_gone():
+    """PR Newswire's all-news feed 404s permanently (2026-08-15) and so does
+    the v0.11.2 alternate. Nothing may point at either again."""
+    feeds = _rss_feeds()
+    assert "prnewswire-news" not in feeds
+    urls = " ".join(f["url"] for f in feeds.values())
+    assert "news-releases-list.rss" not in urls
+    assert "all-news-releases-from-PR-newswire-news" not in urls
+
+
+def test_prnewswire_category_feeds_assert_their_channel_title():
+    """Without expect_title_prefix we would silently ingest PR Newswire's
+    fallback feed forever — it answers 200 with 20 fresh items."""
+    feeds = _rss_feeds()
+    for name in ("prnewswire-financial", "prnewswire-bustech"):
+        assert name in feeds, name
+        assert feeds[name].get("expect_title_prefix"), name
+
+
+def test_globenewswire_subject_lanes_assert_non_empty():
+    """An unknown GlobeNewswire subject code returns a valid EMPTY feed, so
+    every subjectcode lane must carry require_items or a typo is silent."""
+    for name, feed in _rss_feeds().items():
+        if "subjectcode" in feed["url"]:
+            assert feed.get("require_items"), name
+
+
+def test_globenewswire_subject_labels_are_url_safe():
+    """A label containing "/" or "'" returns HTTP 400 unless double-encoded;
+    the numeric code alone selects the content, so labels stay cosmetic."""
+    for name, feed in _rss_feeds().items():
+        if "subjectcode" in feed["url"]:
+            code = feed["url"].split("subjectcode/", 1)[1].split("/", 1)[0]
+            assert "'" not in code and "%" not in code, name
+
+
+# --- the Akamai tarpit (v0.13.4) --------------------------------------------
+# Probed from the Spark 2026-08-15: with the Chrome UA v0.11.1 introduced,
+# EVERY globenewswire.com URL completed TLS and then received ZERO bytes until
+# the client gave up. With curl's, httpx's, or an honest news-pipeline string:
+# HTTP 200 in under a quarter of a second. Sending NO User-Agent also hangs.
+# So it is browser impersonation being refused, not bots as such.
+
+def test_every_globenewswire_feed_overrides_the_browser_ua():
+    feeds = _rss_feeds()
+    gnw = {n: f for n, f in feeds.items() if "globenewswire.com" in f["url"]}
+    assert gnw, "expected globenewswire feeds in the registry"
+    for name, feed in gnw.items():
+        ua = feed.get("user_agent", "")
+        assert ua, f"{name} would be tarpitted by Akamai without its own UA"
+        assert not any(m in ua for m in BROWSER_UA_MARKERS), name
+
+
+def test_no_feed_override_impersonates_a_browser():
+    """A per-feed override exists to escape browser impersonation. One that
+    impersonates a browser is the bug it was added to fix."""
+    for name, feed in _rss_feeds().items():
+        ua = str(feed.get("user_agent", ""))
+        assert not any(m in ua for m in BROWSER_UA_MARKERS), name
+
+
+def test_only_the_expected_feeds_override_the_user_agent():
+    """Three publishers, three incompatible demands (prnewswire needs the
+    browser string, BLS needs contact info, GlobeNewswire needs anything but
+    a browser). Pin exactly who deviates so a fourth is a deliberate act."""
+    feeds = _rss_feeds()
+    overriding = {n for n, f in feeds.items()
+                  if "user_agent" in f or "user_agent_env" in f}
+    expected = {"bls-latest"} | {n for n, f in feeds.items()
+                                 if "globenewswire.com" in f["url"]}
+    assert overriding == expected
+
+
+def test_bls_user_agent_still_comes_from_the_environment():
+    """Rule 22: that string contains an email address; it must never be a
+    literal in this public file, even now that literals are in use nearby."""
+    bls = _rss_feeds()["bls-latest"]
+    assert bls.get("user_agent_env") == "BLS_USER_AGENT"
+    assert "@" not in str(bls.get("user_agent", ""))
+
+
+def test_nasdaq_halts_feed_is_wired_for_symbols():
+    feed = _rss_feeds()["nasdaq-halts"]
+    assert feed["adapter"] == "nasdaq_halts"
+    assert feed["symbol_fields"] == ["ndaq_issuesymbol"]
+    assert feed["tier"] == 1                      # the exchange, not an aggregator
+    # A halt-free session is normal and must never look like a broken feed.
+    assert not feed.get("require_items")
+    assert not feed.get("stale_after_hours")
+
+
+def test_transport_settings_keep_the_cycle_inside_the_gap_threshold():
+    """The dead-man ladder must not be able to fire because of retries:
+    feeds x attempts x connect_timeout has to stay well under the market
+    gap threshold."""
+    rss = _rss_block()
+    worst = (len(rss["feeds"]) * (rss["retries"] + 1)
+             * rss["connect_timeout_secs"])
+    assert worst < rss["gap_threshold_market_secs"] / 2
+
+
+def test_read_timeout_is_longer_than_connect_timeout():
+    rss = _rss_block()
+    assert rss["read_timeout_secs"] > rss["connect_timeout_secs"]
 
 
 # --- per-feed health tolerance ----------------------------------------------
