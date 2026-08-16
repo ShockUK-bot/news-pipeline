@@ -131,6 +131,39 @@ def test_bls_user_agent_still_comes_from_the_environment():
     assert "@" not in str(bls.get("user_agent", ""))
 
 
+# --- the businesswire lesson (v0.13.5) --------------------------------------
+# businesswire-all answered 200 with a valid, parseable, EMPTY feed — whose
+# own <description> said "The RSS channel you requested was deactivated by
+# the administrator" — and sat GREEN on the dashboard for an unknown length
+# of time, because v0.13.3 shipped require_items on nine feeds and left it
+# off the one feed already flagged as fragile. These tests make that
+# judgement call impossible to repeat.
+
+def test_dead_businesswire_channel_is_gone():
+    feeds = _rss_feeds()
+    assert "businesswire-all" not in feeds
+    assert "businesswire.com" not in " ".join(f["url"] for f in feeds.values())
+
+
+def test_every_feed_asserts_non_empty_except_the_halt_feed():
+    """A 200 with zero items must never read as healthy. The ONLY feed
+    allowed to be legitimately empty is nasdaq-halts, where empty means
+    nothing is halted — which is the good outcome, not a fault."""
+    unguarded = {n for n, f in _rss_feeds().items() if not f.get("require_items")}
+    assert unguarded == {"nasdaq-halts"}
+
+
+def test_feeds_with_a_publishing_cadence_declare_a_staleness_limit():
+    """Every feed that publishes on a predictable rhythm must say so, so a
+    frozen-but-healthy feed (the WSJ failure mode) surfaces. Exempt:
+    nasdaq-halts (quiet is good) and fed-monetary (FOMC statements are weeks
+    apart by design, so a limit would alarm on normal silence)."""
+    exempt = {"nasdaq-halts", "fed-monetary"}
+    missing = {n for n, f in _rss_feeds().items()
+               if n not in exempt and not f.get("stale_after_hours")}
+    assert missing == set()
+
+
 def test_nasdaq_halts_feed_is_wired_for_symbols():
     feed = _rss_feeds()["nasdaq-halts"]
     assert feed["adapter"] == "nasdaq_halts"

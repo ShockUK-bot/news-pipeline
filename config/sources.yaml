@@ -112,12 +112,26 @@ rss:
       require_items: true
       stale_after_hours: 48
       read_timeout_secs: 40    # generous, but the real fix is the UA above
-    # NOTE (v0.13.3): feed.businesswire.com/robots.txt Disallows /rss/ for
-    # everyone except two named agents (NewsNow, Tiingo News). We are neither.
-    # It answers us today; treat it as a works-until-it-doesn't dependency.
-    - name: "businesswire-all"
-      url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ=="
-      stale_after_hours: 48
+    # -- businesswire-all: REMOVED in v0.13.5 -----------------------------
+    # The channel is dead and there is no replacement we can reach. Probed
+    # 2026-08-15/16 from the Spark:
+    #   * feed.businesswire.com answers 200 to EVERY User-Agent tried
+    #     (honest, curl, browser, "NewsNow") with the same 951 bytes, whose
+    #     own <description> reads: "The RSS channel you requested was
+    #     deactivated by the administrator." That token is a saved-channel
+    #     id and Business Wire has switched it off.
+    #   * www.businesswire.com — needed to discover a replacement URL —
+    #     returns 403 to a browser UA and read-times-out on an honest one.
+    #     Both doors shut, so no replacement can be found from here.
+    #   * feed.businesswire.com/robots.txt Disallows /rss/ for everyone
+    #     except two named agents (NewsNow, Tiingo News). We are neither.
+    # It had been answering 200 with a valid, parseable, EMPTY feed —
+    # silently green on the dashboard — for an unknown length of time. That
+    # is exactly what require_items exists to catch, and v0.13.3 shipped it
+    # WITHOUT require_items on the one feed already known to be fragile.
+    # Hence the consistency rule below, and the test that now enforces it.
+    # The wire lane is still covered: GlobeNewswire (8 feeds), PR Newswire
+    # (2), Newsfile (1), plus Alpaca's Benzinga stream on tier 2.
     # Newsfile (TMX): dense US small/mid-cap coverage, which is the size band
     # the majors under-serve. 25 items/poll, verified fresh 2026-08-15.
     - name: "newsfile-global"
@@ -204,10 +218,20 @@ rss:
     # injected into the item's channels so A1 triage and A5 can see the
     # source class. These items are ticker-less by nature: material ones
     # route to signal.thesis via router rule 3 — never the intraday path.
+    # v0.13.5 consistency rule: EVERY feed carries require_items, because a
+    # 200 OK with nothing in it is the failure mode that hid businesswire's
+    # death. The single exception is nasdaq-halts, where an empty response
+    # genuinely means "nothing is halted" — the good outcome. A test pins
+    # that exception list at exactly one name.
+    # stale_after_hours is applied wherever a publishing CADENCE exists to
+    # measure against. fed-monetary is deliberately left without one: FOMC
+    # statements are weeks apart by design, and a limit there would alarm on
+    # normal quiet rather than on a fault.
     - name: "fed-monetary"
       url: "https://www.federalreserve.gov/feeds/press_monetary.xml"
       tier: 1
       tags: ["macro", "fed", "monetary-policy"]
+      require_items: true
     # v0.12.25: BLS corrected. The v0.12.24 URL (feed/news_release.rss)
     # does not exist (404), and BLS 403s the browser-impersonating UA the
     # PR wires require — probe-proven: it admits ONLY clients identifying
@@ -223,7 +247,11 @@ rss:
       tier: 1
       tags: ["macro", "econ-data"]
       user_agent_env: "BLS_USER_AGENT"
+      require_items: true
+      stale_after_hours: 168   # near-daily; a week of silence is a fault
     - name: "eia-today"
       url: "https://www.eia.gov/rss/todayinenergy.xml"
       tier: 2
       tags: ["macro", "energy"]
+      require_items: true
+      stale_after_hours: 168   # daily on weekdays; ditto
