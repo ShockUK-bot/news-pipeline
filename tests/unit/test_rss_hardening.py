@@ -164,6 +164,35 @@ def test_feeds_with_a_publishing_cadence_declare_a_staleness_limit():
     assert missing == set()
 
 
+def test_no_staleness_limit_is_below_the_market_closure_floor():
+    """v0.13.6. The 72h limits shipped in v0.13.3 false-alarmed on their
+    first weekend, because the binding constraint is market closure, not
+    publishing volume: on a Sunday, six of seven GlobeNewswire lanes had a
+    newest item 49-52h old and were perfectly healthy. A three-day holiday
+    weekend plus one quiet Friday is ~120h of legitimate silence. A limit
+    under that alarms on normal quiet, which teaches you to ignore the row —
+    worse than having no check at all."""
+    FLOOR_H = 120
+    too_tight = {n: f["stale_after_hours"] for n, f in _rss_feeds().items()
+                 if f.get("stale_after_hours")
+                 and f["stale_after_hours"] < FLOOR_H}
+    assert too_tight == {}
+
+
+def test_low_volume_lanes_clear_twice_their_measured_gap():
+    """Measured max gap between CONSECUTIVE items, probed 2026-08-16. These
+    are 20-item windows, so a quiet lane's window spans days: gnw-ipo's was
+    270.9h wide with a 71.6h internal gap, which the old 72h limit would
+    have tripped on a coin flip."""
+    measured_max_gap_h = {"gnw-earnings": 1.2, "gnw-classaction": 1.4,
+                          "gnw-manda": 5.5, "gnw-management": 15.2,
+                          "gnw-insider": 41.7, "gnw-clinical": 59.0,
+                          "gnw-ipo": 71.6}
+    feeds = _rss_feeds()
+    for name, gap in measured_max_gap_h.items():
+        assert feeds[name]["stale_after_hours"] >= 2 * gap, name
+
+
 def test_nasdaq_halts_feed_is_wired_for_symbols():
     feed = _rss_feeds()["nasdaq-halts"]
     assert feed["adapter"] == "nasdaq_halts"

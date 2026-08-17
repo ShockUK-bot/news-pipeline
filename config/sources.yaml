@@ -77,16 +77,36 @@ rss:
     #   * most categories are weeks-to-months stale. Of 14 that resolve, only
     #     4 were fresh on 2026-08-15; these are the two relevant to equities.
     #     stale_after_hours makes a feed going quiet visible on its own row.
+    #
+    # v0.13.6 — THE 120h FLOOR. Every stale_after_hours below was re-derived
+    # from measured data after the 72h limits started false-alarming on their
+    # first weekend. Two findings from probing all seven GlobeNewswire lanes
+    # on 2026-08-16:
+    #   1. The binding constraint is MARKET CLOSURE, not publishing volume.
+    #      Six of seven lanes had a newest item 49-52h old on a Sunday —
+    #      Friday's news, entirely healthy. A three-day holiday weekend plus
+    #      one quiet Friday is ~120h of legitimate silence. Any limit under
+    #      that alarms on normal quiet, which trains you to ignore the row.
+    #   2. These are fixed 20-item windows, so a quiet lane's window spans
+    #      days. gnw-ipo's window was 270.9h with a 71.6h max gap BETWEEN
+    #      CONSECUTIVE ITEMS — the old 72h limit was a coin flip on that feed.
+    # Rule: stale_after_hours = max(120, 2 x measured max inter-item gap).
+    # A test enforces the 120h floor.
+    #
+    # What this check is FOR: "has this source died" (the WSJ feed that
+    # returned valid RSS for 19 months while frozen). It is NOT a latency
+    # alarm — heartbeat.GapMonitor and the gap thresholds above own "is
+    # ingestion broken", and they are unaffected by any of this.
     - name: "prnewswire-financial"
       url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss"
       expect_title_prefix: "All Financial Services"
       require_items: true
-      stale_after_hours: 48
+      stale_after_hours: 120    # floor: holiday weekend + a quiet day
     - name: "prnewswire-bustech"
       url: "https://www.prnewswire.com/rss/business-technology-latest-news/business-technology-latest-news-list.rss"
       expect_title_prefix: "All Business Technology"
       require_items: true
-      stale_after_hours: 48
+      stale_after_hours: 120    # floor: holiday weekend + a quiet day
     # v0.13.4 — THE globenewswire ReadTimeout, root cause found 2026-08-15.
     # GlobeNewswire is behind Akamai, and Akamai TARPITS the browser User-Agent
     # v0.11.1 introduced: TLS completes, the request goes out, and the server
@@ -110,7 +130,7 @@ rss:
       url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       require_items: true
-      stale_after_hours: 48
+      stale_after_hours: 120    # floor: holiday weekend + a quiet day
       read_timeout_secs: 40    # generous, but the real fix is the UA above
     # -- businesswire-all: REMOVED in v0.13.5 -----------------------------
     # The channel is dead and there is no replacement we can reach. Probed
@@ -137,7 +157,7 @@ rss:
     - name: "newsfile-global"
       url: "https://feeds.newsfilecorp.com/global/Last25Stories"
       require_items: true
-      stale_after_hours: 48
+      stale_after_hours: 120    # floor: holiday weekend + a quiet day
 
     # -- GlobeNewswire subject lanes (v0.13.3) -----------------------------
     # Same host we already poll, split by catalyst type so A1 sees the event
@@ -152,43 +172,43 @@ rss:
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "earnings"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 1.2h, floor 120h
     - name: "gnw-manda"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/27-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "m-and-a"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 5.5h, floor 120h
     - name: "gnw-ipo"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/21-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "ipo", "offering"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 168    # 2x measured max gap 71.6h, floor 120h
     - name: "gnw-clinical"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/90-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "clinical", "biotech"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 59h, floor 120h
     - name: "gnw-insider"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/22-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "insider"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 41.7h, floor 120h
     - name: "gnw-classaction"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/84-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "litigation"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 1.4h, floor 120h
     - name: "gnw-management"
       url: "https://www.globenewswire.com/RssFeed/subjectcode/86-x/feedTitle/x"
       user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
       tags: ["catalyst", "management-change"]
       require_items: true
-      stale_after_hours: 72
+      stale_after_hours: 120    # 2x measured max gap 15.2h, floor 120h
 
     # -- Exchange market structure (v0.13.3) -------------------------------
     # Nasdaq UTP trading halts. Tier 1: this is the exchange itself, not an
