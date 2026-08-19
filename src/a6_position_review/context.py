@@ -58,13 +58,21 @@ def sessions_held(opened_ts: datetime, now: datetime) -> int:
 
 
 async def load_open_positions(horizon: str | None = None) -> list[dict]:
-    """Open positions + originating thesis in one query."""
+    """Open positions + originating thesis in one query.
+
+    v0.13.7: keys come from `cur.description` (the convention every other
+    reader in this codebase already uses — A1, A2, A12, A13, C4, queue),
+    so the key list can never drift from the SELECT list again. The three
+    decision-side columns are ALIASED in SQL to the names callers use.
+    """
     sql = """SELECT p.position_id, p.ticker, p.horizon, p.profile,
                     p.opened_ts, p.qty_initial, p.qty_open, p.avg_entry,
                     p.initial_stop, p.r_unit, p.exit_policy, p.last_price,
                     p.realized_pnl, p.thesis_decision_id,
                     p.side,
-                    d.payload, d.reason, d.confidence
+                    d.payload    AS thesis_payload,
+                    d.reason     AS thesis_reason,
+                    d.confidence AS thesis_confidence
              FROM journal.positions p
              JOIN journal.decisions d ON d.decision_id = p.thesis_decision_id
              WHERE p.status = 'OPEN'"""
@@ -77,11 +85,7 @@ async def load_open_positions(horizon: str | None = None) -> list[dict]:
     async with pool.connection() as conn:
         cur = await conn.execute(sql, args or None)
         rows = await cur.fetchall()
-    cols = ("position_id", "ticker", "horizon", "profile", "opened_ts",
-            "qty_initial", "qty_open", "avg_entry", "initial_stop", "r_unit",
-            "exit_policy", "last_price", "realized_pnl",
-            "thesis_decision_id", "thesis_payload", "thesis_reason",
-            "thesis_confidence")
+        cols = [d.name for d in cur.description]
     return [dict(zip(cols, r)) for r in rows]
 
 
@@ -137,11 +141,14 @@ async def build_pack(pos: dict, now: datetime, stale_weeks: float) -> dict:
     news = await ticker_news_recency(pos["ticker"], opened)
     opened_days = round((now - opened).total_seconds() / 86400, 1)
     policy = pos["exit_policy"] or {}
+    side = pos.get("side") or "LONG"
     rp = r_progress(float(pos["avg_entry"]), float(pos["r_unit"]),
                     float(pos["last_price"]) if pos["last_price"] is not None
-                    else None)
+                    else None,
+                    side)                      # v0.13.7 — sign-correct shorts
     return {
         "position_id": pos["position_id"], "ticker": pos["ticker"],
+        "side": side,                          # the prompt promises this field
         "horizon": pos["horizon"], "profile": pos["profile"],
         "opened_days_ago": opened_days,
         "sessions_held": sessions_held(opened, now),
