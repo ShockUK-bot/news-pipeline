@@ -112,6 +112,18 @@ class A2Service:
                   or msg.payload.get("envelope", {}).get("trace", {})
                   .get("origin") or "news")
         scanner = body.get("scanner") if origin == "scanner" else None
+        # v0.13.8 — the queue wait becomes a first-class journaled number.
+        # 2026-08-19: every scanner signal waited 24-26 minutes for an analyst
+        # slot against a 5-minute gate staleness budget, and nothing recorded
+        # the wait — it had to be reconstructed by subtracting log lines.
+        # Stamped on every ANALYST decision so the dashboard/A9 can see queue
+        # pressure directly. None if the enqueue timestamp is missing (never
+        # expected; fail soft, not closed — this is measurement, not a gate).
+        try:
+            queue_wait_secs = round(
+                (utcnow() - msg.enqueued_ts).total_seconds(), 1)
+        except Exception:                                     # noqa: BLE001
+            queue_wait_secs = None
         if not item_id:
             raise ValueError(f"malformed TriagedSignal ({msg.dedup_key})")
 
@@ -147,6 +159,7 @@ class A2Service:
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=ticker, stage="ANALYST", agent="A2", action="REJECT",
                 payload={"no_trade": True, "origin": origin,
+                         "queue_wait_secs": queue_wait_secs,
                          "data_error": repr(e)[:300]},
                 reason=f"market data unavailable for {ticker}: "
                        f"{'404 from data feed' if isinstance(e, httpx.HTTPStatusError) else str(e)[:120]}",
@@ -177,6 +190,7 @@ class A2Service:
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=ticker, stage="ANALYST", agent="A2", action="REJECT",
                 payload={"raw_output": error.raw, "error": error.detail,
+                         "queue_wait_secs": queue_wait_secs,
                          "attempts": 1 + self.retries},
                 reason=f"model output invalid after {1 + self.retries} attempts",
                 model_id=reply.model_id, latency_ms=total_latency,
@@ -196,6 +210,7 @@ class A2Service:
                 ticker=thesis.ticker, stage="ANALYST", agent="A2",
                 action="REJECT",
                 payload={"thesis": thesis.model_dump(), "origin": origin,
+                         "queue_wait_secs": queue_wait_secs,
                          "no_trade": True},
                 reason=f"analyst no-trade: {thesis.priced_in_assessment[:250]}",
                 confidence=thesis.confidence,
@@ -217,7 +232,8 @@ class A2Service:
                     veto_ts=utcnow()))
             log.info("analyst no-trade", extra=kv(
                 signal_id=signal_id, ticker=thesis.ticker, origin=origin,
-                conf=thesis.confidence, latency_ms=total_latency))
+                conf=thesis.confidence, latency_ms=total_latency,
+                queue_wait_s=queue_wait_secs))
             return
 
         gate_body = {"item_ref": item_ref,
@@ -240,6 +256,7 @@ class A2Service:
                     ticker=thesis.ticker, stage="ANALYST", agent="A2",
                     action="THESIS",
                     payload={"thesis": thesis.model_dump(), "context": context,
+                             "queue_wait_secs": queue_wait_secs,
                              "origin": origin},
                     reason=thesis.reason, confidence=thesis.confidence,
                     model_id=self.backend.model_id, latency_ms=total_latency,
@@ -290,7 +307,7 @@ class A2Service:
             mag=thesis.magnitude_est, conf=thesis.confidence,
             synthetics=(len(thesis.related_opportunities)
                         if derived_from is None else 0),
-            latency_ms=total_latency))
+            latency_ms=total_latency, queue_wait_s=queue_wait_secs))
 
 
 async def consume_loop(svc: A2Service, stop: asyncio.Event) -> None:

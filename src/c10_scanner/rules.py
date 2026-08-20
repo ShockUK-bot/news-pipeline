@@ -8,7 +8,10 @@ evidence instead of vibes.
 Reject codes (FILTERED): PRICE_FLOOR, DOLLAR_VOLUME, MOVE_PCT, REL_VOLUME,
 MOVE_STALE_HOD, SPREAD, LULD_HEADROOM, ETF_EXCLUDED, EARNINGS_SOON, NO_TAPE,
 INSTRUMENT_SHAPE (v0.12.28 — journaled by the service before measurement,
-not by filter_candidate; see looks_like_derivative below).
+not by filter_candidate; see looks_like_derivative below), and — v0.13.8,
+emission-stage — SCORE_FLOOR, SSR_RESTRICTED, SHORT_UNAVAILABLE (see
+emission_disposition below: quality/viability rejects that must NOT consume
+emission budget).
 """
 from __future__ import annotations
 
@@ -217,6 +220,73 @@ def score_candidate(m: CandidateMetrics) -> float:
     fresh = 1.0 - min(m.minutes_since_extreme or 60, 60) / 60.0
     spread = 1.0 - min(m.spread_bps or 40.0, 40.0) / 40.0
     return round(0.45 * rel + 0.30 * move + 0.15 * fresh + 0.10 * spread, 4)
+
+
+def scan_mode(emitted_today: int, cfg: dict) -> str:
+    """v0.13.8 — what a scan cycle may do once the daily cap is spent.
+
+    'EMIT'    — budget remains; normal scanning.
+    'OBSERVE' — daily cap reached: keep scanning and journaling (the doctrine
+                is 'everything C10 SEES is journaled'), emit nothing.
+    'IDLE'    — cap reached and observe_after_cap disabled (pre-v0.13.8
+                behaviour, kept reachable by config).
+
+    Incident 2026-08-19: all 6 daily emissions were spent 09:51:36–09:54:23
+    and scan_once then returned early on every cycle — the scanner was blind
+    from 09:54 to the 15:15 window close. MSTR ground +12.4% through the
+    afternoon and has NO scanner_candidates row of any status: not seen, not
+    measured, invisible. The cap was designed to limit trading, not
+    observation."""
+    if emitted_today >= int(cfg["max_per_day"]):
+        return "OBSERVE" if cfg.get("observe_after_cap", True) else "IDLE"
+    return "EMIT"
+
+
+def emission_disposition(score: float, m: CandidateMetrics, cfg: dict, *,
+                         emitted_this_scan: int, emitted_today: int,
+                         emitted_last_hour: int, open_scanner: int,
+                         etb_ok: Optional[bool] = None
+                         ) -> Optional[tuple[str, str]]:
+    """v0.13.8 — one pure decision for a ranked survivor: None = EMIT, else
+    the (status, reject_reason) pair to journal. Check order is the point:
+
+    1. SCORE_FLOOR   — a weak candidate must never consume budget. On
+                       2026-08-19 half the day's 6 slots went to candidates
+                       scoring 0.48–0.55 in the first three scans.
+    2. SSR / borrow  — a down-mover whose short entry is already impossible
+                       must never consume budget either. Both are knowable
+                       BEFORE spending the slot: SSR is pure arithmetic
+                       (Reg SHO trips at −10% from prior close, and C3's
+                       ssr_veto fails closed on it), borrow is one cached
+                       assets-API call. 2026-08-19: WYFI (no borrow) and
+                       AXTI (through −10% by gate time) burned 2 of 6 slots
+                       to reach guaranteed vetoes. NOTE the honest cost: a
+                       filtered down-mover also loses its long-side
+                       capitulation path — accepted, rare, and the row is
+                       journaled for A9 to prove otherwise. etb_ok None
+                       means 'not looked up' (precheck off / up-mover /
+                       caller defers the API call): no borrow verdict here.
+    3. the caps      — per-scan, per-day, per-hour (v0.13.8, pacing), then
+                       concurrent positions. CAPPED rows, budget intact.
+    """
+    if score < float(cfg.get("min_emit_score", 0.0)):
+        return ("FILTERED", "SCORE_FLOOR")
+    if m.is_down and cfg.get("precheck_short_availability", True):
+        if m.move_pct is not None \
+                and m.move_pct <= float(cfg.get("ssr_trigger_pct", -0.10)):
+            return ("FILTERED", "SSR_RESTRICTED")
+        if etb_ok is False:
+            return ("FILTERED", "SHORT_UNAVAILABLE")
+    if emitted_this_scan >= int(cfg["max_per_scan"]):
+        return ("CAPPED", "PER_SCAN")
+    if emitted_today >= int(cfg["max_per_day"]):
+        return ("CAPPED", "PER_DAY")
+    hour_cap = int(cfg.get("max_per_hour", 0))
+    if hour_cap and emitted_last_hour >= hour_cap:
+        return ("CAPPED", "PER_HOUR")
+    if open_scanner >= int(cfg["max_concurrent_positions"]):
+        return ("CAPPED", "CONCURRENT")
+    return None
 
 
 def scanner_headline(m: CandidateMetrics, news_match: str) -> str:

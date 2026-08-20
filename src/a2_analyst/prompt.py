@@ -35,8 +35,11 @@ Rules:
   availability, SSR) — that is not your concern; call the direction the
   evidence supports. magnitude_est 0 remains the no-trade verdict in either
   direction.
-- expected_move_window: like "2_sessions" or "3_weeks" — when the move should
-  complete. horizon: SHORT (days) or LONG (weeks+).
+- expected_move_window: when the move should complete. EXACT format
+  <number>_<unit> — lowercase, underscore separator, unit one of
+  minutes/sessions/weeks: "2_sessions", "3_weeks", "45_minutes". Never
+  "2 sessions", "2-sessions" or "two_sessions". horizon: SHORT (days) or
+  LONG (weeks+).
 - source_risk: how much this thesis depends on the report being true.
   Tier-3 single-source rumor = "high". Tier-1 filing = "low".
 - invalidation.machine_checkable: 0-2 entries from EXACTLY this vocabulary
@@ -81,7 +84,9 @@ Rules:
   your estimate and force-flats before the close either way. If the move is
   exhausted and nothing tradeable remains, set magnitude_est to 0 — the
   no-trade verdict, a valid and successful answer (see REJECTING below).
-- expected_move_window MUST be in minutes, 30-120 (e.g. "60_minutes").
+- expected_move_window MUST be in minutes, 30-120, EXACT format
+  <number>_minutes — lowercase with underscore: "60_minutes", never
+  "60 minutes" or "1_hour".
   horizon MUST be "SHORT". direction is your honest read of the NEXT move:
   on an up-mover, "up" = momentum continues (long), "down" = exhausted spike
   worth fading (SHORT entry). On a DOWN-mover (loser leg), "down" =

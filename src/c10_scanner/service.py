@@ -38,9 +38,9 @@ from common.queue import enqueue
 from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
 
-from .rules import (CandidateMetrics, filter_candidate, in_scan_window,
-                    looks_like_derivative, luld_headroom, scanner_headline,
-                    score_candidate)
+from .rules import (CandidateMetrics, emission_disposition, filter_candidate,
+                    in_scan_window, looks_like_derivative, luld_headroom,
+                    scan_mode, scanner_headline, score_candidate)
 from .screener import get_screener
 
 log = get_logger("c10.service")
@@ -81,6 +81,10 @@ class C10Service:
         self._static_reject: dict[str, str] = {} # ticker -> static reject code (today)
         self._asset_names: dict[str, str | None] = {}  # v0.12.14: name cache
         self._day = None
+        # v0.13.8: borrow/SSR pre-check (emission-stage). Lazy so the service
+        # still runs where broker creds are absent (tests, dev boxes).
+        self._assets = None
+        self._assets_unavailable = False
 
     # ------------------------------------------------------------------ state
     def _roll_day(self, today: str) -> None:
@@ -107,6 +111,38 @@ class C10Service:
                      AND scan_date=(now() AT TIME ZONE 'America/New_York')::date""")
             tickers = [r[0] for r in await cur.fetchall()]
         return len(tickers), set(tickers)
+
+    async def _emitted_last_hour(self) -> int:
+        """v0.13.8 pacing: EMITTED rows in the trailing rolling hour."""
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT count(*) FROM journal.scanner_candidates
+                   WHERE status='EMITTED'
+                     AND ts > now() - interval '1 hour'""")
+            return (await cur.fetchone())[0]
+
+    async def _etb_ok(self, ticker: str) -> bool | None:
+        """v0.13.8: is this name shortable easy-to-borrow RIGHT NOW? Same
+        client + policy bar as C3's gate check (common/assets.py, 30-min TTL,
+        conservative not-shortable on fetch failure). Returns None — 'could
+        not look it up at all' (no creds) — so the pure disposition skips the
+        borrow verdict rather than fabricating one; C3 still fails closed
+        downstream."""
+        if self._assets_unavailable:
+            return None
+        if self._assets is None:
+            try:
+                from common.assets import AssetsClient
+                self._assets = AssetsClient(
+                    ttl_secs=int(self.cfg.get("assets_ttl_secs", 1800)))
+            except RuntimeError as e:
+                self._assets_unavailable = True
+                log.warning("assets client unavailable — short-side "
+                            "pre-check disabled", extra=kv(error=repr(e)[:120]))
+                return None
+        info = await self._assets.get(ticker)
+        return bool(info.etb_shortable)
 
     async def _scanner_losses_today(self) -> int:
         pool = await get_pool()
@@ -324,9 +360,17 @@ class C10Service:
             return 0
 
         emitted_count, emitted_tickers = await self._emitted_today()
-        if emitted_count >= int(self.cfg["max_per_day"]):
+        # v0.13.8 — the daily cap no longer blinds the scanner. Before this,
+        # cap-reached meant an early return: on 2026-08-19 all 6 emissions
+        # were spent by 09:54:23 ET and the scanner journaled NOTHING for the
+        # remaining 5h20m of the session (MSTR +12.4% that afternoon: no row,
+        # no measurement, invisible). The cap limits TRADING; observation is
+        # the doctrine ('everything C10 sees is journaled') and A9's food.
+        mode = scan_mode(emitted_count, self.cfg)
+        if mode == "IDLE":
             await set_health("scanner", "OK",
-                             f"daily cap reached ({emitted_count})")
+                             f"daily cap reached ({emitted_count}), "
+                             "observe_after_cap off")
             return 0
 
         try:
@@ -362,8 +406,12 @@ class C10Service:
                     log.warning("most-actives fetch failed (leg skipped)",
                                 extra=kv(by=by, error=repr(e)[:200]))
         universe = merge_universe(movers, *active_legs)
-        await set_health("scanner", "OK",
-                         f"scanning ({emitted_count}/{self.cfg['max_per_day']} today)")
+        await set_health(
+            "scanner", "OK",
+            (f"observing — daily cap reached "
+             f"({emitted_count}/{self.cfg['max_per_day']})"
+             if mode == "OBSERVE" else
+             f"scanning ({emitted_count}/{self.cfg['max_per_day']} today)"))
 
         open_tickers = await self._open_tickers()
         survivors: list[tuple[float, CandidateMetrics, str, list]] = []
@@ -424,17 +472,32 @@ class C10Service:
         survivors.sort(key=lambda s: s[0], reverse=True)
         emitted = 0
         open_scanner = await self._open_scanner_positions()
+        emitted_hour = await self._emitted_last_hour()
         for score, m, news_match, related in survivors:
-            if emitted >= int(self.cfg["max_per_scan"]):
-                await self._journal_candidate(m.ticker, "CAPPED", "PER_SCAN",
-                                              {**m.payload(), "score": score})
-                continue
-            if emitted_count + emitted >= int(self.cfg["max_per_day"]):
-                await self._journal_candidate(m.ticker, "CAPPED", "PER_DAY",
-                                              {**m.payload(), "score": score})
-                continue
-            if open_scanner >= int(self.cfg["max_concurrent_positions"]):
-                await self._journal_candidate(m.ticker, "CAPPED", "CONCURRENT",
+            # v0.13.8: one pure decision (rules.emission_disposition) replaces
+            # the inline cap ladder — quality floor and short-side viability
+            # are checked BEFORE the caps so they never consume budget, and
+            # per-hour pacing joins the cap family. The borrow lookup is
+            # deferred: only a candidate that would otherwise EMIT spends the
+            # (cached) assets-API call.
+            disp = emission_disposition(
+                score, m, self.cfg,
+                emitted_this_scan=emitted,
+                emitted_today=emitted_count + emitted,
+                emitted_last_hour=emitted_hour + emitted,
+                open_scanner=open_scanner, etb_ok=None)
+            if disp is None and m.is_down \
+                    and self.cfg.get("precheck_short_availability", True):
+                disp = emission_disposition(
+                    score, m, self.cfg,
+                    emitted_this_scan=emitted,
+                    emitted_today=emitted_count + emitted,
+                    emitted_last_hour=emitted_hour + emitted,
+                    open_scanner=open_scanner,
+                    etb_ok=await self._etb_ok(m.ticker))
+            if disp is not None:
+                status, reason = disp
+                await self._journal_candidate(m.ticker, status, reason,
                                               {**m.payload(), "score": score})
                 continue
             await self._emit(m, score, news_match, related)

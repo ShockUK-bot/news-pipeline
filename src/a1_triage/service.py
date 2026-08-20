@@ -427,7 +427,22 @@ class A1Service:
                 out["envelope"]["trace"]["decision_id"] = decision_id
                 out["envelope"]["trace"]["ticker"] = ticker
                 out["envelope"]["trace"]["origin"] = "scanner"
-                await enqueue("signal.analyst", signal_id, out, conn=conn)
+                # v0.13.8 — scanner signals claim FIRST at A2. queue.claim_next
+                # has always ordered by (priority, available_ts) and the A12
+                # position-touching path has always used 0; scanner signals
+                # were enqueued at the default 100 and waited behind the whole
+                # news backlog. 2026-08-19: every one of the day's 6 scanner
+                # signals waited 24-26 min for an analyst slot against a
+                # 5-minute gate staleness budget — all six died (3x
+                # SCANNER_STALE on moves that kept running). Priority 10 sits
+                # behind position-touching (0), ahead of news (100); bounded
+                # to <= max_per_day one-model-call signals/day, so the news
+                # lane can be delayed by at most ~a minute per signal against
+                # its 30-minute evaluation window.
+                await enqueue("signal.analyst", signal_id, out,
+                              priority=int(self.router_cfg.get(
+                                  "scanner_analyst_priority", 10)),
+                              conn=conn)
         log.info("scanner triaged", extra=kv(ticker=ticker,
                                              signal_id=signal_id))
 
@@ -443,14 +458,20 @@ async def consume_loop(svc: A1Service, stop: asyncio.Event) -> None:
         if time.monotonic() - last_hb >= 60.0:
             await set_health("triage", "OK", hb_detail)
             last_hb = time.monotonic()
-        msg = await claim(IN_QUEUE, CONSUMER)
-        handler = svc.handle
+        # v0.13.8 — scanner claims FIRST. C10 emissions are perishable
+        # (C3 refuses them ~5 min after detection) and arrive exactly when
+        # the news queues are busiest — the two are correlated by
+        # construction on a fast tape. The scanner queue is empty on almost
+        # every loop iteration, so the extra claim() costs one indexed
+        # no-row query; news and synthetic order is unchanged after it.
+        msg = await claim(SCANNER_QUEUE, CONSUMER)
+        handler = svc.handle_scanner
+        if msg is None:
+            msg = await claim(IN_QUEUE, CONSUMER)
+            handler = svc.handle
         if msg is None:
             msg = await claim(SYNTHETIC_QUEUE, CONSUMER)
             handler = svc.handle_synthetic
-        if msg is None:
-            msg = await claim(SCANNER_QUEUE, CONSUMER)
-            handler = svc.handle_scanner
         if msg is None:
             try:
                 await asyncio.wait_for(wait_for_message(IN_QUEUE, timeout_secs=5.0), 6.0)

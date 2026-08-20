@@ -69,6 +69,38 @@ scanner:
                                  # v0.12.17 behaviour.
   # -- emission caps (anti-overtrading, layer 1) ------------------------------
   max_per_scan: 2                # top-N by composite score per scan cycle
-  max_per_day: 6                 # global daily escalation cap
+  max_per_day: 15                # global daily ESCALATION cap (v0.13.8: was 6
+                                 # — operator decision 2026-08-20 after the
+                                 # 2026-08-19 incident where all 6 were spent
+                                 # by 09:54 ET. This caps analyst calls, not
+                                 # trades: max_concurrent_positions, the
+                                 # breaker and risk.max_trades_per_day are
+                                 # unchanged.)
+  max_per_hour: 6                # v0.13.8 pacing: EMITTED rows in any rolling
+                                 # 60 min. A wild open can no longer spend the
+                                 # whole day's budget in three scans (08-19:
+                                 # 6/6 gone in 2m47s; MSTR's afternoon move
+                                 # had no budget left to compete for). 0 = off.
+  min_emit_score: 0.60           # v0.13.8 quality floor: below this a survivor
+                                 # journals FILTERED/SCORE_FLOOR and consumes
+                                 # NO budget. 08-19: slots 4-6 went to scores
+                                 # 0.51-0.55 (AVGO/AXTI/RKLB) in the first
+                                 # three scans. Tune from scanner_candidates.
+  precheck_short_availability: true
+                                 # v0.13.8: a DOWN-mover already through the
+                                 # SSR trigger, or not easy-to-borrow at the
+                                 # broker (same client+bar as C3's gate check,
+                                 # 30-min TTL), journals FILTERED and consumes
+                                 # no budget — its veto was knowable before
+                                 # spending the slot (08-19: WYFI no-borrow +
+                                 # AXTI SSR burned 2 of 6). Cost: filtered
+                                 # names also lose the rare long-capitulation
+                                 # path; rows are journaled so A9 can judge.
+  ssr_trigger_pct: -0.10         # Reg SHO rule 201 (mirrors gate shorting cfg)
+  assets_ttl_secs: 1800          # borrow-flag cache TTL (mirrors C3)
+  observe_after_cap: true        # v0.13.8: cap reached -> keep scanning and
+                                 # JOURNALING (emit nothing). false restores
+                                 # the pre-v0.13.8 early return that left the
+                                 # scanner blind 09:54-15:15 on 2026-08-19.
   max_concurrent_positions: 2    # open origin=scanner positions (A3 enforces too)
   breaker_max_losses_per_day: 3  # 3 losing scanner trades -> scanner off until tomorrow

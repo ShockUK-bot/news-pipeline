@@ -18,6 +18,15 @@ model:
                                # then REJECT to journal (never crash, never drop)
 
 router:
+  scanner_analyst_priority: 10   # v0.13.8: queue.priority for scanner-origin
+                                 # signals on signal.analyst (ascending; A12
+                                 # position-touching = 0, news default = 100).
+                                 # Scanner signals are perishable (~5-min gate
+                                 # staleness budget) and bounded to
+                                 # scanner.max_per_day model calls, so they
+                                 # claim ahead of the news backlog without
+                                 # being able to starve it. 2026-08-19: all 6
+                                 # waited 24-26 min behind news and died.
   # priority_score = tier_weight + urgency_weight + round(novelty*4) + corroboration_bonus
   tier_weight:        # by source_tier
     1: 6
