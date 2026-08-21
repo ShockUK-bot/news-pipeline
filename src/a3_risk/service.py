@@ -365,6 +365,25 @@ class A3Service:
             return
 
         controls = await read_controls()
+        # v0.13.3: the account's own shorting permission (published by C4
+        # reconciliation). Vetoing HERE — before the model call, before the
+        # intent — is what turns a mis-configured account into one honest
+        # journal row per signal instead of a broker 403 retry loop.
+        if side == "SHORT" and controls.get("shorting_enabled") == "0":
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="RISK", agent="A3", action="VETO",
+                veto_reason="ACCOUNT_NO_SHORTING",
+                payload={"origin": origin,
+                         "detail": "broker account reports shorting disabled "
+                                   "(margin/cash config) — fix at Alpaca, "
+                                   "then C4 reconcile clears this flag"},
+                reason="account cannot short (broker-side setting)",
+                regime_id=body.get("regime_id"))
+            log.warning("risk VETO account cannot short",
+                        extra=kv(signal_id=signal_id, ticker=ticker))
+            return
+
         heat, deployed, short_heat, short_notional = await portfolio_state()
 
         # v0.12.1: scanner-lane concurrency cap — checked before anything

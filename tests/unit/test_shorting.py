@@ -447,3 +447,25 @@ async def test_fake_broker_account_reports_margin_fields():
     a = await b.get_account()
     assert a.regt_buying_power == 200_000.0
     assert a.shorting_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# 6. v0.13.3 — broker refusals are decisions, not transport errors
+# ---------------------------------------------------------------------------
+
+from common.broker import order_reject_message
+
+
+def test_403_and_422_on_order_post_are_rejects():
+    # the 2026-08-17..21 incident: 403 "account not allowed to short" must
+    # surface as BrokerReject -> BROKER_REJECT journal row, never a retry loop
+    assert order_reject_message("POST", 403, {"message": "account is not allowed to short"}) \
+        == "account is not allowed to short"
+    assert order_reject_message("POST", 422, {"message": "bad qty"}) == "bad qty"
+    assert order_reject_message("POST", 403, {}) == "HTTP 403 on order"
+
+
+def test_transport_errors_still_raise_and_retry():
+    assert order_reject_message("POST", 500, {"message": "server error"}) is None
+    assert order_reject_message("POST", 429, {}) is None
+    assert order_reject_message("GET", 403, {"message": "forbidden"}) is None

@@ -157,6 +157,14 @@ async def reconcile(broker: Broker, shorting_cfg: dict | None = None,
     # v0.13: margin buying power (clips SELL_SHORT entries in A3 + preflight)
     await set_flag("regt_buying_power", f"{account.regt_buying_power:.2f}",
                    "C4", "reconciliation refresh")
+    # v0.13.3: account-level shorting capability, published so A3 and C4
+    # can veto ACCOUNT_NO_SHORTING honestly instead of collecting 403s
+    # from the broker (the 2026-08-17..21 silent-retry incident).
+    await set_flag("shorting_enabled",
+                   "1" if account.shorting_enabled else "0",
+                   "C4", "reconciliation refresh")
+    await set_flag("account_multiplier", f"{account.multiplier:g}", "C4",
+                   "reconciliation refresh")
     await set_flag("last_reconcile_ts", utcnow().isoformat(), "C4")
 
     # v0.13: borrow re-check — an open short whose name has left the

@@ -91,6 +91,33 @@ class Broker(Protocol):
 # Alpaca (paper)
 # ---------------------------------------------------------------------------
 
+def _safe_json(resp) -> dict:
+    try:
+        j = resp.json()
+        return j if isinstance(j, dict) else {}
+    except Exception:                                        # noqa: BLE001
+        return {}
+
+
+def order_reject_message(method: str, status_code: int,
+                         payload: dict) -> str | None:
+    """v0.13.3: which HTTP responses are BROKER DECISIONS (-> BrokerReject,
+    journaled as BROKER_REJECT, message consumed) rather than transport
+    errors (-> raise, retry, DLQ)?
+
+    422 = malformed/unacceptable order (the original case). 403 = the
+    broker REFUSING the order: account not allowed to short, insufficient
+    buying power, blocked account. Before this, a 403 on a short entry
+    crashed the handler and retried a deterministic refusal 5x into the
+    DLQ, leaving the intent PENDING with no journal row — four days of
+    SELL_SHORT intents (2026-08-17..21) died invisibly this way.
+
+    Pure; unit-tested directly."""
+    if method != "POST" or status_code not in (403, 422):
+        return None
+    return str(payload.get("message") or f"HTTP {status_code} on order")
+
+
 class AlpacaBroker:
     BASE = "https://paper-api.alpaca.markets"     # paper hard-coded (Phase 4)
 
@@ -104,8 +131,10 @@ class AlpacaBroker:
     async def _req(self, method: str, path: str, json: dict | None = None) -> dict | list:
         async with httpx.AsyncClient(timeout=15.0, headers=self._headers) as c:
             resp = await c.request(method, f"{self.BASE}{path}", json=json)
-            if resp.status_code == 422 and method == "POST":
-                raise BrokerReject(resp.json().get("message", "rejected"))
+            reject = order_reject_message(method, resp.status_code,
+                                          _safe_json(resp))
+            if reject is not None:
+                raise BrokerReject(reject)
             resp.raise_for_status()
             return resp.json() if resp.content else {}
 

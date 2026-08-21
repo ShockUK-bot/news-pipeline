@@ -89,6 +89,11 @@ class C4Service:
         if deployed + notional > effective:
             return "CAPITAL_PREFLIGHT"
         if body.get("side") in ("SELL_SHORT",):
+            # v0.13.3: the broker's account-level permission, refreshed by
+            # reconciliation — a short against a no-shorting account must be
+            # an honest veto here, never a 403 retry loop at submit.
+            if (await get_flag("shorting_enabled", "0") or "0") != "1":
+                return "ACCOUNT_NO_SHORTING"
             # v0.13: a short spends margin buying power, not settled cash
             bp = float(await get_flag("regt_buying_power", "0") or 0)
             if notional > bp:
