@@ -95,7 +95,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 
 <div id="live" class="grid">
   <div class="panel"><h2>Open positions</h2>
-    <table><thead><tr><th>Ticker</th><th>Origin</th><th>Qty</th><th>Entry</th><th>Last</th>
+    <table><thead><tr><th>Ticker</th><th>Side</th><th>Origin</th><th>Qty</th><th>Entry</th><th>Last</th>
       <th>Stop</th><th>Target</th><th>Cost</th><th>Unrl P&amp;L</th><th>P/L %</th>
       <th>Thesis</th></tr></thead>
     <tbody id="positions"></tbody></table></div>
@@ -190,6 +190,12 @@ const originChip=o=>o==='scanner'
   :o==='news'
   ?'<span class="chip" style="background:var(--chip-triage)">NEWS</span>'
   :`<span class="chip" style="background:var(--muted,#8a8f98)">${String(o||'?').toUpperCase().slice(0,8)}</span>`;
+// side (v0.13.10): LONG is the quiet default; SHORT is loud — it is the
+// row where "price down = green" and the stop sits ABOVE the entry, so it
+// must never be mistaken for a long. NULL side (pre-v0.13.0 rows) = LONG.
+const sideChip=s=>s==='SHORT'
+  ?'<span class="chip" style="background:var(--loss)">SHORT</span>'
+  :'<span class="chip" style="background:var(--gain)">LONG</span>';
 let lastDecisionId=0, histTimer=null;
 
 function setConn(mode){const c=$('conn');
@@ -215,17 +221,20 @@ function render(s){
   $('killBtn').className=killed?'armed':'';
   $('breaker').style.display=ctl.drawdown_breaker==='1'?'inline-block':'none';
   $('positions').innerHTML=(s.positions||[]).map(p=>{
-    const u=(p.current_price-p.entry_price)*p.qty;
+    // v0.13.10: dollar P&L is side-aware — a short profits when price FALLS
+    // (pct_pnl already comes side-correct from the dash_positions view).
+    const dir=p.side==='SHORT'?-1:1;
+    const u=dir*(p.current_price-p.entry_price)*p.qty;
     const pct=p.pct_pnl!=null?Number(p.pct_pnl):(p.entry_price?u/(p.entry_price*p.qty)*100:0);
     const cost=p.total_cost!=null?Number(p.total_cost):p.entry_price*p.qty;
-    return `<tr><td>${p.ticker}</td><td>${originChip(p.origin)}</td><td>${p.qty}</td>
+    return `<tr><td>${p.ticker}</td><td>${sideChip(p.side)}</td><td>${originChip(p.origin)}</td><td>${p.qty}</td>
       <td>${px(p.entry_price)}</td><td>${px(p.current_price)}</td>
       <td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
       <td>${money(cost)}</td>
       <td class="${u>=0?'gain':'loss'}">${money(u)}</td>
       <td class="${pct>=0?'gain':'loss'}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>
       <td class="detail">${(p.thesis||'').slice(0,80)}</td></tr>`;}).join('')
-    ||'<tr><td colspan="11" class="detail">no open positions</td></tr>';
+    ||'<tr><td colspan="12" class="detail">no open positions</td></tr>';
   const maxId=(s.decisions||[]).reduce((m,d)=>Math.max(m,d.id),0);
   $('tape').innerHTML=(s.decisions||[]).map(d=>{
     const col=getComputedStyle(document.documentElement).getPropertyValue(CHIP[d.stage]||'--faint');
