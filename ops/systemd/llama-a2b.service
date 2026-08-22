@@ -1,0 +1,77 @@
+[Unit]
+# Shadow Analyst slot — Qwen3.8-27B on :8082. MANUAL START ONLY.
+# Exists so the new analyst model can be benchmarked against the live
+# Qwen3.6-27B on :8081 without touching a single line of pipeline config.
+# Nothing in the pipeline calls :8082. Stop it when the bench is done.
+Description=llama-server Shadow Analyst slot (bench only) - Qwen3.8-27B on :8082
+After=network-online.target
+
+[Service]
+Type=simple
+User=trader
+# NOTE ON FLAGS (differences from llama-a2.service, all deliberate):
+#
+#   --jinja
+#       Required. Qwen3.8's reasoning-effort control lives in the model's OWN
+#       chat template. Without --jinja llama-server substitutes a generic
+#       template and --reasoning-effort silently does nothing.
+#
+#   --reasoning-effort low
+#       Qwen3.8 defaults to "xhigh" — maximum reasoning on every request,
+#       including trivial ones. That is a 40s+ time-to-first-token on an
+#       agent workload. ONLY low | medium | xhigh are valid for this model's
+#       template; llama.cpp also accepts minimal/high/max but this template
+#       throws on them and the server then fails EVERY request while still
+#       reporting healthy. Do not change this value casually.
+#
+#   NO --grammar-file
+#       Deliberately dropped. A server-wide JSON grammar is what prevented
+#       Qwen3.5/3.6 from ever emitting a closing </think> tag (v0.5.8), and
+#       v0.11.9 already flagged it as redundant with the per-request strict
+#       json_schema the pipeline sends. The bench sends strict schemas, so
+#       this slot proves whether we still need the server-wide grammar.
+#
+#   NO --chat-template-kwargs enable_thinking
+#       Qwen3.8 controls thinking via reasoning_effort, not the enable_thinking
+#       kwarg. Passing an unknown kwarg risks a template error. Left out.
+#
+#   --spec-type draft-mtp
+#       MTP speculative decoding using the model's built-in draft head. No
+#       second model in memory. Measured on this Spark 2026-08-21: raw decode
+#       11.3 -> 21.3 tok/s. Under a strict json_schema grammar the gain is
+#       smaller (~16 tok/s) because the grammar rejects draft tokens.
+#
+#   THINKING IS NOT SUPPRESSED HERE — it is suppressed PER REQUEST.
+#       Measured on this Spark: --reasoning-budget 0 is IGNORED by this model
+#       (identical to the 122B in v0.12.4); --reasoning-effort low reduces but
+#       does not stop it (792 chars of reasoning, 435 tokens, 25.8s per
+#       thesis). Only chat_template_kwargs {"enable_thinking": false} works:
+#       0 chars reasoning, 78 tokens, 4.9s. That kwarg is what
+#       LlamaCppBackend's disable_thinking flag sends (v0.12.4), so the
+#       cutover is `disable_thinking: true` in config, NOT a server flag.
+#       --reasoning-effort low stays as defence-in-depth for any caller that
+#       forgets the kwarg.
+#
+#   build-2026-08 binary
+#       This slot runs the NEW llama.cpp build, deliberately kept in its own
+#       directory so the binary serving live trades in /opt/llama.cpp/build/
+#       is never overwritten. Rollback for llama.cpp is a path change.
+#
+#   -c 32768 (up from 16384)
+#       Qwen3.8 is 3:1 hybrid attention — only 16 of 64 layers keep a KV
+#       cache — so 32K costs roughly 2GB instead of the usual ~8GB. Cheap,
+#       and short contexts are the reported cause of runaway thinking.
+ExecStart=/opt/llama.cpp/build-2026-08/bin/llama-server \
+  -m /opt/models/qwen3.8-27b-q5_k_m.gguf \
+  --host 127.0.0.1 --port 8082 \
+  -c 32768 \
+  --jinja \
+  --reasoning-effort low \
+  --spec-type draft-mtp \
+  -ngl 999 --no-mmap
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
