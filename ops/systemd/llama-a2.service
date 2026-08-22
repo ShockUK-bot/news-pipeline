@@ -4,11 +4,11 @@ After=network-online.target
 [Service]
 Type=simple
 User=trader
-ExecStart=/opt/llama.cpp/build/bin/llama-server \
-  -m /opt/models/qwen3.6-27b-q5_k_m.gguf \
-  --host 127.0.0.1 --port 8081 \
-  -c 16384 \
-  -ngl 999 --no-mmap --reasoning-budget 0 --chat-template-kwargs '{"enable_thinking":false}' --grammar-file /opt/llama.cpp/grammars/json.gbnf
+ExecStart=/opt/llama.cpp/build-2026-08/bin/llama-server \
+  -m /opt/models/qwen3.8-27b-q5_k_m.gguf \
+  --host 127.0.0.1 --port 8081 --jinja --reasoning-effort low --spec-type draft-mtp \
+  -c 32768 \
+  -ngl 999 --no-mmap  
 Restart=always
 RestartSec=5
 StandardOutput=journal
