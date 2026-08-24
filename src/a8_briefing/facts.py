@@ -93,7 +93,9 @@ async def positions_section(blackout_warn: int) -> list[dict]:
         policy = p["exit_policy"] or {}
         out.append({
             "position_id": p["position_id"], "ticker": p["ticker"],
-            "horizon": p["horizon"], "qty_open": p["qty_open"],
+            "horizon": {"SHORT": "SHORT_TERM",
+                        "LONG": "LONG_TERM"}.get(p["horizon"], p["horizon"]),
+            "qty_open": p["qty_open"],
             "avg_entry": float(p["avg_entry"]), "last_price": last,
             "side": p.get("side") or "LONG",
             "r_progress": r_progress(float(p["avg_entry"]),

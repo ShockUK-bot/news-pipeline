@@ -59,15 +59,21 @@ async def build_facts(now: datetime | None = None) -> dict:
            WHERE received_ts >= %s AND received_ts < %s""", start, end))[0][0])
 
     # --- trades --------------------------------------------------------------
-    opened = [{"position_id": pid, "ticker": t, "horizon": h, "qty": int(q),
+    # v0.14.3: 'horizon' is a TIMEFRAME (SHORT_TERM/LONG_TERM), never bare
+    # SHORT/LONG — the 2026-08-24 EOD email called a LONG a "short position"
+    # because the narrative model read {"horizon": "SHORT"} with no side.
+    _TF = {"SHORT": "SHORT_TERM", "LONG": "LONG_TERM"}
+    opened = [{"position_id": pid, "ticker": t, "horizon": _TF.get(h, h),
+               "side": side or "LONG", "qty": int(q),
                "avg_entry": _f(e), "initial_stop": _f(st),
                "opened_ts": ts.isoformat(), "headline": hl}
-              for pid, t, h, q, e, st, ts, hl in await _rows(
+              for pid, t, h, q, e, st, ts, hl, side in await _rows(
             """SELECT p.position_id, p.ticker, p.horizon, p.qty_initial,
                       p.avg_entry, p.initial_stop, p.opened_ts,
                       (SELECT headline FROM news.news_items n
                        WHERE n.item_id = p.item_id
-                       ORDER BY revision DESC LIMIT 1)
+                       ORDER BY revision DESC LIMIT 1),
+                      p.side
                FROM journal.positions p
                WHERE p.opened_ts >= %s AND p.opened_ts < %s
                ORDER BY p.opened_ts""", start, end)]
@@ -105,7 +111,8 @@ async def build_facts(now: datetime | None = None) -> dict:
         unreal_r = (round(sign * (last - entry) / r_unit, 2)
                     if (last and r_unit) else None)
         open_positions.append({
-            "position_id": pid, "ticker": t, "horizon": h, "qty_open": int(q),
+            "position_id": pid, "ticker": t, "horizon": _TF.get(h, h),
+            "qty_open": int(q),
             "side": side or "LONG",
             "avg_entry": entry, "last_price": last,
             "unrealized_pnl": unreal, "unrealized_r": unreal_r,

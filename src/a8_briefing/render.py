@@ -75,7 +75,8 @@ def render(facts: dict, narrative) -> str:
         L.append("  None.")
     for p in positions:
         rp = p.get("r_progress")
-        line = (f"  {p['ticker']:<6} [{p['horizon']}] "
+        line = (f"  {p['ticker']:<6} "
+                f"[{p.get('side', 'LONG')} {p['horizon']}] "
                 f"{p['qty_open']} sh @ {p['avg_entry']}"
                 f" | R {rp if rp is not None else '?'}"
                 f" | stop {p.get('current_stop')}")

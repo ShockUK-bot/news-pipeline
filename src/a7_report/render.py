@@ -63,7 +63,8 @@ def render(facts: dict, narrative=None) -> str:
     if not t["opened"] and not t["exits"]:
         L.append("  No positions opened or exited today.")
     for p in t["opened"]:
-        L.append(f"  OPENED {p['ticker']} {p['qty']} @ {_money(p['avg_entry'])} "
+        L.append(f"  OPENED {p.get('side', 'LONG')} {p['ticker']} {p['qty']} "
+                 f"@ {_money(p['avg_entry'])} "
                  f"({p['horizon']}, stop {_money(p['initial_stop'])}, "
                  f"{_t(p['opened_ts'])})")
         if p.get("headline"):
@@ -87,7 +88,8 @@ def render(facts: dict, narrative=None) -> str:
     for p in facts["open_positions"]:
         ur = (f"{p['unrealized_r']:+.2f}R" if p["unrealized_r"] is not None
               else "n/a")
-        L.append(f"  {p['ticker']} {p['qty_open']} @ {_money(p['avg_entry'])} "
+        L.append(f"  {p.get('side', 'LONG')} {p['ticker']} {p['qty_open']} "
+                 f"@ {_money(p['avg_entry'])} "
                  f"last {_money(p['last_price'])} ({ur}, "
                  f"{_money(p['unrealized_pnl'])}) stop "
                  f"{_money(p['current_stop'])} [{p['stop_basis'] or 'initial'}] "
