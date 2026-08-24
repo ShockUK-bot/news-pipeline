@@ -3,9 +3,9 @@ report:
   send_on_nonsession: false    # holidays: journal SKIPPED_NO_SESSION, no email
 
 narrative:
-  max_tokens: 900
+  max_tokens: 2000
   temperature: 0.0
-  timeout_secs: 300            # heavy slot decodes slowly; the report is batch
+  timeout_secs: 600            # heavy slot decodes slowly; the report is batch
   retries_on_invalid: 1
 
 # Narrative model resolution order: heavy -> analyst fallback -> none.

@@ -20,7 +20,7 @@ eod:
   endpoint: "http://127.0.0.1:8081"
   model_id: "qwen3.6-27b-q5_k_m"
   temperature: 0.0
-  max_tokens: 900
+  max_tokens: 1800
   timeout_secs: 180
   retries_on_invalid: 1
   wake:
@@ -32,7 +32,7 @@ eod:
 
 # --- nightly deep review (20:00 ET, off-hours) -----------------------------
 narrative:                     # model-call parameters (SlotManager contract)
-  max_tokens: 700              # one call PER position
+  max_tokens: 1200             # one call PER position
   temperature: 0.0
   timeout_secs: 300
   retries_on_invalid: 1

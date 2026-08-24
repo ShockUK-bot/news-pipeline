@@ -6,7 +6,7 @@ briefing:
   blackout_warn_sessions: 2    # flag held names reporting within N sessions
 
 narrative:
-  max_tokens: 900
+  max_tokens: 2000
   temperature: 0.0
   timeout_secs: 240
   retries_on_invalid: 1

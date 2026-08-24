@@ -25,9 +25,9 @@ sheet:
                                # 07:10 ET; ~140 later signals dropped).
 
 narrative:                     # model-call parameters (SlotManager contract)
-  max_tokens: 1400
+  max_tokens: 4000
   temperature: 0.0
-  timeout_secs: 420
+  timeout_secs: 720
   retries_on_invalid: 1
 
 heavy:
