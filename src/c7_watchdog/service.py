@@ -1,4 +1,4 @@
-"""C7 Watchdog (v0.12.7) — the process that notices dead processes.
+"""C7 Watchdog (v0.14.4) — the process that notices dead processes.
 
 Lesson of 2026-07-28: the Spark rebooted at 03:04 and four never-enabled
 services (c1-ingestion, c2-dedup, a1-triage, c4-exec) silently stayed down
@@ -15,9 +15,24 @@ things, entirely from OUTSIDE the services it watches:
   2. Timer-driven jobs in config `timers:` — the .timer must be active +
      enabled, and the .service's LAST RUN must not have failed
      (Result=exit-code is how the NAV-snapshot bug would have surfaced).
-  3. Heartbeats in config `heartbeats:` — journal.health rows that are
-     expected to refresh periodically must be younger than max_age_min
-     (rth_only entries are only checked during market hours).
+  3. Heartbeats — journal.health rows expected to refresh periodically must
+     be younger than max_age_min (rth_only entries are checked during market
+     hours only). v0.14.4: the limits now come from common.health, which
+     reads BOTH the standalone `heartbeats:` block AND every `services:`
+     entry that declares one. This is the check that catches a process which
+     is up but wedged.
+  4. Orphans — a health row no config claims and that nothing has written for
+     `orphans.warn_after_days` becomes a WARNING, and is deleted outright
+     after `orphans.delete_after_days`. A removed component's row otherwise
+     reads OK forever (`ingestion:testsource` did, for 47 days).
+
+Lesson of 2026-08-27, which produced v0.14.4: a1-triage hung inside its own
+startup after a reboot and stayed `active (running)` for 85 hours. Check 1
+asked systemd, systemd cannot see a hung process, and so this watchdog
+reported "all clear" through a lost trading session. Check 3 would have
+caught it in five minutes and already existed — it was simply not pointed at
+triage. Asking systemd whether a service is alive is asking the wrong
+witness; only the service's own heartbeat can answer that.
 
 Findings become ONE plain-text ALERT email via journal.outbox (C5 mails
 it within 5 minutes — the watchdog holds no SMTP credentials, rule 22).
@@ -45,6 +60,7 @@ from datetime import datetime, timezone
 from common.clock import is_market_hours, utcnow
 from common.config import config_path, load_yaml
 from common.db import get_pool, close_pool
+from common.health import freshness_limits, orphan_rows, stale_components
 from common.log import get_logger, kv
 
 log = get_logger("c7.watchdog")
@@ -164,18 +180,35 @@ def evaluate(cfg: dict, units: dict, ages_min: dict,
                 f"last run failed (Result={sinfo.get('Result')}) — see: "
                 "journalctl -u " + name + " -n 40")
 
-    for component, opts in sorted((cfg.get("heartbeats") or {}).items()):
-        opts = opts or {}
-        if opts.get("rth_only") and not in_session:
-            continue
-        age = ages_min.get(component)
-        if age is None:
-            continue                     # never wrote — unit checks cover it
-        max_age = float(opts.get("max_age_min", 60))
-        if age > max_age:
-            add("CRITICAL", "HEARTBEAT_STALE", component,
-                f"journal.health not updated for {age:.0f} min "
-                f"(limit {max_age:.0f}) — the process may be up but wedged")
+    # v0.14.4: freshness for EVERY component that declares a limit, from
+    # `services:` and `heartbeats:` alike. Worst first, so the alert subject
+    # names the longest outage.
+    for row in stale_components(freshness_limits(cfg), ages_min, in_session):
+        age, limit = row["age_min"], row["max_age_min"]
+        span = (f"{age:.0f} min" if age < 180
+                else f"{age / 60:.1f} hours")
+        detail = (f"journal.health not updated for {span} "
+                  f"(limit {limit:.0f} min) — the process may be up but "
+                  "wedged")
+        if row.get("desc"):
+            detail += f" — {row['desc']}"
+        if row.get("unit"):
+            detail += f" — fix: sudo systemctl restart {row['unit']}"
+        add("CRITICAL", "HEARTBEAT_STALE", row["component"], detail)
+
+    # v0.14.4: rows nothing owns any more. See common.health.orphan_rows
+    # for why dynamic 'ingestion:*' rows are deleted but never warned about.
+    orphans = cfg.get("orphans") or {}
+    warn_days = float(orphans.get("warn_after_days", 7))
+    delete_days = float(orphans.get("delete_after_days", 30))
+    to_warn, _ = orphan_rows(cfg, ages_min, warn_days, delete_days)
+    for component in to_warn:
+        add("WARNING", "ORPHAN_HEALTH_ROW", component,
+            f"health row last written {ages_min[component] / 1440:.1f} days "
+            "ago and no config entry claims it — a renamed or removed "
+            "component whose row will keep reading OK forever; add it to "
+            "config/watchdog.yaml or let it be deleted automatically after "
+            f"{delete_days:.0f} days")
 
     return findings
 
@@ -289,6 +322,26 @@ async def _queue_alert(subject: str, body: str, findings: list[dict]) -> None:
             (subject, body, json.dumps({"findings": findings})))
 
 
+async def _delete_orphans(cfg: dict, ages_min: dict[str, float]) -> list[str]:
+    """Remove health rows no config claims and nothing has written in
+    `orphans.delete_after_days`. Safe by construction: a live component
+    recreates its row on the next write, and a row that has not been written
+    in a month has no live component behind it. Returns what was deleted."""
+    orphans = cfg.get("orphans") or {}
+    _, doomed = orphan_rows(cfg, ages_min,
+                            float(orphans.get("warn_after_days", 7)),
+                            float(orphans.get("delete_after_days", 30)))
+    if not doomed:
+        return []
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "DELETE FROM journal.health WHERE component = ANY(%s)", (doomed,))
+    log.info("orphan health rows deleted",
+             extra=kv(count=len(doomed), components=",".join(doomed)[:300]))
+    return doomed
+
+
 # ---------------------------------------------------------------------------
 # one pass
 # ---------------------------------------------------------------------------
@@ -300,6 +353,9 @@ async def run_pass(cfg: dict, now: datetime | None = None,
     in_session = is_market_hours(now)
     units = gather_units(cfg, runner)
     ages = await _heartbeat_ages(now)
+    # Prune first, so a row removed this pass does not also raise a warning.
+    for gone in await _delete_orphans(cfg, ages):
+        ages.pop(gone, None)
     findings = evaluate(cfg, units, ages, in_session)
 
     # Make the dashboard truthful: a DOWN service's stale health row

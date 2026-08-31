@@ -1,11 +1,25 @@
 # Dead-man thresholds (phase4-design-v1_0 D4). RTH values; off-hours alert-only.
 # Ladder: ALERT -> BLOCK_ENTRIES -> never auto-flatten.
+# critical_min (v0.14.4): past this age the dead-man's own health row goes
+# DOWN (red) instead of DEGRADED (yellow). It changes NOTHING about entries —
+# only block_entries_min blocks, and only ingestion and marketdata declare it,
+# exactly as before. It exists because on 2026-08-27 `triage` was stale for 85
+# hours and rendered identically to a five-minute blip.
+#
+# risk/dedup/guard added in v0.14.4. They are alert-only, so this adds
+# monitoring with zero new blocking behaviour — the same argument v0.11.7 made
+# when triage and analyst were added. A3 risk in particular had no periodic
+# heartbeat at all until v0.14.4 and logs nothing while idle, so a dead sizer
+# was indistinguishable from a quiet news day.
 components:
-  ingestion:   {alert_min: 3,  block_entries_min: 10}
-  marketdata:  {alert_min: 2,  block_entries_min: 2, exit_engine_suspend_min: 10}
-  triage:      {alert_min: 5}
-  analyst:     {alert_min: 5}
-  gate:        {alert_min: 5}
+  ingestion:   {alert_min: 3,  block_entries_min: 10, critical_min: 30}
+  marketdata:  {alert_min: 2,  block_entries_min: 2, exit_engine_suspend_min: 10, critical_min: 30}
+  triage:      {alert_min: 5,  critical_min: 60}
+  analyst:     {alert_min: 5,  critical_min: 60}
+  gate:        {alert_min: 5,  critical_min: 60}
+  risk:        {alert_min: 5,  critical_min: 60}
+  dedup:       {alert_min: 5,  critical_min: 60}
+  guard:       {alert_min: 5,  critical_min: 60}
 c4:
   reconcile_interval_min: 15
   exit_unprotected_max_secs: 45      # D3 cancel-and-replace reinstatement window

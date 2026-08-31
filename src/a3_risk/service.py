@@ -31,7 +31,7 @@ from common.journal import (active_config_version, register_config_version,
                             write_decision)
 from common.log import get_logger, kv
 from common.queue import ack, claim, enqueue, fail, wait_for_message
-from c1_ingestion.heartbeat import set_health
+from c1_ingestion.heartbeat import Heartbeat, set_health
 from a1_triage.backends import get_backend
 from router.facts import _schedule_cache
 
@@ -617,8 +617,13 @@ class A3Service:
 
 
 async def consume_loop(svc: A3Service, stop: asyncio.Event) -> None:
-    await set_health("risk", "OK", f"consuming {IN_QUEUE}")
+    # v0.14.4: periodic heartbeat. A3 is the least observable service in the
+    # pipeline — it logs nothing while idle and wrote 'risk' only at startup,
+    # so a dead sizer looked exactly like a quiet news day.
+    hb = Heartbeat("risk", f"consuming {IN_QUEUE}")
+    await hb.start()
     while not stop.is_set():
+        await hb.tick()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:

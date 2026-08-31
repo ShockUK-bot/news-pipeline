@@ -1,7 +1,13 @@
 """Deterministic plain-text rendering of the consolidated morning
 briefing. Pure function — no I/O, no model. Every section renders from
 whatever facts exist; missing sections say so instead of vanishing, so the
-operator can tell "quiet" from "broken"."""
+operator can tell "quiet" from "broken".
+
+v0.14.4 applies that same principle to the pipeline itself. An outage banner
+now leads the email and the subject line, because on 2026-08-27 a1-triage
+stopped and the only trace was one yellow line in the SYSTEM block at the
+very bottom, below candidates, positions and earnings. It was mailed four
+mornings running and read as background. A dead pipeline is not a footnote."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +16,16 @@ from zoneinfo import ZoneInfo
 CT = ZoneInfo("America/Chicago")
 RULE = "=" * 62
 rule = "-" * 62
+
+
+def _span(minutes: float) -> str:
+    """Human units. Nobody reacts to '5102.3min'; everybody reacts to
+    '3.5 days'."""
+    if minutes < 180:
+        return f"{minutes:.0f} min"
+    if minutes < 2880:
+        return f"{minutes / 60:.1f} hours"
+    return f"{minutes / 1440:.1f} days"
 
 
 def _t(iso: str | None) -> str:
@@ -31,13 +47,38 @@ def subject_line(facts: dict) -> str:
     if black:
         parts.append(f"{len(black)} earnings-window position"
                      f"{'s' if len(black) != 1 else ''}")
-    return f"Morning briefing {d} — " + ", ".join(parts)
+    base = f"Morning briefing {d} — " + ", ".join(parts)
+    out = (facts.get("ops") or {}).get("outages") or []
+    if out:
+        w = out[0]
+        lead = f"[OUTAGE] {w['component']} stale {_span(w['age_min'])}"
+        if len(out) > 1:
+            lead += f" +{len(out) - 1} more"
+        return f"{lead} — {base}"
+    return base
 
 
 def render(facts: dict, narrative) -> str:
     L: list[str] = []
     L.append(f"MORNING BRIEFING — {facts['session_date']}")
     L.append(RULE)
+
+    # v0.14.4: outages lead. Above the narrative, above everything.
+    outages = (facts.get("ops") or {}).get("outages") or []
+    if outages:
+        L.append("*** PIPELINE OUTAGE — READ THIS FIRST ***")
+        for o in outages:
+            line = (f"  {o['component']}: no heartbeat for "
+                    f"{_span(o['age_min'])} "
+                    f"(limit {o['max_age_min']:.0f} min)")
+            if o.get("desc"):
+                line += f" — {o['desc']}"
+            L.append(line)
+            if o.get("unit"):
+                L.append(f"      fix: sudo systemctl restart {o['unit']}")
+        L.append("  A component that stops writing its heartbeat is not "
+                 "quiet. It is not running.")
+        L.append(RULE)
 
     if narrative is not None:
         L.append(narrative.summary)

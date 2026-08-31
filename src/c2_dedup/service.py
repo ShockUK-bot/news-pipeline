@@ -18,7 +18,7 @@ from common.contracts import (CONTRACT_TRIAGE, ClusterInfo, DedupedSignal, envel
 from common.db import close_pool, get_pool
 from common.log import get_logger, kv
 from common.queue import ack, claim, enqueue, fail, wait_for_message
-from c1_ingestion.heartbeat import set_health
+from c1_ingestion.heartbeat import Heartbeat, set_health
 
 from .cluster import Deduper
 from .embedder import get_embedder
@@ -104,8 +104,13 @@ async def handle_message(msg, deduper: Deduper) -> None:
 
 
 async def consume_loop(deduper: Deduper, stop: asyncio.Event) -> None:
-    await set_health("dedup", "OK", "consuming signal.dedup")
+    # v0.14.4: periodic heartbeat. C2 wrote 'dedup' only at startup, so its
+    # row read OK with a timestamp from the last reboot and nothing could
+    # tell a working C2 from a wedged one.
+    hb = Heartbeat("dedup", "consuming signal.dedup")
+    await hb.start()
     while not stop.is_set():
+        await hb.tick()
         msg = await claim(DEDUP_QUEUE, CONSUMER)
         if msg is None:
             # idle: block on NOTIFY with a poll fallback

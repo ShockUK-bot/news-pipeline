@@ -27,7 +27,7 @@ from common.db import close_pool, get_pool, jb
 from common.journal import register_config_version
 from common.log import get_logger, kv
 from common.queue import ack, claim, fail, wait_for_message
-from c1_ingestion.heartbeat import set_health
+from c1_ingestion.heartbeat import Heartbeat, set_health
 from a1_triage.backends import get_backend
 
 from .filing import FilingRejected, file_for_evaluation
@@ -276,8 +276,11 @@ class A13Service:
 
 
 async def consume_loop(svc: A13Service, stop: asyncio.Event) -> None:
-    await set_health("chat", "OK", f"consuming {IN_QUEUE}")
+    # v0.14.4: periodic heartbeat (see C2/A3 — same startup-only bug).
+    hb = Heartbeat("chat", f"consuming {IN_QUEUE}")
+    await hb.start()
     while not stop.is_set():
+        await hb.tick()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:
             try:

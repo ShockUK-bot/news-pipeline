@@ -9,18 +9,21 @@ so the briefing ALWAYS renders whatever the journal has this morning:
                 blackout_soon flags reports within <= blackout_warn sessions
   a6            latest nightly REVIEW (recommendations!) + latest EOD sheet
   earnings      today's market-wide reporter count + held names reporting
-  ops           queue depths, non-OK health components, news freshness
+  ops           queue depths, non-OK health components, OUTAGES (health
+                rows that have stopped refreshing), news freshness
 
 Latest-row lookups (not exact-date): on a Monday the newest A6 review is
 Friday's — still worth showing, with its run_date attached.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from common.clock import utcnow
+from common.clock import is_market_hours, utcnow
+from common.config import config_path, load_yaml
 from common.db import get_pool
+from common.health import freshness_limits, stale_components
 from common.log import get_logger
 
 log = get_logger("a8.facts")
@@ -169,16 +172,47 @@ async def ops_section() -> dict:
                                     'signal.thesis','signal.guard')
                GROUP BY queue_name""")
         queues = {r[0]: r[1] for r in await cur.fetchall()}
+        # v0.14.4: read EVERY row, not just the non-OK ones. The status
+        # column alone cannot see this class of failure — from 2026-08-27 to
+        # 2026-08-31 the `triage` row read OK the entire time while nothing
+        # had written it since a reboot, and this section reported "All
+        # health components OK" through four consecutive briefings.
         cur = await conn.execute(
-            """SELECT component, status, detail FROM journal.health
-               WHERE status <> 'OK' ORDER BY component""")
-        health = [{"component": r[0], "status": r[1],
-                   "detail": (r[2] or "")[:120]} for r in await cur.fetchall()]
+            """SELECT component, status, detail, updated_ts
+               FROM journal.health ORDER BY component""")
+        rows = await cur.fetchall()
         cur = await conn.execute("SELECT max(received_ts) FROM news.news_items")
         newest = (await cur.fetchone())[0]
-    freshness_h = (round((utcnow() - newest).total_seconds() / 3600, 1)
+
+    now = utcnow()
+    health = [{"component": r[0], "status": r[1],
+               "detail": (r[2] or "")[:120]} for r in rows if r[1] != "OK"]
+
+    ages = {}
+    for component, _status, _detail, ts in rows:
+        if ts is None:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        ages[component] = (now - ts).total_seconds() / 60.0
+
+    # Freshness expectations live in watchdog.yaml so C7's alert email and
+    # this briefing can never disagree about what "stale" means. Degrades to
+    # an empty list like every other section — a missing config must not cost
+    # the operator the whole briefing.
+    outages: list[dict] = []
+    try:
+        wcfg = load_yaml(config_path("watchdog.yaml"))
+        outages = [{**o, "age_min": round(o["age_min"], 1)}
+                   for o in stale_components(freshness_limits(wcfg), ages,
+                                             is_market_hours(now))]
+    except Exception as e:                                    # noqa: BLE001
+        log.warning("outage check unavailable — briefing continues",
+                    extra={"error": repr(e)[:200]})
+
+    freshness_h = (round((now - newest).total_seconds() / 3600, 1)
                    if newest else None)
-    return {"queues": queues, "health_not_ok": health,
+    return {"queues": queues, "health_not_ok": health, "outages": outages,
             "newest_item_age_hours": freshness_h}
 
 

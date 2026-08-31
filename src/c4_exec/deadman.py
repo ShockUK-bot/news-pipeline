@@ -11,6 +11,22 @@ Ownership rule: the monitor only CLEARS blocks it set itself (control key
 deadman_block='1' marks ownership) — an operator's manual block_entries is
 never unwound by code. Runs inside C4's monitor task; RTH-only for
 escalations, ALERT-only off-hours.
+
+v0.14.4, both changes forced by the 2026-08-27 incident:
+
+* The health row used to be written INSIDE the alert loop, once per stale
+  component, each write overwriting the last. Only the final component in
+  the list was ever visible, so a genuinely dead ingestion could hide behind
+  a stale gate. It is now one row naming every stale component, worst first.
+* `critical_min` (optional, per component) makes the row DOWN rather than
+  DEGRADED once an outage is long rather than momentary. triage was stale
+  for 85 hours and rendered exactly like a five-minute blip, so four
+  consecutive morning emails carried the same yellow line and nobody moved.
+  Duration is information; the ladder now carries it.
+
+Neither change adds blocking behaviour. Escalation to BLOCK_ENTRIES is still
+driven solely by `block_entries_min`, which only ingestion and marketdata
+declare, exactly as before.
 """
 from __future__ import annotations
 
@@ -23,6 +39,15 @@ from c1_ingestion.heartbeat import set_health
 from .flags import get_flag, set_flag
 
 log = get_logger("monitor.deadman")
+
+
+def _span(minutes: float) -> str:
+    """Human units. '5102.3min' is a number you skim past; '85.0h' is not."""
+    if minutes < 180:
+        return f"{minutes:.1f}min"
+    if minutes < 2880:
+        return f"{minutes / 60:.1f}h"
+    return f"{minutes / 1440:.1f} days"
 
 # Maps deadman.yaml component names -> journal.health component names. A1/A2/C3
 # write their heartbeats under 'triage'/'analyst'/'gate'. (Fixed 2026-07-20 in
@@ -52,6 +77,7 @@ async def check(cfg: dict, now: datetime, in_session: bool) -> dict:
     ages = await heartbeat_ages(now)
     actions = {"alerts": [], "block": False, "unblock": False,
                "exit_suspend": False, "exit_resume": False}
+    stale: list[dict] = []          # local: component, age, critical
     want_block = False
     want_exit_suspend = False
 
@@ -68,6 +94,10 @@ async def check(cfg: dict, now: datetime, in_session: bool) -> dict:
             continue
         if age > thresholds["alert_min"]:
             actions["alerts"].append((component, round(age, 1)))
+            crit_min = thresholds.get("critical_min")
+            stale.append({"component": component, "age": age,
+                          "critical": crit_min is not None
+                          and age > float(crit_min)})
         if in_session and "block_entries_min" in thresholds \
                 and age > thresholds["block_entries_min"]:
             want_block = True
@@ -102,10 +132,16 @@ async def check(cfg: dict, now: datetime, in_session: bool) -> dict:
                        "marketdata recovered")
         actions["exit_resume"] = True
 
-    for component, age in actions["alerts"]:
-        await set_health("deadman", "DEGRADED",
-                         f"stale: {component} {age}min")
-    if not actions["alerts"]:
+    if stale:
+        # Worst first, and one row rather than one write per component. NOTE:
+        # `actions` deliberately keeps its original keys — severity is local,
+        # so existing callers and tests see the same shape they always did.
+        stale.sort(key=lambda s: s["age"], reverse=True)
+        status = "DOWN" if any(s["critical"] for s in stale) else "DEGRADED"
+        listed = ", ".join(f"{s['component']} {_span(s['age'])}"
+                           for s in stale)
+        await set_health("deadman", status, f"{len(stale)} stale: {listed}")
+    else:
         await set_health("deadman", "OK", "all heartbeats fresh")
     return actions
 

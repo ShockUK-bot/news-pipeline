@@ -9,6 +9,17 @@ User=trader
 WorkingDirectory=/opt/pipeline
 Environment=PYTHONPATH=/opt/pipeline/src
 EnvironmentFile=/etc/pipeline/pipeline.env
+# v0.14.4 — the embedder must never reach the network to start.
+# 2026-08-27: this unit started five seconds into a reboot, before DNS was
+# answering, and sentence-transformers hung on a HEAD request to
+# huggingface.co. The process stayed `active (running)` and did nothing for
+# 85 hours. Note that After=network-online.target was ALREADY set in the
+# [Unit] section above and did not help: the target was reached while name
+# resolution still failed. The fix is to not need the network at all. The model is cached under
+# /home/trader/.cache/huggingface; with these set, a MISSING cache is a loud
+# startup failure instead of a silent hang, which is the trade we want.
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
 ExecStart=/opt/pipeline/.venv/bin/python -m a1_triage.service
 Restart=always
 RestartSec=5

@@ -1,53 +1,88 @@
-# C7 watchdog (v0.12.7). Fired by c7-watchdog.timer every 5 minutes.
+# C7 watchdog (v0.14.4). Fired by c7-watchdog.timer every 5 minutes.
 # Block style only (the built-in tiny-YAML fallback parses this file too).
 #
 # services:  long-running units. Must be systemd-active AND enabled.
 #            `health` names the journal.health component the watchdog
 #            overwrites to DOWN when the unit is dead (so the dashboard
 #            stops showing a stale OK). `desc` is prose for the alert email.
+#            `max_age_min` (v0.14.4) additionally requires that component's
+#            health row to keep REFRESHING — the check that catches a process
+#            which is up but wedged. Omit it only for units whose row is
+#            written on a schedule rather than continuously (c10-scanner
+#            writes only inside its scan window); the omission is a decision,
+#            not an oversight, and every such unit says why below.
 # timers:    timer-driven jobs. The .timer must be active+enabled and the
 #            .service's last run must not have failed.
-# heartbeats: journal.health rows expected to refresh periodically.
-#            rth_only entries are only checked during market hours.
+# heartbeats: journal.health rows that belong to no single unit (deadman runs
+#            inside c4-exec; marketdata is written by whichever source holds
+#            the connection). rth_only entries are checked during market
+#            hours only.
+# orphans:   rows nothing writes to any more, e.g. after a feed is renamed or
+#            removed. They keep reading OK forever, which is worse than
+#            reading nothing.
+#
+# WHY max_age_min EXISTS (2026-08-27): a1-triage hung inside startup after a
+# reboot and stayed `active (running)` for 85 hours. systemd cannot see a hung
+# process, and this watchdog was asking systemd. The `heartbeats:` mechanism
+# below already existed and would have caught it in five minutes — it simply
+# was not pointed at triage. It is now pointed at every continuously running
+# service in the pipeline.
 
 realert_hours: 6
 
 services:
   c1-ingestion:
     health: ingestion
+    max_age_min: 10
     desc: news feed (Alpaca WS + EDGAR + RSS) — pipeline is blind without it
   c2-dedup:
     health: dedup
+    max_age_min: 10
     desc: dedup/clustering — nothing reaches triage without it
   a1-triage:
     health: triage
+    max_age_min: 10
     desc: triage router — news AND scanner signals die unheard without it
   a2-analyst:
+    health: analyst
+    max_age_min: 10
     desc: analyst service — no theses can be written
   c3-gate:
     health: gate
+    max_age_min: 10
     desc: deterministic gate
   a3-risk:
     health: risk
-    desc: sizing service
+    max_age_min: 10
+    desc: sizing service — a dead sizer looks exactly like a quiet news day
   c4-exec:
     health: exec
+    max_age_min: 10
     desc: EXECUTION ENGINE — no entries and no managed exits while down
+  a12-guard:
+    health: guard
+    max_age_min: 10
+    desc: position guard
+  a13-chat:
+    health: chat
+    max_age_min: 10
+    desc: operator chat agent
   c8-regime:
     health: regime
+    max_age_min: 75          # snapshots every 30 min RTH, hourly off-hours
     desc: regime context builder
   c10-scanner:
     health: scanner
+    # No max_age_min ON PURPOSE: C10 writes 'scanner' only while its scan
+    # window is open (09:50–15:15 ET) and is silent the other 19 hours. Its
+    # unit check covers it; a freshness limit here would alarm every evening.
     desc: momentum scanner
-  a12-guard:
-    health: guard
-    desc: position guard
   c6-dashboard:
-    desc: operator dashboard
+    desc: operator dashboard          # no health row of its own
   llama-a1:
-    desc: 8B triage model slot
+    desc: 8B triage model slot        # no health row of its own
   llama-a2:
-    desc: analyst model slot
+    desc: analyst model slot          # no health row of its own
 
 timers:
   - c5-mailer
@@ -55,7 +90,10 @@ timers:
   - pipeline-nav-snapshot
   - queue-prune
   - earnings-calendar
+  - macro-fetch
+  - thesis-entry
   - a4-premarket
+  - a4-late
   - a5-thematic
   - a6-eod
   - a6-nightly
@@ -63,16 +101,37 @@ timers:
   - a8-briefing
 
 heartbeats:
-  exec:
-    max_age_min: 10
   deadman:
     max_age_min: 10
+    unit: c4-exec
+    desc: dead-man monitor — runs inside c4-exec and cannot watch itself
   marketdata:
     max_age_min: 15
     rth_only: true
   mailer:
     max_age_min: 30
+    unit: c5-mailer
   backup:
     max_age_min: 1560
   earnings:
     max_age_min: 1560
+  macro:
+    max_age_min: 1560
+  queue_prune:
+    max_age_min: 1560        # queue-prune.timer, 03:10 daily
+    unit: queue-prune
+  broker_api:
+    max_age_min: 90          # written by C4 reconcile (every 15 min).
+                             # Deliberately loose until we have confirmed the
+                             # off-hours cadence — a false alarm every night
+                             # is how an alert stops being read.
+    unit: c4-exec
+
+orphans:
+  warn_after_days: 7      # WARNING: a row no config claims, going stale
+  delete_after_days: 30   # removed outright; a live component recreates it
+
+# Components that must never be treated as orphans even though no service
+# entry claims them. 'watchdog' is this job's own row.
+never_orphan:
+  - watchdog
