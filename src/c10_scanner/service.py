@@ -467,7 +467,8 @@ class C10Service:
                 await self._journal_candidate(t, "SUPPRESSED_NEWS",
                                               "NEWS_OWNS_IT", m.payload())
                 continue
-            survivors.append((score_candidate(m), m, news_match, related))
+            survivors.append((score_candidate(m, self.cfg), m, news_match,
+                              related))
 
         survivors.sort(key=lambda s: s[0], reverse=True)
         emitted = 0

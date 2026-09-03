@@ -43,6 +43,31 @@ from .schema import ThesisValidationError, thesis_json_schema, validate_thesis
 
 log = get_logger("a2.service")
 
+
+def analyst_health(recent, min_sample: int = 10,
+                   max_invalid_frac: float = 0.5) -> tuple[str, str]:
+    """v0.14.5 — turn a silent invalid-output storm into a visible signal.
+
+    On 2026-09-03 the analyst model (upgraded to a thinking model without
+    `disable_thinking`) emitted prose instead of JSON on ~65% of calls; the
+    system traded nothing and NOTHING said so — the same silent-failure class
+    as the a1-zombie and silent-short incidents. `recent` is a bounded window
+    of booleans (True = a model response that parsed, False = invalid output
+    after all retries). Returns (status, detail) for the periodic heartbeat;
+    DEGRADED is picked up by C7 (analyst is alert-only in deadman.yaml).
+    Pure — unit-tested without a database."""
+    n = len(recent)
+    if n < min_sample:
+        return "OK", "consuming signal.analyst"
+    invalid = sum(1 for ok in recent if not ok)
+    frac = invalid / n
+    if frac >= max_invalid_frac:
+        return ("DEGRADED",
+                f"invalid model output {invalid}/{n} ({frac:.0%}) — model may be "
+                "emitting prose not JSON (check disable_thinking in a2.yaml)")
+    return "OK", f"consuming signal.analyst (invalid {invalid}/{n})"
+
+
 IN_QUEUE = "signal.analyst"
 GATE_QUEUE = "signal.gate"
 SYNTHETIC_QUEUE = "signal.synthetic"
@@ -95,6 +120,12 @@ class A2Service:
         self.md = md or get_marketdata()
         self.store = store or VectorStore()
         self.embedder = get_embedder()
+        # v0.14.5 — rolling window of model-output outcomes (True=parsed,
+        # False=invalid after retries) feeding the analyst health guard.
+        from collections import deque
+        self._health_min = int(cfg.get("health_min_sample", 10))
+        self._health_frac = float(cfg.get("health_max_invalid_frac", 0.5))
+        self._recent = deque(maxlen=int(cfg.get("health_window", 20)))
 
     async def handle(self, msg) -> None:
         body = msg.payload.get("body") or {}
@@ -180,12 +211,14 @@ class A2Service:
             total_latency += reply.latency_ms
             try:
                 thesis = validate_thesis(reply.text)
+                self._recent.append(True)          # v0.14.5 health guard
                 break
             except ThesisValidationError as e:
                 error = e
                 log.warning("invalid thesis output",
                             extra=kv(attempt=attempt + 1, detail=e.detail[:150]))
         else:
+            self._recent.append(False)             # v0.14.5 health guard
             await write_decision(
                 signal_id=signal_id, item_id=item_id, item_revision=revision,
                 ticker=ticker, stage="ANALYST", agent="A2", action="REJECT",
@@ -317,7 +350,12 @@ async def consume_loop(svc: A2Service, stop: asyncio.Event) -> None:
     last_hb = time.monotonic()
     while not stop.is_set():
         if time.monotonic() - last_hb >= 60.0:
-            await set_health("analyst", "OK", hb_detail)
+            # v0.14.5 — the heartbeat now carries the invalid-output rate, so a
+            # thinking-leak storm surfaces as DEGRADED instead of a silent
+            # 65%-failure day. hb_detail is the OK default until enough samples.
+            status, detail = analyst_health(
+                svc._recent, svc._health_min, svc._health_frac)
+            await set_health("analyst", status, detail)
             last_hb = time.monotonic()
         msg = await claim(IN_QUEUE, CONSUMER)
         if msg is None:

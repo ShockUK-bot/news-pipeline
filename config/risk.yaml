@@ -32,3 +32,8 @@ model:                               # A3 bounded discretion (Analyst slot)
   max_tokens: 400
   timeout_secs: 60
   retries_on_invalid: 1
+  disable_thinking: true       # v0.14.5 — same qwen3.6-27b thinking-leak bug as
+                               # A2 (see config/a2.yaml). A3's bounded-discretion
+                               # sizing call is JSON; without this it leaks prose,
+                               # fails validation, and every trade silently falls
+                               # back to profile defaults (the v0.12.22 shape).

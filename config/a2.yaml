@@ -11,3 +11,20 @@ model:
   timeout_secs: 120            # 27B is smaller than the old 32B: expect equal or
                                # better tok/s; keep the generous timeout anyway
   retries_on_invalid: 1
+  disable_thinking: true       # v0.14.5 — REQUIRED for qwen3.6-27b (a hybrid
+                               # reasoning model, thinking ON by default). Without
+                               # it the model narrates prose ("Let me analyze this
+                               # scanner signal...") in its <think> block; the
+                               # response_format grammar constrains `content` only,
+                               # so generation burns the whole token budget in
+                               # reasoning and returns no JSON (or a truncated
+                               # string). 2026-09-03: 128/196 analyst calls (~65%)
+                               # died "output is not valid JSON: Expecting value:
+                               # line 1 column 1" — the system traded nothing.
+                               # A4/A5/A6/A7/A8 have set this since v0.12.4; the
+                               # analyst slot was missed when it moved to a
+                               # thinking model. See backends.py for the probe.
+# -- health guard (v0.14.5) — a silent invalid-output storm must ALARM ---------
+health_window: 20              # rolling window of model-output outcomes
+health_min_sample: 10          # need this many before judging the rate
+health_max_invalid_frac: 0.5   # >= this fraction invalid -> DEGRADED (C7 alerts)

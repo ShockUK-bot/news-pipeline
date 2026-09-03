@@ -47,6 +47,28 @@ scanner:
                                  # every down candidate vetoes LONG_ONLY at
                                  # C3 (and is measured in counterfactuals).
   min_rel_volume: 3.0            # day volume vs ADV(20) pace at this session time
+  # -- large-cap volume handling (v0.14.5) ------------------------------------
+  # The flat 3.0x bar is calibrated for low-float spikers (real moves print
+  # 10-50x). A mega-liquid name almost never registers 3x — its baseline is
+  # already huge — so the bar rejects exactly the deep-liquidity movers we
+  # most want. 2026-09-03: MSTR ran +13.5% intraday and its only scanner row
+  # was REL_VOLUME at 2.94x. Names with ADV20 >= large_cap_adv_dollars use the
+  # relaxed large_cap_min_rel_volume bar instead. Set large_cap_adv_dollars: 0
+  # to disable the tier (restore the flat 3.0x everywhere). Tune from the
+  # scanner_candidates journal, same A9 discipline as every number here.
+  large_cap_adv_dollars: 1000000000    # >= $1B ADV20($) counts as large-cap
+  large_cap_min_rel_volume: 2.0        # relaxed rel-vol bar for those names
+  # Ranking score weights (v0.14.5): the old single 0.45 rel-volume weight is
+  # split into rel-volume (abnormal MULTIPLE) + liquidity (absolute dollar
+  # SIZE), so a deeply-liquid 3x mover isn't scored like microcap noise and
+  # can clear the 0.60 emit floor. Defaults sum to 1.0. To restore pre-v0.14.5
+  # scoring: score_w_rel 0.45, score_w_liquidity 0.0.
+  score_w_rel: 0.30
+  score_w_move: 0.30
+  score_w_liquidity: 0.15
+  score_w_fresh: 0.15
+  score_w_spread: 0.10
+  score_liquidity_cap_dollars: 2500000000   # ADV20($) at which liquidity term = 1.0
   max_minutes_since_hod: 60      # move still in progress, not a morning spike flatlining
   max_spread_bps: 40             # mirrors risk.yaml limits.spread_max_bps
   min_luld_headroom_pct: 0.02    # approximated from 5-min tape (see rules.py)

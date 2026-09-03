@@ -15,6 +15,7 @@ emission budget).
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -163,6 +164,30 @@ def luld_headroom(last: float, ref_price_5m: Optional[float],
     return round(max(band_up - last, 0.0) / last, 4)
 
 
+def rel_volume_bar(m: CandidateMetrics, cfg: dict) -> float:
+    """v0.14.5 — the relative-volume requirement, relaxed for deeply-liquid
+    large caps.
+
+    The flat 3.0x bar is calibrated for low-float spikers, where a real move
+    prints 10-50x. A mega-liquid name almost never does: its 20-day baseline
+    is already enormous, so 3x of it is a vast amount of dollars AND a rare
+    event — yet the same 3.0x bar rejects it. 2026-09-03: MSTR ran +13.5%
+    intraday and NEVER once registered 3.0x (its only journaled row was
+    REL_VOLUME at 2.94x); it closed up 13.5% and was never a candidate. The
+    same blind spot was named in the WDAY review and the 08-19 MSTR miss —
+    this is the third instance.
+
+    A name whose ADV20 dollar volume is >= large_cap_adv_dollars uses the
+    lower large_cap_min_rel_volume bar. Set large_cap_adv_dollars very high
+    (or 0) to disable the tier and restore the flat bar. Pure; the relaxed
+    bar can only ever be <= the base bar, never above it."""
+    base = float(cfg["min_rel_volume"])
+    lc_adv = float(cfg.get("large_cap_adv_dollars", 0) or 0)
+    if lc_adv and m.adv20_dollars and m.adv20_dollars >= lc_adv:
+        return min(base, float(cfg.get("large_cap_min_rel_volume", base)))
+    return base
+
+
 def filter_candidate(m: CandidateMetrics, cfg: dict,
                      is_etf: Optional[bool] = None,
                      earnings_next_sessions: Optional[int] = None,
@@ -195,7 +220,7 @@ def filter_candidate(m: CandidateMetrics, cfg: dict,
         return "MOVE_PCT"
     if m.rel_volume is None:
         return "NO_TAPE"
-    if m.rel_volume < float(cfg["min_rel_volume"]):
+    if m.rel_volume < rel_volume_bar(m, cfg):
         return "REL_VOLUME"
     if m.minutes_since_extreme is None \
             or m.minutes_since_extreme > int(cfg["max_minutes_since_hod"]):
@@ -211,15 +236,47 @@ def filter_candidate(m: CandidateMetrics, cfg: dict,
     return None
 
 
-def score_candidate(m: CandidateMetrics) -> float:
-    """Composite ranking score for the top-N-per-scan cap. Weights are
-    deliberately simple (rel-volume dominant — volume is the honest signal);
-    A9 owns refinement."""
-    rel = min(m.rel_volume or 0.0, 10.0) / 10.0          # 0..1
+def liquidity_term(adv20_dollars: Optional[float], cfg: dict) -> float:
+    """v0.14.5 — a 0..1 credit for ABSOLUTE dollar liquidity, log-scaled from
+    the $25M ADV floor to a cap. A $2B-traded name moving on 3x volume is a
+    higher-conviction signal than a $30M microcap on 3x, and the rel-volume
+    multiple alone cannot see that (a mega-cap's multiple is structurally
+    small). 0 at the $25M floor, 1.0 at score_liquidity_cap_dollars ($2.5B
+    default) and above. Null ADV -> 0 (no credit, never a crash)."""
+    if not adv20_dollars or adv20_dollars <= 0:
+        return 0.0
+    floor = float(cfg.get("min_adv20_dollars", 25_000_000)) or 25_000_000
+    cap = float(cfg.get("score_liquidity_cap_dollars", 2_500_000_000))
+    if adv20_dollars <= floor:
+        return 0.0
+    span = math.log10(cap / floor)
+    if span <= 0:
+        return 0.0
+    return min(math.log10(adv20_dollars / floor) / span, 1.0)
+
+
+def score_candidate(m: CandidateMetrics, cfg: Optional[dict] = None) -> float:
+    """Composite ranking score for the top-N-per-scan cap and the emit floor.
+
+    v0.14.5 — the single 0.45 rel-volume weight is split into a rel-volume
+    term (abnormal MULTIPLE) and a liquidity term (absolute dollar SIZE), so
+    a deeply-liquid 3x mover is no longer ranked like microcap noise. All
+    weights are config-overridable; the defaults below (rel .30, move .30,
+    liquidity .15, fresh .15, spread .10) sum to 1.0. To restore the pre-
+    v0.14.5 score set score_w_rel 0.45 and score_w_liquidity 0.0."""
+    cfg = cfg or {}
+    w_rel = float(cfg.get("score_w_rel", 0.30))
+    w_move = float(cfg.get("score_w_move", 0.30))
+    w_liq = float(cfg.get("score_w_liquidity", 0.15))
+    w_fresh = float(cfg.get("score_w_fresh", 0.15))
+    w_spread = float(cfg.get("score_w_spread", 0.10))
+    rel = min(m.rel_volume or 0.0, 10.0) / 10.0          # 0..1 (multiple)
     move = min(m.move_magnitude or 0.0, 0.15) / 0.15     # 0..1 (v0.13: abs)
+    liq = liquidity_term(m.adv20_dollars, cfg)           # 0..1 (dollar size)
     fresh = 1.0 - min(m.minutes_since_extreme or 60, 60) / 60.0
     spread = 1.0 - min(m.spread_bps or 40.0, 40.0) / 40.0
-    return round(0.45 * rel + 0.30 * move + 0.15 * fresh + 0.10 * spread, 4)
+    return round(w_rel * rel + w_move * move + w_liq * liq
+                 + w_fresh * fresh + w_spread * spread, 4)
 
 
 def scan_mode(emitted_today: int, cfg: dict) -> str:

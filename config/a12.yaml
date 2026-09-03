@@ -7,6 +7,10 @@ model:
   max_tokens: 700              # verdicts are small; keeps slot contention low
   timeout_secs: 120
   retries_on_invalid: 1
+  disable_thinking: true       # v0.14.5 — same qwen3.6-27b thinking-leak bug as
+                               # A2 (see config/a2.yaml). The guard's "is the
+                               # thesis broken NOW" verdict is JSON; without this
+                               # it can dissolve into prose and fail closed.
 
 guard:
   # Items older than this journal GUARD/EXPIRED instead of being evaluated
