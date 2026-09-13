@@ -68,8 +68,15 @@ def test_fewshot_reasons_name_categories_not_sentiment():
 # ---- schema: confidence ------------------------------------------------------
 
 def test_confidence_required():
+    # v0.12.4 made tickers / direction_hint / urgency / novelty_score
+    # required too, and the detail string keeps only the first four schema
+    # errors, so supply those four and leave ONLY confidence missing.
     with pytest.raises(TriageValidationError) as e:
-        validate_triage(json.dumps({"material": True, "reason": "x"}))
+        validate_triage(json.dumps({"material": True, "reason": "x",
+                                    "tickers": ["ACME"],
+                                    "direction_hint": "up",
+                                    "urgency": "high",
+                                    "novelty_score": 0.9}))
     assert "confidence" in e.value.detail
 
 

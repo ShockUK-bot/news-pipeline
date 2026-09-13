@@ -116,7 +116,8 @@ def test_render_busy_day_with_narrative():
     n = validate_narrative(_narr(summary="One partial win on ACME."))
     body = render(busy_facts(), n)
     assert "One partial win on ACME." in body
-    assert "OPENED ACME 50 @ $100.00" in body
+    # v0.14.3: position lines carry the side
+    assert "OPENED LONG ACME 50 @ $100.00" in body
     assert "trigger: Acme wins defense contract" in body
     assert "via TARGET (partial): $100.00 (+1.00R" in body
     assert "thesis intact -> HOLD" in body

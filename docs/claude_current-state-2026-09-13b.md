@@ -26,7 +26,7 @@ DEPLOYED 2026-09-13 14:55 CT (Sunday, market closed) with operator go.
 
 ## Open items
 
-1. **Three pre existing unit test failures**, unrelated to v0.14.6 and present on the previous commit: `test_cik_map.py::test_end_to_end_stored_with_symbols` (needs `PIPELINE_DSN`), `test_a7_c5.py::test_render_busy_day_with_narrative` and `test_triage_v047.py::test_confidence_required` (stale assertions). Worth a small cleanup release so the suite is green again.
+1. RESOLVED in v0.14.7 (tests only, no restart): the three pre existing unit test failures. Suite is 787 passed, 1 skipped. See `docs/claude_patch-notes-v0_14_7.md`. Running services stay on v0.14.6 code, which is identical for every runtime file.
 2. **Scanner entry timing.** Both reviews point at the 08:50 to 09:00 CT entry window rather than the score floor or the volume bar. Candidates: later `session_start_et`, or a wider first hour stop. Needs the shadow short and rejected pool evidence described in the counterfactual doc before any config change.
 3. **Rejected pool forward returns** (SCORE_FLOOR and REL_VOLUME rows) are still not computed; the replay tool now makes this cheap to script.
 4. **First day of the pre close pass** is Monday 09-14 at 14:55 CT if deployed. Check `journalctl -u c4-exec` around that time and any `INVALIDATION_FIRED` events with `provisional: true`.

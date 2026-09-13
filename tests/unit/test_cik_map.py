@@ -158,6 +158,9 @@ def test_failsafe_empty_map_ignores_skip(tmp_path):
     assert src._admit(item)                     # but still admitted
 
 
+@pytest.mark.skipif(not os.environ.get("PIPELINE_DSN"),
+                    reason="integration test: needs PIPELINE_DSN pointing at "
+                           "a *_test database (see tests/conftest.py)")
 async def test_end_to_end_stored_with_symbols(map_file):
     """Through store_item: the DedupedSignal body carries the stamped
     symbols so A1/A2 receive them without inference."""
