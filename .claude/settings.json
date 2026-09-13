@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git describe:*)",
+      "Bash(git stash list:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Bash(git fetch:*)",
+      "Bash(sudo -n systemctl status:*)",
+      "Bash(sudo -n systemctl is-active:*)",
+      "Bash(sudo -n systemctl list-timers:*)",
+      "Bash(sudo -n systemctl list-units:*)",
+      "Bash(sudo -n journalctl:*)",
+      "Bash(psql:*)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(env -u PIPELINE_DSN .venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/python -c:*)",
+      "Bash(curl -s http://127.0.0.1:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(date:*)",
+      "Bash(df:*)",
+      "Bash(free:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(wc:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /opt/models:*)",
+      "Bash(rm -rf /opt/pipeline:*)",
+      "Read(/etc/pipeline/pipeline.env)",
+      "Read(/etc/pipeline/mailer.env)"
+    ]
+  }
+}
