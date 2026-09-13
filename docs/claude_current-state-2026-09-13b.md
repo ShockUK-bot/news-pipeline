@@ -5,7 +5,7 @@ Supersedes `claude_current-state-2026-09-13.md` for anything it repeats.
 ## Version
 
 - Repo: tag `v0.14.6` on `main`, pushed to GitHub with tags. `main` and `origin/main` in sync.
-- Running services: still `v0.14.5` code until the v0.14.6 deploy restarts `c10-scanner` and `c4-exec`. See "Deploy status" below.
+- Running services: `c10-scanner` and `c4-exec` restarted on v0.14.6 at 14:55 CT on 2026-09-13. Every other service is unchanged since its last restart (same code paths, untouched by this release).
 
 ## What was done today, in order
 
@@ -19,14 +19,10 @@ Supersedes `claude_current-state-2026-09-13.md` for anything it repeats.
 
 ## Deploy status
 
-v0.14.6 is tagged and pushed but NOT yet deployed. Deploy plan (awaiting operator go):
-- Stop `c7-watchdog.timer`.
-- `sudo -n systemctl restart c10-scanner c4-exec`.
-- Start `c7-watchdog.timer`.
-- Verify both `active`, journals clean, `scanner` and `exec` heartbeats fresh.
-- Rollback: `git reset --hard v0.14.5` on `main`, restart the same two services.
-
-Update this section (or write a new dated file) once the restart has happened.
+DEPLOYED 2026-09-13 14:55 CT (Sunday, market closed) with operator go.
+- `c7-watchdog.timer` stopped, `c10-scanner` and `c4-exec` restarted, timer started again.
+- Verification: both units `active`; both journals show `config version active` `ea856e3fde9b` (the v0.14.6 commit) and zero errors or tracebacks; `journal.health` rows `scanner`, `exec` and `deadman` OK and refreshed within a minute of the restart.
+- Rollback if needed: `git reset --hard v0.14.5` on `main`, then `sudo -n systemctl restart c10-scanner c4-exec`.
 
 ## Open items
 
