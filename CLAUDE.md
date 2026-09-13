@@ -22,7 +22,7 @@ Core principles, locked in and not up for revision:
 - Repo: `/opt/pipeline` (this directory). Owned by `trader`. Remote: GitHub `ShockUK-bot/news-pipeline` (private). Git identity `pipeline@local / "Pipeline Build"`.
 - Code: `src/`. Config: `config/*.yaml` (a1.yaml, a2.yaml, risk.yaml, scanner.yaml, watchdog.yaml, ...). Migrations: `schema/migrations/NNN-name.sql`. systemd units: `ops/systemd/*.service` (installed copies in `/etc/systemd/system/`). Tests: `tests/unit/`.
 - Python venv: `/opt/pipeline/.venv`. Run tests with `env -u PIPELINE_DSN .venv/bin/python -m pytest tests/unit -q`.
-- Secrets: `/etc/pipeline/pipeline.env` and `mailer.env`. You are denied reading them. Confirm presence of a key with `sudo -n grep -c KEYNAME /etc/pipeline/pipeline.env`; never print values. Interactive shell env: `export PYTHONPATH=src && set -a && source .env && set +a` (`.env` is a symlink to pipeline.env; sourcing is fine, catting is not).
+- Secrets: `/etc/pipeline/pipeline.env` and `mailer.env`. You are denied reading them. Confirm presence of a key with `sudo -n grep -c KEYNAME /etc/pipeline/pipeline.env`; never print values. Interactive shell env: `export PYTHONPATH=src && set -a && source /etc/pipeline/pipeline.env && set +a` (the file is owned by `trader`; sourcing is fine, catting is not. There is no `.env` symlink in the repo).
 - Models: `/opt/models`. llama.cpp: `/opt/llama.cpp`, out of tree builds in dated dirs (`build-2026-08/`); never overwrite the running binary, build beside it.
 - Runtime folders that are always untracked and must be left alone: `ops/soak-logs/`, `src/news_pipeline.egg-info/`, `var/`.
 - Docs the operator uploads to his chat project live in `docs/` (see Handoff).
@@ -69,7 +69,8 @@ US market hours are 08:30 to 15:00 America/Chicago, Monday to Friday. Check with
 - Do not re-run the v0.14.4 Part 7 env append; `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` are already in pipeline.env (want `sudo -n grep -c 'HF_HUB_OFFLINE\|TRANSFORMERS_OFFLINE' /etc/pipeline/pipeline.env` = 2).
 - GitHub push failures over HTTPS are hygiene, not deploy blockers. Report them; do not block a rollout on them.
 - A git stash from 2026-09-11 holds the pre v0.14.4 files as a safety archive. Do not drop it without asking.
-- Known open item as of 2026-09-11: `journal.health` component `risk` heartbeat may be stale. If asked about A3, check `systemctl status a3-risk`, the RISK decision mix, and its journal before trusting discretion sizing.
+- Resolved 2026-09-11: the `journal.health` `risk` heartbeat was genuinely stale (about 11,400 minutes old on the morning of 2026-09-11). Cause: the v0.14.4 changeset (periodic heartbeats for risk, dedup and chat, `common/health.py`, watchdog freshness checks) had been tagged but never written to the working tree, so those services only wrote a heartbeat at startup. A re-sync on 2026-09-11 restored the files from the v0.14.5 tag and restarted a1, a2, a3, a13, c2 and c4 at 16:45 CT. The pre re-sync files are in the stash above. Lesson: after tagging, confirm the working tree matches the tag (`git diff <tag> --stat` should be empty) before restarting.
+- `journal.health` keeps only the latest row per component (primary key on `component`), so it has no history. To find out when a heartbeat went stale or recovered, read the c7-watchdog journal: `sudo -n journalctl -u c7-watchdog --since <date> --no-pager | grep 'alert queued'`.
 
 ## How to work
 
