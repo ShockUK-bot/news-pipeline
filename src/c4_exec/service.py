@@ -278,6 +278,9 @@ class C4Service:
                                              fill=fill_price, cat=cat_price))
 
 
+PRECLOSE_INVALIDATION_ET = "15:55"   # v0.14.6 code default (14:55 CT)
+
+
 async def consume_loop(svc: C4Service, stop: asyncio.Event) -> None:
     await set_health("exec", "OK", f"consuming {IN_QUEUE}")
     while not stop.is_set():
@@ -312,8 +315,10 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
     from .flags import get_flag
     from .state import open_positions
 
+    from datetime import timezone
     ET = ZoneInfo("America/New_York")
     overnight_done: dict[str, str] = {}          # date -> last pass label
+    preclose_done: set[str] = set()              # v0.14.6: dates already checked
 
     while not stop.is_set():
         now = svc.now_fn()
@@ -354,6 +359,30 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                 # missed pass still gets flattened before the close.
                 if hhmm >= "15:45":
                     await engine.force_flat_pass()
+                # v0.14.6: provisional session-close invalidation check at
+                # 15:55 ET (code default, no config knob this release), run
+                # BEFORE the 15:55 overnight pass so that pass sees the
+                # position gone. Session bar = today's minute bars so far,
+                # close = last price. The 16:01 pass below stays as the
+                # confirmation on the finished bar.
+                if hhmm >= PRECLOSE_INVALIDATION_ET \
+                        and today not in preclose_done:
+                    preclose_done.add(today)
+
+                    async def _session_so_far(ticker, _now=now, _et=et):
+                        open_utc = (_et.replace(hour=9, minute=30, second=0,
+                                                microsecond=0)
+                                    .astimezone(timezone.utc))
+                        bars = await marketdata.minute_bars(ticker, open_utc,
+                                                            _now)
+                        if not bars:
+                            return None
+                        return {"open": bars[0]["open"],
+                                "high": max(x["high"] for x in bars),
+                                "low": min(x["low"] for x in bars),
+                                "close": bars[-1]["close"]}
+                    await engine.preclose_invalidation_pass(
+                        _session_so_far, pass_label=PRECLOSE_INVALIDATION_ET)
                 oc = exit_cfg["overnight_rule"]
                 if hhmm >= "15:55" and overnight_done.get(today) == "15:45":
                     await engine.overnight_pass(oc, pass_label="15:55")

@@ -138,10 +138,22 @@ async def position_event(position_id: int, event_type: str, actor: str,
 async def record_exit(position_id: int, order_id: Optional[int], ts: datetime,
                       exit_layer: str, qty: int, price: float,
                       avg_entry: float, r_unit: float, is_partial: bool,
-                      side: str = "LONG", conn=None) -> None:
+                      side: str = "LONG", conn=None,
+                      trigger_price: Optional[float] = None) -> None:
     # v0.13: covering below entry is the short's profit
     pnl = _pnl(side, avg_entry, price, qty)
     r_multiple = round(pnl / (r_unit * qty), 3) if r_unit else 0.0
+    event_value = {"layer": exit_layer, "qty": qty, "price": price, "pnl": pnl}
+    if trigger_price is not None:
+        # v0.14.6: slippage past the level that fired the exit. Positive is
+        # WORSE than the trigger for either side (sold below a long's stop,
+        # covered above a short's); negative means the fill beat it (a wick
+        # touched the stop, the bid was still above it).
+        sign = 1 if side == "LONG" else -1
+        slip_px = round(sign * (float(trigger_price) - float(price)), 4)
+        event_value.update({"trigger_price": float(trigger_price),
+                            "slip_px": slip_px,
+                            "slip_r": round(slip_px / r_unit, 3) if r_unit else None})
     async def _run(c):
         await c.execute(
             """INSERT INTO journal.exits
@@ -161,8 +173,7 @@ async def record_exit(position_id: int, order_id: Optional[int], ts: datetime,
                WHERE position_id=%s""",
             (qty, pnl, qty, qty, position_id))
         await position_event(position_id, "EXIT" if not is_partial else "SCALE_OUT",
-                             "C4", new_value={"layer": exit_layer, "qty": qty,
-                                              "price": price, "pnl": pnl},
+                             "C4", new_value=event_value,
                              detail=exit_layer, conn=c)
     if conn is not None:
         await _run(conn)

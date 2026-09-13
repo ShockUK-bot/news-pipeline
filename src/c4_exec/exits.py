@@ -50,6 +50,9 @@ class ExitAction:
     new_basis: Optional[str] = None
     event_type: Optional[str] = None
     new_hwm: Optional[float] = None
+    trigger_price: Optional[float] = None   # v0.14.6: the level that fired the
+                                            # exit (stop / target / mark) so
+                                            # record_exit can journal slippage
 
 
 STOP_ATTRIBUTION = {"initial": "STOP", "breakeven": "BREAKEVEN",
@@ -106,14 +109,16 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
                                   reason=f"bar {'low' if side == 'LONG' else 'high'} "
                                          f"{edge} {rel} stop "
                                          f"{state['current_stop']} "
-                                         f"({state['stop_basis']})"))
+                                         f"({state['stop_basis']})",
+                                  trigger_price=state["current_stop"]))
         return actions
 
     # ---- L5 machine invalidations ----------------------------------------------
     if fired_invalidations:
         f = fired_invalidations[0]
         actions.append(ExitAction("EXIT", "INVALIDATION", qty_open,
-                                  reason=f"{f.predicate_id}: {f.detail}"[:200]))
+                                  reason=f"{f.predicate_id}: {f.detail}"[:200],
+                                  trigger_price=bar["close"]))
         return actions
 
     # ---- L3 time stop ------------------------------------------------------------
@@ -127,7 +132,8 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
                 "EXIT", "TIME", qty_open,
                 reason=f"open {minutes_open:.0f}min >= {window_min}min window, "
                        f"progress {progress_r:.2f}R < "
-                       f"{ts_cfg['min_progress_R']}R"))
+                       f"{ts_cfg['min_progress_R']}R",
+                trigger_price=bar["close"]))
             return actions
     elif ts_cfg:
         window = int(str(ts_cfg["window"]).split("_")[0])
@@ -136,7 +142,8 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
                 "EXIT", "TIME", qty_open,
                 reason=f"age {session_age}s >= {window}s window, "
                        f"progress {progress_r:.2f}R < "
-                       f"{ts_cfg['min_progress_R']}R"))
+                       f"{ts_cfg['min_progress_R']}R",
+                trigger_price=bar["close"]))
             return actions
 
     # ---- L4 realization ------------------------------------------------------------
@@ -152,7 +159,8 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
                     actions.append(ExitAction("SCALE_OUT", "TARGET", half,
                                               reason=f"{'high' if side == 'LONG' else 'low'} "
                                                      f"{edge} {rel} "
-                                                     f"target {target}"))
+                                                     f"target {target}",
+                                              trigger_price=target))
             else:                               # review_flag (long lane)
                 actions.append(ExitAction(
                     "EVENT", "TARGET", 0, event_type="POSITION_REVIEW",

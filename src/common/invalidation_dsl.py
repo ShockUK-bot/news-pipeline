@@ -259,6 +259,28 @@ class CompiledPredicate:
                         f"{self.predicate_id} persisted {self._streak} bar(s)")
         return None
 
+    def peek(self, bar: Bar, day_open: Optional[float] = None) -> bool:
+        """v0.14.6: would this bar fire the predicate? Evaluates WITHOUT
+        advancing the streak, marking `fired`, or leaving any `_prev` behind,
+        so a provisional bar (the 15:55 ET pre-close session bar built from
+        the session so far) can be checked while the real 16:01 session-close
+        pass still runs on the finished bar as confirmation."""
+        if self.fired:
+            return False
+        relevant = [c for c in self.conds if c.tf == bar.tf]
+        if not relevant:
+            return False
+        saved = [c._prev for c in self.conds]
+        try:
+            ok = all(c.eval(bar, day_open) for c in relevant)
+            others = [c for c in self.conds if c.tf != bar.tf]
+            if others:
+                ok = ok and all(c._prev is not None for c in others)
+            return ok and (self._streak + 1) >= self.persist_bars
+        finally:
+            for c, p in zip(self.conds, saved):
+                c._prev = p
+
 
 def _resolve(value: Any, ctx: ArmContext) -> tuple[Optional[float], Optional[str]]:
     if isinstance(value, (int, float)):

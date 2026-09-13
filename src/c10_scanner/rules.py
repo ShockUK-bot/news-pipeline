@@ -273,7 +273,13 @@ def score_candidate(m: CandidateMetrics, cfg: Optional[dict] = None) -> float:
     rel = min(m.rel_volume or 0.0, 10.0) / 10.0          # 0..1 (multiple)
     move = min(m.move_magnitude or 0.0, 0.15) / 0.15     # 0..1 (v0.13: abs)
     liq = liquidity_term(m.adv20_dollars, cfg)           # 0..1 (dollar size)
-    fresh = 1.0 - min(m.minutes_since_extreme or 60, 60) / 60.0
+    # v0.14.6: only None is "unknown". 0 minutes from the extreme is the
+    # FRESHEST value and must score the full credit — `or 60` treated it as
+    # missing and zeroed exactly the candidates the floor is meant to favour
+    # (AVAV 2026-09-10 journaled 0.6236 instead of ~0.77).
+    mins = m.minutes_since_extreme
+    mins = 60 if mins is None else mins
+    fresh = 1.0 - min(mins, 60) / 60.0
     spread = 1.0 - min(m.spread_bps or 40.0, 40.0) / 40.0
     return round(w_rel * rel + w_move * move + w_liq * liq
                  + w_fresh * fresh + w_spread * spread, 4)

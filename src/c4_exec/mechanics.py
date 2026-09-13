@@ -72,8 +72,12 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
                        reason: str, bid: float, now_fn,
                        unprotected_max_secs: float = 45.0,
                        poll_sleep: float = 1.0,
-                       sleep_fn=None) -> str:
-    """Returns 'FILLED' | 'REINSTATED' | 'CATASTROPHE_FILLED'."""
+                       sleep_fn=None,
+                       trigger_price: Optional[float] = None) -> str:
+    """Returns 'FILLED' | 'REINSTATED' | 'CATASTROPHE_FILLED'.
+    v0.14.6: `trigger_price` is the level that fired this exit (stop, target
+    or mark); it rides through to record_exit so the EXIT/SCALE_OUT event
+    carries slip_px / slip_r."""
     import asyncio
     sleep = sleep_fn or asyncio.sleep
     position_id = pos["position_id"]
@@ -102,7 +106,8 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
                                   float(co.filled_avg_price),
                                   float(pos["avg_entry"]),
                                   float(pos["r_unit"]), is_partial=False,
-                                  side=pos.get("side") or "LONG")
+                                  side=pos.get("side") or "LONG",
+                                  trigger_price=float(cat["stop_price"]))
                 log.warning("catastrophe had already filled",
                             extra=kv(position_id=position_id))
                 return "CATASTROPHE_FILLED"
@@ -135,7 +140,8 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
                               o.filled_qty, float(o.filled_avg_price),
                               float(pos["avg_entry"]), float(pos["r_unit"]),
                               is_partial=is_partial,
-                              side=pos.get("side") or "LONG")
+                              side=pos.get("side") or "LONG",
+                              trigger_price=trigger_price)
             remaining = int(pos["qty_open"]) - o.filled_qty
             if remaining > 0 and cat is not None:
                 await _place_catastrophe(broker, pos, remaining,
@@ -156,7 +162,8 @@ async def execute_exit(broker: Broker, pos: dict, qty: int, layer: str,
                           final.filled_qty, float(final.filled_avg_price),
                           float(pos["avg_entry"]), float(pos["r_unit"]),
                           is_partial=is_partial,
-                          side=pos.get("side") or "LONG")
+                          side=pos.get("side") or "LONG",
+                          trigger_price=trigger_price)
         return "FILLED"
     if cat is not None:
         await _place_catastrophe(broker, pos, int(pos["qty_open"]),

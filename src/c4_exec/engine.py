@@ -249,7 +249,8 @@ class PositionEngine:
                                                            0.001)
                 outcome = await execute_exit(
                     self.broker, pos, a.qty, a.layer, a.reason, px,
-                    self.now_fn, self.unprotected_max_secs, self.poll_sleep)
+                    self.now_fn, self.unprotected_max_secs, self.poll_sleep,
+                    trigger_price=a.trigger_price)
                 applied.append(f"{a.kind}:{a.layer}:{outcome}")
                 if a.kind == "EXIT" or outcome == "CATASTROPHE_FILLED":
                     self.monitors.pop(pos["position_id"], None)
@@ -326,6 +327,69 @@ class PositionEngine:
             if not b:
                 continue
             await self.step(pos, {**b, "tf": "session"})
+
+    async def preclose_invalidation_pass(self, session_bar_fn,
+                                         pass_label: str = "15:55") -> list[str]:
+        """v0.14.6 — provisional session-close check BEFORE the close.
+
+        The session-tf predicates (close_below_prenews and friends) only
+        evaluated in session_close_pass after 16:01 ET, when the exit order
+        could not fill; the position was then carried to the next day's
+        14:45 CT overnight exit (BEN, BMY, PLTR, SLG 2026-09-08/09). This
+        pass builds a provisional session bar from the session so far
+        (session_bar_fn(ticker) -> {open, high, low, close} with close = last
+        price) and asks each session-tf exit predicate via peek() whether the
+        finished bar WOULD fire. If so, the INVALIDATION exit is executed
+        while the market is open. peek() leaves the monitor untouched, so
+        the 16:01 pass still runs on the real close as confirmation: a no-op
+        on a position that is already closed, and a normal fire (today's
+        behaviour) if the pre-close exit did not fill.
+
+        Deliberately NOT engine.step(): a session bar's low fed to the
+        synthetic-stop layer would trip a trail/breakeven stop set after
+        that low printed. Only the MIP monitors see the provisional bar.
+        Returns ["TICKER:outcome", ...] for tests and logs."""
+        results: list[str] = []
+        for pos in await open_positions():
+            pid = pos["position_id"]
+            await self.arm(pos)
+            candidates = [p for p in self.monitors.get(pid, [])
+                          if p.action.get("type") == "exit"
+                          and any(c.tf == "session" for c in p.conds)]
+            if not candidates:
+                continue
+            b = await session_bar_fn(pos["ticker"])
+            if not b:
+                continue
+            now = self.now_fn()
+            mip_bar = Bar(ts=int(now.timestamp()), tf="session",
+                          open=b["open"], high=b["high"], low=b["low"],
+                          close=b["close"], vwap=b.get("vwap", b["close"]),
+                          volume_ratio=b.get("volume_ratio", 1.0))
+            hit = next((p for p in candidates if p.peek(mip_bar)), None)
+            if hit is None:
+                continue
+            side = pos.get("side") or pos["exit_policy"].get("side") or "LONG"
+            await position_event(
+                pid, "INVALIDATION_FIRED", "C4",
+                new_value={"predicate": hit.predicate_id, "action": hit.action,
+                           "provisional": True, "pass": pass_label,
+                           "close": b["close"]},
+                detail=f"{hit.predicate_id}: provisional pre-close "
+                       f"({pass_label} ET) close {b['close']}"[:200])
+            px = marketable_exit(side, float(b["close"]), 0.001)
+            outcome = await execute_exit(
+                self.broker, pos, int(pos["qty_open"]), "INVALIDATION",
+                f"{hit.predicate_id}: provisional pre-close {pass_label} ET",
+                px, self.now_fn, self.unprotected_max_secs, self.poll_sleep,
+                trigger_price=float(b["close"]))
+            if outcome in ("FILLED", "CATASTROPHE_FILLED"):
+                self.monitors.pop(pid, None)
+            results.append(f"{pos['ticker']}:{outcome}")
+            log.info("pre-close invalidation", extra=kv(
+                ticker=pos["ticker"], predicate=hit.predicate_id,
+                outcome=outcome))
+        return results
 
     # ---------------------------------------------------------------- promotion
     async def promotion_pass(self, short_profile: dict) -> list[str]:
@@ -410,7 +474,8 @@ class PositionEngine:
             outcome = await execute_exit(
                 self.broker, pos, int(pos["qty_open"]), "FORCE_FLAT",
                 f"force_flat {hhmm} ET", px, self.now_fn,
-                self.unprotected_max_secs, self.poll_sleep)
+                self.unprotected_max_secs, self.poll_sleep,
+                trigger_price=mark)
             self.monitors.pop(pos["position_id"], None)
             flattened.append(f"{pos['ticker']}:{outcome}")
             log.info("force flat", extra=kv(ticker=pos["ticker"],
@@ -457,7 +522,8 @@ class PositionEngine:
                 outcome = await execute_exit(
                     self.broker, pos, int(pos["qty_open"]), "OVERNIGHT",
                     f"D1 {rule}", px, self.now_fn,
-                    self.unprotected_max_secs, self.poll_sleep)
+                    self.unprotected_max_secs, self.poll_sleep,
+                    trigger_price=mark)
                 if outcome == "REINSTATED" and pass_label == "15:55":
                     await position_event(
                         pos["position_id"], "OVERNIGHT_HOLD_DECISION", "C4",
