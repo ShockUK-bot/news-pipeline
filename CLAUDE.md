@@ -78,6 +78,7 @@ US market hours are 08:30 to 15:00 America/Chicago, Monday to Friday. Check with
 2. **Plan, then confirm, then do.** For anything that restarts a service, changes config, runs a migration, or pushes: state the plan in a few plain sentences, list every file and service affected, and wait for Ian's yes.
 3. **Validate on live Postgres** before packaging: unit tests green, and any new SQL run against the real `journal` schema (read only unless approved).
 4. **Version everything.** Each release: bump the version, commit with a clear message, tag `vX.Y.Z`, push tags. Additive migration files, never edits to old ones.
+   Always work on `main`; never check out a tag directly (that leaves the repo on a detached HEAD and later commits fall off the branch, which is what happened on 2026-09-11). To deploy a release, merge or fast forward `main` to the tag, then confirm `git diff <tag> --stat` is empty before restarting anything.
 5. **Verify after.** After a restart, confirm `is-active` for each touched unit, tail its journal for errors, and check the relevant `journal.health` heartbeat is fresh.
 6. **Rollback path always stated.** Every deploy plan names the previous tag and the exact restart command to go back.
 7. **Small fixes get small answers.** For a single error, fix it and say what you fixed in one or two sentences. Full write ups are for releases.
