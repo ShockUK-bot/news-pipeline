@@ -16,6 +16,8 @@
       "Bash(git commit:*)",
       "Bash(git tag:*)",
       "Bash(git fetch:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
       "Bash(sudo -n systemctl status:*)",
       "Bash(sudo -n systemctl is-active:*)",
       "Bash(sudo -n systemctl list-timers:*)",
