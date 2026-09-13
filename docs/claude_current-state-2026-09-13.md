@@ -39,11 +39,14 @@ Cause, supplied from the design side and consistent with the evidence:
 
 No services were restarted today. No migrations. No config changes.
 
+## Not a problem (looks stale but is not)
+
+- `ingestion:alpaca` health row last updated 2026-09-09 18:52 ("connected, wildcard subscribed"). This row is written by `src/c1_ingestion/sources/alpaca_ws.py` only on connection events: OK when the websocket connects and subscribes, DEGRADED when a session drops. Its timestamp is "last reconnect", not "last seen alive". On 09-09 18:52:19 the socket dropped (`ConnectionClosedError`) and reconnected 21 seconds later; it has held that connection since. Feed liveness is covered separately by the `ingestion` heartbeat (10 minute limit in `watchdog.yaml`) and the GapMonitor row `ingestion:alpaca_benzinga` (opens and closes gaps as items stop and resume). `common/health.py` deliberately exempts dynamic `ingestion:*` rows from the orphan warning for this reason. Same visual symptom as the old risk row, different mechanism, no action needed.
+
 ## Open items
 
-1. `ingestion:alpaca` heartbeat last updated 2026-09-09 18:52 ("connected, wildcard subscribed"). The watchdog is not alarming on it, so it is probably a startup only row like the old risk one, but worth confirming whether that component should have a periodic heartbeat and a `max_age_min` in `config/watchdog.yaml`.
-2. Process lesson from the v0.14.4 miss: after tagging a release, run `git diff <tag> --stat` and expect empty output before restarting services. Consider adding this to the deploy guide template.
-3. GitHub push status for today's commits: see the end of the session summary from Claude Code (push attempted after this file was written).
+1. Process lesson from the v0.14.4 miss: after tagging a release, run `git diff <tag> --stat` and expect empty output before restarting services. Now recorded in `CLAUDE.md` How to work item 4; consider adding it to the deploy guide template as well.
+2. Repo was on a detached HEAD from the 09-11 re-sync; fixed today (`main` moved to HEAD and checked out, pushed to GitHub, `main` and `origin/main` in sync). `.claude/settings.json` now allows `git push` and `git checkout`.
 
 ## Next steps
 
