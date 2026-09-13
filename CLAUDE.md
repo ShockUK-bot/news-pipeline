@@ -29,9 +29,12 @@ Core principles, locked in and not up for revision:
 
 ## Services (systemd)
 
-Agents: `a1-triage a2-analyst a3-risk a4-premarket a4-late a5-thematic a6-nightly a6-eod a7-eod a7-heavy a8-briefing a12-guard a13-chat`.
-Components: `c1-ingestion c2-dedup c3-gate c4-exec c5-mailer c6-dashboard c7-watchdog(.timer) c8-regime c10-scanner`.
-Inference: `llama-server` (triage, :8080), `llama-analyst` (:8081, Qwen3.6-27B-UD-Q5_K_M with MTP speculative decoding), `llama-heavy` (:8082, shadow/upgrade staging).
+Long running agents (always active): `a1-triage a2-analyst a3-risk a12-guard a13-chat`.
+Scheduled agents (oneshot, each driven by a `.timer` of the same name; `inactive` between runs is normal): `a4-premarket a4-late a5-thematic a6-nightly a6-eod a7-eod a8-briefing`. There is no `a7-heavy` unit.
+Long running components: `c1-ingestion c2-dedup c3-gate c4-exec c6-dashboard c8-regime c10-scanner`.
+Scheduled components (oneshot plus `.timer`): `c5-mailer c7-watchdog`.
+Support timers (oneshot plus `.timer`): `earnings-calendar macro-fetch pipeline-backup pipeline-nav-snapshot queue-prune thesis-entry`. Vector store: `qdrant`.
+Inference: `llama-a1` (:8080, A1 triage, Qwen3.5-9B Q6_K), `llama-a2` (:8081, A2/A3 analyst, Qwen3.6-27B-UD-Q5_K_M with MTP speculative decoding), `llama-a2b` (:8082, shadow analyst, bench only, normally stopped), `llama-heavy` (:8084, off-hours batch, manual start only, never during market hours). `ops/systemd/llama-analyst.service` is a stale unit file that is not installed; ignore it.
 Health: `curl -s http://127.0.0.1:8081/health`. Heartbeats: `journal.health`.
 
 Control with `sudo -n systemctl ...` and logs with `sudo -n journalctl -u <unit> -n 200 --no-pager`. Sudo is scoped to systemctl, journalctl, and /etc/pipeline read helpers. If a command needs more than that, stop and tell Ian exactly what to run himself.
