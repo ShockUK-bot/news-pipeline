@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.8` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.9` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.
@@ -34,7 +34,7 @@ Scheduled agents (oneshot, each driven by a `.timer` of the same name; `inactive
 Long running components: `c1-ingestion c2-dedup c3-gate c4-exec c6-dashboard c8-regime c10-scanner`.
 Scheduled components (oneshot plus `.timer`): `c5-mailer c7-watchdog`.
 Support timers (oneshot plus `.timer`): `earnings-calendar macro-fetch pipeline-backup pipeline-nav-snapshot queue-prune thesis-entry`. Vector store: `qdrant`.
-Inference: `llama-a1` (:8080, A1 triage, Qwen3.5-9B Q6_K), `llama-a2` (:8081, A2/A3 analyst, Qwen3.6-27B-UD-Q5_K_M with MTP speculative decoding), `llama-a2b` (:8082, shadow analyst, bench only, normally stopped), `llama-heavy` (:8084, off-hours batch, manual start only, never during market hours). `ops/systemd/llama-analyst.service` is a stale unit file that is not installed; ignore it.
+Inference: `llama-a1` (:8080, A1 triage, Qwen3.5-9B Q6_K), `llama-a2` (:8081, A2/A3 analyst, Qwen3.8-27B-UD-Q5_K_M with MTP speculative decoding; journal `model_id` said 3.6 from 08-22 to the v0.14.9 restart), `llama-a2b` (:8082, shadow analyst, bench only, normally stopped), `llama-heavy` (:8084, off-hours batch, manual start only, never during market hours). `ops/systemd/llama-analyst.service` is a stale unit file that is not installed; ignore it.
 Health: `curl -s http://127.0.0.1:8081/health`. Heartbeats: `journal.health`.
 
 Control with `sudo -n systemctl ...` and logs with `sudo -n journalctl -u <unit> -n 200 --no-pager`. Sudo is scoped to systemctl, journalctl, and /etc/pipeline read helpers. If a command needs more than that, stop and tell Ian exactly what to run himself.

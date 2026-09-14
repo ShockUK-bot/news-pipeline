@@ -9,7 +9,7 @@
 model:
   backend: llamacpp            # llamacpp | stub
   endpoint: "http://127.0.0.1:8081"   # Analyst slot — SHARED with A2/A12
-  model_id: "qwen3-32b-q5_k_m"
+  model_id: "qwen3.8-27b-q5_k_m"   # v0.14.9: corrected (was the July 32B string)
   temperature: 0.0
   max_tokens: 900              # answers are prose; keep generations short so a
                                # chat turn can't hog the slot for long

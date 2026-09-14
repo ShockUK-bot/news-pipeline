@@ -66,7 +66,7 @@ heavy:
 analyst_fallback:
   enabled: true
   endpoint: "http://127.0.0.1:8081"
-  model_id: "qwen3.6-27b-q5_k_m"
+  model_id: "qwen3.8-27b-q5_k_m"   # v0.14.9: corrected
   wake:
     enabled: true
     command: "sudo systemctl start llama-a2.service"

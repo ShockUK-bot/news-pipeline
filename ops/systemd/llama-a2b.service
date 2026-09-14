@@ -1,7 +1,8 @@
 [Unit]
-# Shadow Analyst slot — Qwen3.8-27B on :8082. MANUAL START ONLY.
-# Exists so the new analyst model can be benchmarked against the live
-# Qwen3.6-27B on :8081 without touching a single line of pipeline config.
+# Shadow Analyst slot on :8082. MANUAL START ONLY.
+# Exists so a candidate model or llama.cpp build can be benchmarked against
+# the live analyst on :8081 without touching a single line of pipeline
+# config. (Originally Qwen3.8-27B vs the then-live 3.6; 3.8 went live 08-22.)
 # Nothing in the pipeline calls :8082. Stop it when the bench is done.
 Description=llama-server Shadow Analyst slot (bench only) - Qwen3.8-27B on :8082
 After=network-online.target

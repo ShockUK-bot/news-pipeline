@@ -2,12 +2,12 @@
 model:
   backend: llamacpp            # llamacpp | stub
   endpoint: "http://127.0.0.1:8081"   # Analyst slot (shared with A2/A3/A13)
-  model_id: "qwen3.6-27b-q5_k_m"
+  model_id: "qwen3.8-27b-q5_k_m"   # v0.14.9: corrected, :8081 has served 3.8 since 08-22
   temperature: 0.0
   max_tokens: 700              # verdicts are small; keeps slot contention low
   timeout_secs: 120
   retries_on_invalid: 1
-  disable_thinking: true       # v0.14.5 — same qwen3.6-27b thinking-leak bug as
+  disable_thinking: true       # v0.14.5 — same 27B hybrid-model thinking-leak bug as
                                # A2 (see config/a2.yaml). The guard's "is the
                                # thesis broken NOW" verdict is JSON; without this
                                # it can dissolve into prose and fail closed.

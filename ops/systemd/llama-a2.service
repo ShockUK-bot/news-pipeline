@@ -1,5 +1,5 @@
 [Unit]
-Description=llama-server Analyst slot (A2/A3 discretion) — Qwen3.6-27B Q5_K_M on :8081
+Description=llama-server Analyst slot (A2/A3 discretion) — Qwen3.8-27B UD Q5_K_M (MTP draft) on :8081
 After=network-online.target
 [Service]
 Type=simple

@@ -25,14 +25,17 @@ def _cfg(name):
     return yaml.safe_load((REPO / "config" / name).read_text())
 
 
-# ---- the fix: every qwen3.6-27b JSON producer disables thinking -------------
+# ---- the fix: every 27b-slot JSON producer disables thinking ----------------
 
 @pytest.mark.parametrize("cfg_name", ["a2.yaml", "a12.yaml", "risk.yaml"])
 def test_thinking_disabled_on_the_reasoning_model(cfg_name):
     """The 2026-09-03 break: a thinking model on the live trade path without
-    disable_thinking. All three live-path 27b consumers must set it true."""
+    disable_thinking. All three live-path 27b consumers must set it true.
+    v0.14.9: the guard checks for the 27b slot, not one version string (the
+    slot has served Qwen3.8-27B since 08-22; the string was corrected later)."""
     m = _cfg(cfg_name)["model"]
-    assert m["model_id"].startswith("qwen3.6-27b"), "test guards the 27b slot"
+    assert m["model_id"].startswith("qwen3.") and "-27b" in m["model_id"], \
+        "test guards the 27b slot"
     assert m.get("disable_thinking") is True, (
         f"{cfg_name} runs a thinking model without disable_thinking — "
         "this is the 2026-09-03 65%-invalid-output bug")
