@@ -106,16 +106,29 @@ SYSTEM_PROMPT = (
 )
 
 FETCH_SQL = """
+WITH recent AS (
+    SELECT DISTINCT ON (item_id) item_id, ts
+    FROM journal.decisions
+    WHERE stage = 'ANALYST'
+      AND ts > now() - interval '14 days'
+      AND item_id IS NOT NULL
+    ORDER BY item_id, ts DESC
+)
 SELECT n.headline, n.summary, n.source, n.source_tier, n.symbols
-FROM journal.decisions d
-JOIN news.news_items n
-  ON n.item_id = d.item_id AND n.revision = COALESCE(d.revision, n.revision)
-WHERE d.stage = 'ANALYST'
-  AND d.ts > now() - interval '14 days'
-  AND n.headline IS NOT NULL
-ORDER BY d.ts DESC
+FROM recent r
+JOIN LATERAL (
+    SELECT headline, summary, source, source_tier, symbols
+    FROM news.news_items
+    WHERE item_id = r.item_id
+    ORDER BY revision DESC
+    LIMIT 1
+) n ON n.headline IS NOT NULL
+ORDER BY r.ts DESC
 LIMIT %s
 """
+# v0.14.9: journal.decisions has item_revision, not revision (CLAUDE.md
+# gotcha); the fix above shipped in the 08-22 commit line that was discarded
+# by the reset, so the script kept the broken join until 2026-09-14.
 
 FALLBACK_SQL = """
 SELECT headline, summary, source, source_tier, symbols
@@ -128,7 +141,8 @@ LIMIT %s
 
 
 def load_items(dsn: str, n: int) -> list[dict]:
-    with psycopg.connect(dsn) as conn:
+    with psycopg.connect(dsn,
+                         options="-c statement_timeout=60000") as conn:
         with conn.cursor() as cur:
             cur.execute(FETCH_SQL, (n,))
             rows = cur.fetchall()
