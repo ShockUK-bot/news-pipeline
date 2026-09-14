@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.7` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.8` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.
@@ -70,6 +70,7 @@ US market hours are 08:30 to 15:00 America/Chicago, Monday to Friday. Check with
 - GitHub push failures over HTTPS are hygiene, not deploy blockers. Report them; do not block a rollout on them.
 - A git stash from 2026-09-11 holds the pre v0.14.4 files as a safety archive. Do not drop it without asking.
 - Resolved 2026-09-11: the `journal.health` `risk` heartbeat was genuinely stale (about 11,400 minutes old on the morning of 2026-09-11). Cause: the v0.14.4 changeset (periodic heartbeats for risk, dedup and chat, `common/health.py`, watchdog freshness checks) had been tagged but never written to the working tree, so those services only wrote a heartbeat at startup. A re-sync on 2026-09-11 restored the files from the v0.14.5 tag and restarted a1, a2, a3, a13, c2 and c4 at 16:45 CT. The pre re-sync files are in the stash above. Lesson: after tagging, confirm the working tree matches the tag (`git diff <tag> --stat` should be empty) before restarting.
+- `config/shorting.yaml` `mode` is the whole short selling switch (`live` since v0.14.8, 2026-09-14). It was silently reverted to `shadow` once (a `git reset` on 2026-08-22 that nobody restarted for) and shorts stopped for three weeks unnoticed. If shorts seem to have stopped, check that line first, then `journal.decisions` for `SHADOW_SHORT` rows. Services read it at startup only; a file change without a restart of a3-risk, c3-gate and c4-exec does nothing until the next restart.
 - `journal.health` rows named `ingestion:<source>` (for example `ingestion:alpaca`) record connection events (connect, drop, reconnect), not liveness; an old timestamp there means a long held connection, not a dead feed. Liveness is the `ingestion` heartbeat and the GapMonitor rows (`ingestion:alpaca_benzinga`, `ingestion:edgar`, `ingestion:rss`).
 - `journal.health` keeps only the latest row per component (primary key on `component`), so it has no history. To find out when a heartbeat went stale or recovered, read the c7-watchdog journal: `sudo -n journalctl -u c7-watchdog --since <date> --no-pager | grep 'alert queued'`.
 

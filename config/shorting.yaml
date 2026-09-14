@@ -17,7 +17,13 @@
 # while scanner + news_long keep shadowing.
 
 shorting:
-  mode: shadow
+  mode: live                  # v0.14.8 (2026-09-14): live again. Was flipped
+                              # live on 2026-08-15 as an uncommitted local
+                              # edit; a `git reset` to origin/main on
+                              # 2026-08-22 13:17 CT silently wrote it back
+                              # to shadow, which took effect at the 08-27
+                              # reboot. Committed this time so no reset or
+                              # re-sync can revert it unnoticed.
   lanes:
     news_short: true          # news lane, SHORT horizon (intraday-days)
     news_long: true           # news lane, LONG horizon (weeks-months)
