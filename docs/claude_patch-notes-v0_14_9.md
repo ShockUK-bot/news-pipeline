@@ -39,4 +39,4 @@ Bundled with the v0.14.8 restart (`a3-risk`, `c3-gate`, `c4-exec`), so one eveni
 
 ## Deploy record
 
-(filled in after the restart)
+Deployed 2026-09-14 15:59 CT (market closed) with operator go, bundled with v0.14.8. Installed `llama-heavy.service` and `llama-a2.service` refreshed from `ops/systemd/` (now identical, `daemon-reload` done, model servers not restarted). `a2-analyst a3-risk a12-guard a13-chat c3-gate c4-exec` restarted: all active, `config version active 272536273a34`, zero errors, heartbeats fresh. Note for future deploys: the sudo rule for `cp` matches only the absolute path `/opt/pipeline/ops/systemd/...`; a relative path asks for a password and aborts the chain.

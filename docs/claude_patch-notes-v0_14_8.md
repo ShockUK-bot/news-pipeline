@@ -32,4 +32,4 @@ Set `mode: shadow` in `config/shorting.yaml`, commit, restart the same three ser
 
 ## Deploy record
 
-(filled in after the restart)
+Deployed 2026-09-14 15:59 CT (market closed) with operator go, bundled with v0.14.9: `c7-watchdog.timer` paused, `a2-analyst a3-risk a12-guard a13-chat c3-gate c4-exec` restarted, timer resumed. All six active, journals show `config version active 272536273a34` (the v0.14.9 commit, which includes this change), zero errors; `analyst`, `risk`, `guard`, `chat`, `gate`, `exec`, `deadman` heartbeats fresh within a minute. Shorting is live from the 2026-09-15 session.
