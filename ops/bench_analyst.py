@@ -375,8 +375,10 @@ async def main() -> None:
     ap.add_argument("--only", choices=["a", "b"], default=None,
                     help="bench a single endpoint")
     ap.add_argument("--a-think", action="store_true",
-                    help="let endpoint A think (default: A relies on its "
-                         "unit-level suppression, so no kwarg is sent)")
+                    help="let endpoint A think (default: send the pipeline's "
+                         "enable_thinking=false kwarg to A, exactly as to B; "
+                         "CLAUDE.md: a bench that omits it measures server "
+                         "defaults, not the pipeline)")
     ap.add_argument("--b-think", action="store_true",
                     help="let endpoint B think. Default is OFF: Qwen3.8 only "
                          "stops thinking via the per-request kwarg.")
@@ -394,9 +396,12 @@ async def main() -> None:
 
     rows = []
     if args.only != "b":
+        # v0.14.9: A used to be hardcoded no_think=False ("server default"),
+        # so every A/B compared a thinking live slot against a non-thinking
+        # candidate. Both sides now get the pipeline's request shape.
         rows.append(await bench(args.a_name, args.a, args.a_name, items,
                                 args.max_tokens, args.timeout,
-                                no_think=False))
+                                no_think=not args.a_think))
     if args.only != "a":
         rows.append(await bench(args.b_name, args.b, args.b_name, items,
                                 args.max_tokens, args.timeout,
