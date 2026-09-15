@@ -26,8 +26,13 @@ lane:
   macro_context: true
 
 store:
-  stale_weeks: 6               # ACTIVE thesis with no evidence in N weeks
-                               # -> EXPIRED (code rule, model cannot veto)
+  stale_weeks: 4               # ACTIVE thesis with no evidence in N weeks
+                               # -> EXPIRED (code rule, model cannot veto).
+                               # v0.14.11: was 6; aligned with A6's
+                               # review.stale_weeks (4) so the two staleness
+                               # clocks agree — a position A6 calls stale
+                               # for four weeks no longer sits on a thesis
+                               # the store still calls ACTIVE for two more.
 
   # v0.12.23 — bootstrap mode. Below this many ACTIVE theses the prompt
   # flips from "new theses are rare" to "seed the store; zero is a failure".

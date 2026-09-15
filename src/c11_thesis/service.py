@@ -182,6 +182,36 @@ def tighten_stop(exit_policy: dict, last_price: float) -> tuple[dict, float] | N
     return policy, target
 
 
+NIGHTLY_REVIEW_DETAIL = "A6 nightly review (recommendation)"
+
+
+def review_exit_due(verdicts: list[dict], n: int) -> bool:
+    """v0.14.11 — the A6-to-C11 bridge (baseline: models propose, code
+    disposes). `verdicts` are the newest-first `new_value` dicts of the
+    position's A6 nightly POSITION_REVIEW events. True when at least `n`
+    exist and the newest `n` ALL say verdict == "exit" with
+    thesis_intact == false. One night's opinion never moves a stop; n
+    consecutive nights of "this thesis is broken, get out" do, through the
+    same tighten-only dead-exit arm C11 already uses for EXPIRED and
+    INVALIDATED theses. n <= 0 disables the bridge."""
+    if n <= 0 or len(verdicts) < n:
+        return False
+    return all(str(v.get("verdict", "")).lower() == "exit"
+               and v.get("thesis_intact") is False
+               for v in verdicts[:n])
+
+
+def management_action(status: str, verdicts: list[dict], mcfg: dict) -> str | None:
+    """Pure decision for one open thesis position: "DEAD" (thesis left
+    ACTIVE), "REVIEW" (A6 review bridge), or None (leave the ladder alone)."""
+    if status != "ACTIVE" and bool(mcfg.get("exit_dead_theses", True)):
+        return "DEAD"
+    if status == "ACTIVE" and review_exit_due(
+            verdicts, int(mcfg.get("exit_on_review_verdicts", 3) or 0)):
+        return "REVIEW"
+    return None
+
+
 # --------------------------------------------------------------------------
 # store reads
 # --------------------------------------------------------------------------
@@ -239,6 +269,25 @@ async def thesis_status_by_decision(decision_ids: list[int]) -> dict[int, str]:
         return {int(r[0]): r[1] for r in await cur.fetchall()}
 
 
+async def recent_nightly_verdicts(position_id: int, n: int) -> list[dict]:
+    """Newest-first new_value dicts of the last n A6 nightly review events."""
+    if n <= 0:
+        return []
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT new_value FROM journal.position_events
+               WHERE position_id=%s AND event_type='POSITION_REVIEW'
+                 AND actor='A6' AND detail=%s
+               ORDER BY ts DESC LIMIT %s""",
+            (position_id, NIGHTLY_REVIEW_DETAIL, n))
+        rows = await cur.fetchall()
+    out = []
+    for (v,) in rows:
+        out.append(json.loads(v) if isinstance(v, str) else (v or {}))
+    return out
+
+
 async def plan_already_done(run_date: str) -> bool:
     pool = await get_pool()
     async with pool.connection() as conn:
@@ -292,14 +341,33 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
     if thesis_pos:
         status_by_dec = await thesis_status_by_decision(
             [int(p["thesis_decision_id"]) for p in thesis_pos])
+        n_review = int(mcfg.get("exit_on_review_verdicts", 3) or 0)
         for p in thesis_pos:
             status = status_by_dec.get(int(p["thesis_decision_id"]), "MISSING")
             mark = float(p["last_price"] or p["avg_entry"])
-            if status != "ACTIVE" and bool(mcfg.get("exit_dead_theses", True)):
+            verdicts = (await recent_nightly_verdicts(p["position_id"], n_review)
+                        if status == "ACTIVE" else [])
+            action = management_action(status, verdicts, mcfg)
+            if action in ("DEAD", "REVIEW"):
                 tightened = tighten_stop(p["exit_policy"], mark)
                 if tightened is None:
                     continue
                 policy, new_stop = tightened
+                if action == "DEAD":
+                    label = status
+                    event_reason = f"thesis {status} — exit armed"
+                    dec_action = "THESIS_DEAD_EXIT"
+                    dec_reason = (f"thesis no longer ACTIVE ({status}) — "
+                                  f"stop tightened to {new_stop}")
+                else:
+                    # v0.14.11: A6 said "exit, thesis broken" n nights running
+                    label = "REVIEW_EXIT"
+                    event_reason = (f"A6 exit verdict x{n_review} "
+                                    f"(thesis_intact=false) — exit armed")
+                    dec_action = "THESIS_REVIEW_EXIT"
+                    dec_reason = (f"{n_review} consecutive A6 nightly exit "
+                                  f"verdicts with thesis broken — stop "
+                                  f"tightened to {new_stop}")
                 async with pool.connection() as conn:
                     async with conn.transaction():
                         await conn.execute(
@@ -311,20 +379,21 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
                                  (position_id, event_type, actor, new_value)
                                VALUES (%s,'STOP_TIGHTENED','C11',%s)""",
                             (p["position_id"],
-                             jb({"reason": f"thesis {status} — exit armed",
+                             jb({"reason": event_reason,
                                  "new_stop": new_stop, "mark": mark})))
                         await write_decision(
                             signal_id=f"thesis-mgmt-{run_date}",
                             ticker=p["ticker"], stage="RISK", agent="C11",
-                            action="THESIS_DEAD_EXIT",
+                            action=dec_action,
                             payload={"run_date": run_date,
                                      "position_id": p["position_id"],
                                      "thesis_status": status,
+                                     "review_verdicts": verdicts[:n_review]
+                                     if action == "REVIEW" else None,
                                      "new_stop": new_stop, "mark": mark},
-                            reason=f"thesis no longer ACTIVE ({status}) — "
-                                   f"stop tightened to {new_stop}", conn=conn)
+                            reason=dec_reason, conn=conn)
                 dead_armed.append({"ticker": p["ticker"], "stop": new_stop,
-                                   "status": status})
+                                   "status": label})
                 continue
             if bool(mcfg.get("trim_before_earnings", True)):
                 try:

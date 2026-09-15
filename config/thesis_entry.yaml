@@ -47,6 +47,15 @@ management:                    # nightly pass over open thesis positions
                                # to just under last price: the existing L1
                                # stop machinery exits it next session.
                                # Tighten-only, never widens.
+  exit_on_review_verdicts: 3   # v0.14.11 — the A6-to-C11 bridge. When the
+                               # last N A6 nightly reviews of a position ALL
+                               # say verdict=exit with thesis_intact=false,
+                               # C11 arms the same tighten-only exit as for
+                               # a dead thesis (journaled THESIS_REVIEW_EXIT)
+                               # and C4 sells at the next open. Before this,
+                               # A6 "exit" verdicts were email only: RIOT got
+                               # 13 in a row (08-28 to 09-14) and nothing
+                               # moved. 0 disables the bridge.
   trim_before_earnings: true   # operator policy: into earnings WITH a gain,
   trim_min_gain_R: 0.5         # lock half; reassess re-entry after the
   trim_fraction: 0.5           # print. v1 journals + emails the TRIM RECO

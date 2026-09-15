@@ -17,6 +17,10 @@ Supersedes `claude_current-state-2026-09-13c.md`.
 4. Bench script repaired (broken SQL join, and endpoint A never received the thinking off kwarg, so all earlier A/B numbers were biased in the candidate's favour).
 5. Deploy note: the sudo rule for `cp` into `/etc/systemd/system/` only matches the absolute `/opt/pipeline/ops/systemd/...` path.
 
+## Added later on 09-15: v0.14.11
+
+Operator asked why nightly and morning emails kept recommending exits (RIOT) that never happened. Cause: A6 was recommendation only by design, no operator exit path existed, and the thesis lane's only time stop is the thesis store, whose 6 week staleness clock disagreed with A6's 4 week one. Operator chose no human in the loop. Built: the A6 to C11 bridge (three consecutive "exit, thesis broken" nightly verdicts arm the tighten only exit) and A5 `stale_weeks` 6 to 4. Oneshots, no restart. Expected first effect: RIOT and INVX exit at the 09-16 open. See `claude_patch-notes-v0_14_11.md`.
+
 ## Open items
 
 1. **First heavy runs on b10970**: A6 nightly 19:00 CT today, A4 premarket 06:00 CT tomorrow, A7 eod 15:35 CT tomorrow. Check each journal once; A4 p50 was 141 s per call and should improve.
