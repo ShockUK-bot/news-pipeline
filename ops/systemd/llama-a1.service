@@ -4,11 +4,14 @@ After=network-online.target
 [Service]
 Type=simple
 User=trader
-ExecStart=/opt/llama.cpp/build/bin/llama-server \
+# build-2026-09 = llama.cpp b10970 (2026-09-15; was build/ = b10064).
+# ROLLBACK: path back to /opt/llama.cpp/build/bin and --load-mode none ->
+# --no-mmap (b10970 removed --no-mmap; --load-mode none is its replacement).
+ExecStart=/opt/llama.cpp/build-2026-09/bin/llama-server \
   -m /opt/models/qwen3.5-9b-q6_k.gguf \
   --host 127.0.0.1 --port 8080 \
   -c 8192 --parallel 2 \
-  -ngl 999 --no-mmap --reasoning-budget 0 --chat-template-kwargs '{"enable_thinking":false}' --grammar-file /opt/llama.cpp/grammars/json.gbnf
+  -ngl 999 --load-mode none --reasoning-budget 0 --chat-template-kwargs '{"enable_thinking":false}' --grammar-file /opt/llama.cpp/grammars/json.gbnf
 Restart=always
 RestartSec=5
 StandardOutput=journal

@@ -4,11 +4,17 @@ After=network-online.target
 [Service]
 Type=simple
 User=trader
-ExecStart=/opt/llama.cpp/build-2026-08/bin/llama-server \
+# build-2026-09 = llama.cpp b10970 (2026-09-14). Bench vs build-2026-08
+# (b10573), same model, same request shape, thinking off on both: p50 12.07s
+# vs 14.62s (17% faster), 20/20 schema, 0 empty, 0 errors, 0 magnitude
+# violations (docs/bench-analyst-b10573-vs-b10970-2026-09-14.txt).
+# ROLLBACK: path back to build-2026-08 and --load-mode none -> --no-mmap
+# (b10970 removed --no-mmap; --load-mode none is its replacement).
+ExecStart=/opt/llama.cpp/build-2026-09/bin/llama-server \
   -m /opt/models/qwen3.8-27b-q5_k_m.gguf \
   --host 127.0.0.1 --port 8081 --jinja --reasoning-effort low --spec-type draft-mtp \
   -c 32768 \
-  -ngl 999 --no-mmap  
+  -ngl 999 --load-mode none
 Restart=always
 RestartSec=5
 StandardOutput=journal

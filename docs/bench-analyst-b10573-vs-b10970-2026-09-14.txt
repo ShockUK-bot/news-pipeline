@@ -1,0 +1,68 @@
+Loading 20 recent news items from the journal...
+Loaded 20 items.
+
+--- b10573-live  (http://127.0.0.1:8081)  thinking=OFF (per-request) ---
+  [  1/20] PASS  12.15s    20.7 tok/s  Fly-E Group Files Amended Form8, Appoints Qiang Chen As 
+  [  2/20] PASS  20.66s    10.6 tok/s  Uranium Royalty Q1 EPS $0.10 Beats $0.06 Estimate, Sales
+  [  3/20] PASS  22.44s    12.7 tok/s  8-K - byNordic Acquisition Corp (0001801417) (Filer)
+  [  4/20] PASS  23.19s    10.4 tok/s  William Blair Downgrades Baldwin Insurance to Market Per
+  [  5/20] PASS  18.17s    14.3 tok/s  8-K - Addus HomeCare Corp (0001468328) (Filer)
+  [  6/20] PASS  13.70s    17.7 tok/s  Planet Ventures Announces Proposed Share Consolidation
+  [  7/20] PASS  12.81s    20.9 tok/s  8-K - BKV Corp (0001838406) (Filer)
+  [  8/20] PASS  16.32s    15.6 tok/s  8-K - Z Squared Inc. (0001759186) (Filer)
+  [  9/20] PASS  19.39s    11.4 tok/s  PharmaCyte Biotech Q1 EPS $(0.54) Up From $(1.23) YoY, S
+  [ 10/20] PASS  14.62s    18.7 tok/s  8-K - ODYSSEY MARINE EXPLORATION INC (0000798528) (Filer
+  [ 11/20] PASS  12.51s    20.7 tok/s  MindWalk Holdings Q1 EPS $(0.09) Misses $(0.05) Estimate
+  [ 12/20] PASS  10.59s    21.1 tok/s  Heart Test Laboratories Q1 EPS $(0.86) Up From $(1.58) Y
+  [ 13/20] PASS  17.36s    16.1 tok/s  8-K - UPEXI, INC. (0001775194) (Filer)
+  [ 14/20] PASS  11.40s    21.2 tok/s  STEIN MITCHELL ATTORNEYS REPRESENT WHISTLEBLOWERS IN NEA
+  [ 15/20] PASS  16.83s    11.2 tok/s  Veea Inc. and NovaGen announce potential merger to launc
+  [ 16/20] PASS  13.26s    21.7 tok/s  8-K - CitroTech Inc. (0000894556) (Filer)
+  [ 17/20] PASS  15.02s    18.1 tok/s  Enova International Sees Q3 Adj EPS $4.37 vs $4.34 Est; 
+  [ 18/20] PASS  10.32s    22.1 tok/s  AIxCrypto Says Gold King Arthur Holding Limited Files Pr
+  [ 19/20] PASS  12.15s    23.0 tok/s  8-K - AIM ImmunoTech Inc. (0000946644) (Filer)
+  [ 20/20] PASS  10.64s    21.4 tok/s  Firefly Neuroscience Announces Termination Of CFO Paul K
+
+--- b10970-new  (http://127.0.0.1:8082)  thinking=OFF (per-request) ---
+  [  1/20] PASS  11.72s    21.8 tok/s  Fly-E Group Files Amended Form8, Appoints Qiang Chen As 
+  [  2/20] PASS  11.87s    20.6 tok/s  Uranium Royalty Q1 EPS $0.10 Beats $0.06 Estimate, Sales
+  [  3/20] PASS  12.48s    23.4 tok/s  8-K - byNordic Acquisition Corp (0001801417) (Filer)
+  [  4/20] PASS  14.76s    16.4 tok/s  William Blair Downgrades Baldwin Insurance to Market Per
+  [  5/20] PASS  27.39s     9.5 tok/s  8-K - Addus HomeCare Corp (0001468328) (Filer)
+  [  6/20] PASS  11.87s    18.3 tok/s  Planet Ventures Announces Proposed Share Consolidation
+  [  7/20] PASS  19.97s    13.3 tok/s  8-K - BKV Corp (0001838406) (Filer)
+  [  8/20] PASS  12.07s    21.9 tok/s  8-K - Z Squared Inc. (0001759186) (Filer)
+  [  9/20] PASS  10.05s    22.3 tok/s  PharmaCyte Biotech Q1 EPS $(0.54) Up From $(1.23) YoY, S
+  [ 10/20] PASS  11.85s    22.0 tok/s  8-K - ODYSSEY MARINE EXPLORATION INC (0000798528) (Filer
+  [ 11/20] PASS  11.59s    20.7 tok/s  MindWalk Holdings Q1 EPS $(0.09) Misses $(0.05) Estimate
+  [ 12/20] PASS  13.77s    18.2 tok/s  Heart Test Laboratories Q1 EPS $(0.86) Up From $(1.58) Y
+  [ 13/20] PASS  12.99s    20.6 tok/s  8-K - UPEXI, INC. (0001775194) (Filer)
+  [ 14/20] PASS  11.24s    21.5 tok/s  STEIN MITCHELL ATTORNEYS REPRESENT WHISTLEBLOWERS IN NEA
+  [ 15/20] PASS   8.95s    21.1 tok/s  Veea Inc. and NovaGen announce potential merger to launc
+  [ 16/20] PASS  13.11s    22.0 tok/s  8-K - CitroTech Inc. (0000894556) (Filer)
+  [ 17/20] PASS  12.32s    21.9 tok/s  Enova International Sees Q3 Adj EPS $4.37 vs $4.34 Est; 
+  [ 18/20] PASS  10.25s    21.9 tok/s  AIxCrypto Says Gold King Arthur Holding Limited Files Pr
+  [ 19/20] PASS  12.65s    21.7 tok/s  8-K - AIM ImmunoTech Inc. (0000946644) (Filer)
+  [ 20/20] PASS  10.43s    21.9 tok/s  Firefly Neuroscience Announces Termination Of CFO Paul K
+
+==============================================================================
+SUMMARY
+==============================================================================
+slot                       p50     p95   tok/s  out tok   schema  empty  errs
+------------------------------------------------------------------------------
+b10573-live             14.62s  22.44s    17.5      250    20/20      0     0
+b10970-new              12.07s  19.97s    20.1      250    20/20      0     0
+------------------------------------------------------------------------------
+  p50 latency is the decision metric. tok/s is diagnostic only:
+  a model decoding 2x faster while emitting 3x the tokens is SLOWER.
+
+  b10970-new is 17% FASTER than b10573-live at p50 latency.
+  Contract adherence: b10573-live 20/20, b10970-new 20/20.
+
+GO criteria for cutover (all four must hold):
+  1. candidate p50 <= live p50            [wall clock, not tok/s]
+  2. candidate schema_ok >= live schema_ok
+  3. candidate empty == 0 and errors == 0
+  4. candidate magnitude_bad == 0         [non-negotiable]
+
+bench exit=0
