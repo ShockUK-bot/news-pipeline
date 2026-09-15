@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.9` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.10` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.
@@ -23,7 +23,7 @@ Core principles, locked in and not up for revision:
 - Code: `src/`. Config: `config/*.yaml` (a1.yaml, a2.yaml, risk.yaml, scanner.yaml, watchdog.yaml, ...). Migrations: `schema/migrations/NNN-name.sql`. systemd units: `ops/systemd/*.service` (installed copies in `/etc/systemd/system/`). Tests: `tests/unit/`.
 - Python venv: `/opt/pipeline/.venv`. Run tests with `env -u PIPELINE_DSN .venv/bin/python -m pytest tests/unit -q`.
 - Secrets: `/etc/pipeline/pipeline.env` and `mailer.env`. You are denied reading them. Confirm presence of a key with `sudo -n grep -c KEYNAME /etc/pipeline/pipeline.env`; never print values. Interactive shell env: `export PYTHONPATH=src && set -a && source /etc/pipeline/pipeline.env && set +a` (the file is owned by `trader`; sourcing is fine, catting is not. There is no `.env` symlink in the repo).
-- Models: `/opt/models`. llama.cpp: `/opt/llama.cpp`, out of tree builds in dated dirs (`build-2026-08/`); never overwrite the running binary, build beside it.
+- Models: `/opt/models`. llama.cpp: `/opt/llama.cpp` (owned by `trader` since 2026-09-14), out of tree builds in dated dirs; never overwrite the running binary, build beside it. All three live units run `build-2026-09/` (b10970, from the `src-b10970` worktree) since 2026-09-15; `build/` (b10064) and `build-2026-08/` (b10573) are kept as rollback targets. b10970 removed `--no-mmap`; the replacement is `--load-mode none`.
 - Runtime folders that are always untracked and must be left alone: `ops/soak-logs/`, `src/news_pipeline.egg-info/`, `var/`.
 - Docs the operator uploads to his chat project live in `docs/` (see Handoff).
 
