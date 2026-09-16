@@ -204,7 +204,11 @@ class A1Service:
                          # v0.12.11: primary news signals only — the
                          # synthetic (sympathy) lane keeps eh_shadow off
                          eh_shadow=bool(self.router_cfg.get(
-                             "eh_shadow_enabled", False)))
+                             "eh_shadow_enabled", False)),
+                         # v0.14.13: best ticker-bearing signals also feed
+                         # the thesis lane (None/absent = off)
+                         thesis_copy_min_score=self.router_cfg.get(
+                             "thesis_copy_min_score"))
 
         triaged_body = {
             "item_ref": {"item_id": item_id, "revision": revision,

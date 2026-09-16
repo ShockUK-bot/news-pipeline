@@ -4,7 +4,13 @@ lane:
                                # bulk-expire (also the backlog drain)
   top_k: 25                    # items claimed + modeled per nightly run
   deep_top_k: 60               # ...on the Sunday deep pass
-  force_deep: false            # manual override: treat tonight as deep
+  force_deep: true             # v0.14.13 (2026-09-15): EVERY night is a deep
+                               # pass. The nightly lane only ever carried
+                               # ticker-less items (router rule 3), so the
+                               # weekly wide read was the store's only
+                               # ticker-bearing input and no thesis was
+                               # created after the 08-10 seed. Cost: ~5 min
+                               # on the heavy slot nightly instead of ~2.
 
   # v0.12.23 — the WIDE PASS. On deep runs only, A5 additionally reads the
   # last `wide_lookback_days` of ESCALATED news straight from the news store,
@@ -37,8 +43,13 @@ store:
   # v0.12.23 — bootstrap mode. Below this many ACTIVE theses the prompt
   # flips from "new theses are rare" to "seed the store; zero is a failure".
   # Automatic in both directions; see src/a5_thematic/prompt.py.
-  bootstrap_min_theses: 3
-  bootstrap_target: 5          # how many theses to ask for when seeding
+  bootstrap_min_theses: 6      # v0.14.13: was 3. With 4 ACTIVE the prompt
+                               # was in "new theses are rare" mode for five
+                               # weeks and proposed nothing. Seeding mode
+                               # now holds until the store has 6, then
+                               # reverts on its own.
+  bootstrap_target: 6          # per-night ask in seeding mode; capped at 6
+                               # by the NewThesis list schema (was 5)          # how many theses to ask for when seeding
 
 digest:
   email: true                  # nightly digest via journal.outbox (C5 mails)

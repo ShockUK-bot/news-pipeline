@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.12` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.14.13` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.

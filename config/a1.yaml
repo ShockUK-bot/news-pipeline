@@ -27,6 +27,15 @@ router:
                                  # claim ahead of the news backlog without
                                  # being able to starve it. 2026-08-19: all 6
                                  # waited 24-26 min behind news and died.
+  thesis_copy_min_score: 15      # v0.14.13: material, ticker-bearing signals
+                                 # scoring >= this ALSO get a copy on
+                                 # signal.thesis (origin thesis_copy) so A5
+                                 # can seed theses from real catalysts. Rule
+                                 # 3 only ever sent ticker-less items there.
+                                 # 15 = tier-1 high-urgency band, ~33/day of
+                                 # ~200 escalations (2026-09 sample); A5
+                                 # reads the top 60 nightly, the rest expire
+                                 # after a week. Remove the key to disable.
   # priority_score = tier_weight + urgency_weight + round(novelty*4) + corroboration_bonus
   tier_weight:        # by source_tier
     1: 6

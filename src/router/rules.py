@@ -39,9 +39,19 @@ class RoutingDecision:
     routes: tuple[Route, ...]   # possibly empty (DISCARD)
 
 
+THESIS_COPY_ORIGIN = "thesis_copy"
+
+
 def route(triage: TriageOutput, facts: RoutingFacts,
           overnight_base: int = 50, min_confidence: float = 0.0,
-          eh_shadow: bool = False) -> RoutingDecision:
+          eh_shadow: bool = False,
+          thesis_copy_min_score: int | None = None) -> RoutingDecision:
+    """v0.14.13 `thesis_copy_min_score`: a material, TICKER-BEARING signal
+    whose priority_score is at or above this also gets a copy on the thesis
+    lane (origin='thesis_copy', its own dedup key). Rule 3 only ever fed A5
+    ticker-less items, so the store could not seed a thesis from the
+    nightly lane at all (no thesis after the 08-10 seed). The analyst /
+    overnight routes are untouched. None disables."""
     routes: list[Route] = []
 
     # Rule 1 — guard fan-out happens regardless of the outcome below.
@@ -73,5 +83,13 @@ def route(triage: TriageOutput, facts: RoutingFacts,
         # real premarket path is unchanged.
         if eh_shadow and facts.eh_session:
             routes.append(Route(ANALYST_QUEUE, 100, origin="eh_shadow"))
+    # Rule 5 (v0.14.13) — the best ticker-bearing signals ALSO feed the
+    # thesis lane. Queue priority ascends, so a higher score claims first
+    # on A5's capped nightly read; the rest bulk-expire after a week.
+    if thesis_copy_min_score is not None \
+            and facts.priority_score >= thesis_copy_min_score:
+        routes.append(Route(THESIS_QUEUE,
+                            max(0, 100 - facts.priority_score),
+                            origin=THESIS_COPY_ORIGIN))
     return RoutingDecision("ESCALATE", tuple(routes))
 
