@@ -35,6 +35,10 @@ services:
     health: ingestion
     max_age_min: 10
     desc: news feed (Alpaca WS + EDGAR + RSS) — pipeline is blind without it
+  c12-burst:                   # v0.15.0 research stream, no orders
+    health: burst
+    max_age_min: 10
+    desc: real-time burst stream (Alpaca SIP websocket) — research table only
   c2-dedup:
     health: dedup
     max_age_min: 10

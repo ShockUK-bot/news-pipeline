@@ -1,0 +1,142 @@
+# C12 burst stream (v0.15.0) — research only, no order path.
+# Design and evidence: docs/claude_1pct-gain-design-2026-09-15.md.
+# Every number here is a starting point; tune from journal.burst_events.
+feed: sip                        # overridden by ALPACA_FEED; falls back to iex
+keep_secs: 2700                  # 45 min of 5-second buckets per symbol
+detect_interval_secs: 5
+
+universe:
+  from_journal: true             # tickers with ADV20 >= min_adv_dollars seen by
+  min_adv_dollars: 1000000000    # the scanner or the gate in the last N days
+  journal_days: 30
+  max_symbols: 400               # hard cap on the subscription
+  static:                        # liquid large caps the journal may not have
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - GOOGL
+    - META
+    - TSLA
+    - AVGO
+    - AMD
+    - NFLX
+    - COST
+    - WMT
+    - JPM
+    - V
+    - MA
+    - UNH
+    - LLY
+    - XOM
+    - CVX
+    - HD
+    - PG
+    - KO
+    - PEP
+    - MRK
+    - ABBV
+    - ORCL
+    - CRM
+    - ADBE
+    - INTC
+    - QCOM
+    - TXN
+    - MU
+    - AMAT
+    - LRCX
+    - KLAC
+    - ARM
+    - PLTR
+    - COIN
+    - HOOD
+    - MSTR
+    - SMCI
+    - DELL
+    - HPQ
+    - IBM
+    - CSCO
+    - NOW
+    - PANW
+    - CRWD
+    - SNOW
+    - UBER
+    - ABNB
+    - BKNG
+    - DIS
+    - NKE
+    - SBUX
+    - MCD
+    - BA
+    - CAT
+    - DE
+    - GE
+    - HON
+    - LMT
+    - RTX
+    - GS
+    - MS
+    - BAC
+    - WFC
+    - C
+    - SCHW
+    - BLK
+    - AXP
+    - PYPL
+    - SQ
+    - SHOP
+    - BABA
+    - PDD
+    - TSM
+    - ASML
+    - MRVL
+    - "ON"                       # quoted: bare ON parses as YAML true
+    - MCHP
+    - ADI
+    - VRT
+    - ANET
+    - CEG
+    - VST
+    - NEE
+    - GEV
+    - ETN
+    - FCX
+    - NEM
+    - OXY
+    - SLB
+    - COP
+    - PFE
+    - BMY
+    - AMGN
+    - GILD
+    - MRNA
+    - VRTX
+    - REGN
+    - ISRG
+    - TMO
+    - ABT
+    - DHR
+    - SPY
+    - QQQ
+    - IWM
+    - SMH
+  exclude: []
+
+detect:
+  session_start_ct: "08:36"      # 6 min warm-up after the 08:30 open
+  session_end_ct: "14:55"
+  stale_secs: 30                 # no print in 30 s -> skip the symbol
+  ret_60s: 0.004                 # |60 s return| >= 0.4% ...
+  ret_120s: 0.006                # ... or |120 s return| >= 0.6%
+  vol_window_secs: 60
+  baseline_secs: 1800            # median 5 s bucket volume over the prior 30 min
+  baseline_rth_only: true        # ignore premarket buckets in the baseline
+  min_baseline_buckets: 24       # need >= 2 min of RTH history
+  vol_mult: 4.0                  # window volume >= 4x baseline pace
+  extreme_secs: 1800             # new 30-min high (long) / low (short)
+  require_extreme: true
+  cooldown_secs: 900             # one event per symbol per 15 min
+  news_window_secs: 900          # A1 escalation within 15 min -> news_anchored row
+  horizon_secs: 1800             # forward path scored at +30 min
+  score_target: 0.01             # first-hit scoring bracket
+  score_stop: 0.007
