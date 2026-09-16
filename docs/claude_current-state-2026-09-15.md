@@ -21,6 +21,10 @@ Supersedes `claude_current-state-2026-09-13c.md`.
 
 Operator asked why nightly and morning emails kept recommending exits (RIOT) that never happened. Cause: A6 was recommendation only by design, no operator exit path existed, and the thesis lane's only time stop is the thesis store, whose 6 week staleness clock disagreed with A6's 4 week one. Operator chose no human in the loop. Built: the A6 to C11 bridge (three consecutive "exit, thesis broken" nightly verdicts arm the tighten only exit) and A5 `stale_weeks` 6 to 4. Oneshots, no restart. Expected first effect: RIOT and INVX exit at the 09-16 open. See `claude_patch-notes-v0_14_11.md`.
 
+## Added later on 09-15: Gate Lab review and v0.14.12
+
+`docs/claude_gatelab-review-2026-09-15.md`: 2,567 shadow outcomes say bullish news longs at the open have no edge (the live open handoff lane is −1,254 over 18 trades), bearish shorts do, and bullish 4 to 12 percent gaps fade into the close. Operator chose: fade lane as a shadow, open handoff floor now. v0.14.12 deployed 20:56 CT (`c3-gate` restart): `HANDOFF_UNMOVED` floor at 2 percent for bullish open handoffs (would have blocked 32 of the last 33), fade shadow lane journaling `rule='fade'` rows (expect 2 to 6 a week; first read at about 20 rows). Heavy slot confirmed fine on b10970 (A6 nightly and A5 both ran, zero errors).
+
 ## Open items
 
 1. **First heavy runs on b10970**: A6 nightly 19:00 CT today, A4 premarket 06:00 CT tomorrow, A7 eod 15:35 CT tomorrow. Check each journal once; A4 p50 was 141 s per call and should improve.

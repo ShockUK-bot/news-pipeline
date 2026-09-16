@@ -44,4 +44,4 @@ The Gate Lab RTH view groups by veto reason for every rule except `eh_shadow`, s
 
 ## Deploy record
 
-(filled in after the restart)
+Deployed 2026-09-15 20:56 CT (market closed) with operator go: `c7-watchdog.timer` paused, `c3-gate` restarted, timer resumed. `c3-gate` active, `config version active d57d2dbb464a`, zero errors, `gate` heartbeat fresh within a minute. First live session for the floor and the fade shadow: 2026-09-16.
