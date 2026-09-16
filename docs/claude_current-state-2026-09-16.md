@@ -25,6 +25,14 @@ Supersedes `claude_current-state-2026-09-15.md`.
 4. 06:00 CT A4 and 15:35 CT A7: first premarket and EOD runs on the new llama.cpp build (A6 nightly and A5 already ran fine on it).
 5. 20:30 CT: A5 digest with `deep: true`, `bootstrap: true`, and `NEW_THESIS` decisions.
 
+## Morning checklist results (09-16, 08:35 to 08:55 CT)
+
+1. **INVX exited at the open**: STOP 48 at 29.71 at 08:35, −36.96 realised, `slip_px` +0.06. **RIOT did not**: it gapped up to 20.11, above its 19.55 stop, so the tighten only exit is still armed and fires on the first dip below 19.55. Design note for a later release: a review exit could sell at the next open instead of arming a stop, so a gap up cannot keep a broken thesis alive. FRMI untouched.
+2. **C12**: no restarts, no stream errors, 2.5 million trades by 08:45, six detections in the first ten minutes (DIS, HPQ, ANET, LITE long; UNH, WFC short), spreads 4 to 19 bps. BURST tab added to the dashboard (v0.15.1).
+3. **Thesis lane copies**: 13 `thesis_copy` rows by 08:45, all with tickers (`body.triage.tickers`). A5's first seeding run is tonight 20:30 CT.
+4. **Heavy slot on b10970 was 26 percent slower** (A4 p50 248 s vs 141 s; 7.8 vs 10.6 tok/s at the same prompt). Rolled the heavy unit back to `build/` (b10064) as v0.15.2; installed without a restart, first run A7 at 15:35 CT. Triage (2.8 s) and analyst (18 to 19 s) unchanged on b10970, no regression there.
+5. Open handoff floor and fade rows: none possible before 08:45 (blackout); checked again at 09:08, see below.
+
 ## Open items
 
 1. C12 tuning after the first session (event rate, spread distribution); two week measurement before any lane decision.
