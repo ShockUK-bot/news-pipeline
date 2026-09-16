@@ -265,16 +265,29 @@ class C12Service:
             path = book.path(p["ts"], p["px"], p["direction"], int(horizon),
                              float(self.det.get("score_target", 0.01)),
                              float(self.det.get("score_stop", 0.007)))
+            # v0.15.3: the same path against several target/stop brackets, so
+            # "what size of move is realistic" is measured, not guessed.
+            # Stored in detail.brackets as {"t0.5_s0.5": ["target", 3.2], ...}
+            brackets = {}
+            for t, s in (self.det.get("score_brackets")
+                         or [[0.005, 0.005], [0.007, 0.005], [0.01, 0.007],
+                             [0.01, 0.01], [0.005, 0.0035]]):
+                bp = book.path(p["ts"], p["px"], p["direction"], int(horizon),
+                               float(t), float(s))
+                brackets[f"t{float(t)*100:g}_s{float(s)*100:g}"] = [
+                    bp["first_hit"], bp["first_hit_min"]]
             pool = await get_pool()
             async with pool.connection() as conn:
                 await conn.execute(
                     """UPDATE journal.burst_events
                        SET p_1m=%s, p_5m=%s, p_15m=%s, p_30m=%s, max_fav_pct=%s, max_adv_pct=%s,
-                           first_hit=%s, first_hit_min=%s, complete=true
+                           first_hit=%s, first_hit_min=%s, complete=true,
+                           detail = detail || %s::jsonb
                        WHERE event_id=%s""",
                     (path["p_1m"], path["p_5m"], path["p_15m"], path["p_30m"],
                      round(path["max_fav_pct"], 5), round(path["max_adv_pct"], 5),
-                     path["first_hit"], path["first_hit_min"], p["event_id"]))
+                     path["first_hit"], path["first_hit_min"],
+                     json.dumps({"brackets": brackets}), p["event_id"]))
             done.append(p)
         for p in done:
             self.pending.remove(p)

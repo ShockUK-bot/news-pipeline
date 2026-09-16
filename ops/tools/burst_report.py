@@ -75,6 +75,27 @@ async def main() -> None:
         bar = "GO" if (done or 0) >= 200 and ev_cost is not None and ev_cost >= 0.15 and ntot and nneg / ntot <= 0.4 else "no"
         print(f"{rule:14s} {direction:4s} {n:5d} {done:5d} {str(tp):>8s} {str(sp):>6s} {str(avg30):>8s} {(f'{ev_cost:+.3f}%' if ev_cost is not None else '-'):>14s} {str(spr):>7s} {nneg}/{ntot:<11d} {bar}")
 
+    # v0.15.3: bracket sweep (rows scored since the multi-bracket change)
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT rule, direction, b.key AS bracket,
+                      count(*) AS n,
+                      count(*) FILTER (WHERE b.value->>0 = 'target') AS tgt,
+                      count(*) FILTER (WHERE b.value->>0 = 'stop') AS stp
+               FROM journal.burst_events e, jsonb_each(e.detail->'brackets') b
+               WHERE e.complete AND e.ts >= (current_date - (%s - 1))
+               GROUP BY 1,2,3 ORDER BY 1,2,3""", (args.days,))
+        rows = await cur.fetchall()
+    await close_pool()
+    if rows:
+        print("\nBracket sweep (target/stop in %, first hit within 30 min; EV assumes exits at the levels, cost applied)")
+        print(f"{'rule':14s} {'dir':4s} {'bracket':12s} {'n':>5s} {'target%':>8s} {'stop%':>6s} {'EV/trade':>9s}")
+        for rule, direction, bracket, n, tgt, stp in rows:
+            t = float(bracket.split("_")[0][1:]); s = float(bracket.split("_")[1][1:])
+            ev = (tgt * t - stp * s) / n - args.cost_bps / 100
+            print(f"{rule:14s} {direction:4s} {bracket:12s} {n:5d} {100*tgt/n:7.0f}% {100*stp/n:5.0f}% {ev:+8.3f}%")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
