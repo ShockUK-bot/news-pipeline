@@ -31,7 +31,10 @@ Supersedes `claude_current-state-2026-09-15.md`.
 2. **C12**: no restarts, no stream errors, 2.5 million trades by 08:45, six detections in the first ten minutes (DIS, HPQ, ANET, LITE long; UNH, WFC short), spreads 4 to 19 bps. BURST tab added to the dashboard (v0.15.1).
 3. **Thesis lane copies**: 13 `thesis_copy` rows by 08:45, all with tickers (`body.triage.tickers`). A5's first seeding run is tonight 20:30 CT.
 4. **Heavy slot on b10970 was 26 percent slower** (A4 p50 248 s vs 141 s; 7.8 vs 10.6 tok/s at the same prompt). Rolled the heavy unit back to `build/` (b10064) as v0.15.2; installed without a restart, first run A7 at 15:35 CT. Triage (2.8 s) and analyst (18 to 19 s) unchanged on b10970, no regression there.
-5. Open handoff floor and fade rows: none possible before 08:45 (blackout); checked again at 09:08, see below.
+5. **Open handoff floor works**: by 09:08 two bullish handoffs were vetoed `HANDOFF_UNMOVED` (VTRS, PAA). No fade candidates yet (today's extended movers were bearish micro caps: XBIO, ARTL, XCUR, TOPS). The gate was busy as normal: 14 regular hours verdicts by 09:10 against 10 and 9 on the two prior sessions; 50 analyst rows and 15 theses since the open; scanner passes CRCL short and SPCX long.
+6. **C12 first scores** (09:08): 16 detections by 09:02. DIS (long) hit the 0.7 percent stop 38 seconds after detection (best +0.30, worst −0.76, 30 min +0.05); HPQ (long) hit the stop at 37 seconds (worst −2.63, 30 min −1.15). The remaining fourteen score through the morning; the BURST tab shows them live. Consistent with the backtest: bursts in liquid names reverse first more often than they continue. Two weeks of this decides the lane.
+7. Overnight lane: 39 messages enqueued 06:00 to 08:30 still waiting after the open. Checked against `late.py`: by design, the late passes (every 10 minutes 06:00 to 08:59 CT) forward a paced allowance to the analyst and defer the rest; whatever is still deferred at the open waits for tomorrow's 06:00 sheet or expires. Not a fault.
+8. A query note for future sessions: `current_date + time 'HH:MM'` is read in the session time zone (Chicago), so compare with `(ts at time zone 'America/Chicago')::time`, not with UTC clock times. An earlier "no verdicts" reading this morning was that mistake.
 
 ## Open items
 
