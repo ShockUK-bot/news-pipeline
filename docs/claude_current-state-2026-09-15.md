@@ -25,6 +25,10 @@ Operator asked why nightly and morning emails kept recommending exits (RIOT) tha
 
 `docs/claude_gatelab-review-2026-09-15.md`: 2,567 shadow outcomes say bullish news longs at the open have no edge (the live open handoff lane is −1,254 over 18 trades), bearish shorts do, and bullish 4 to 12 percent gaps fade into the close. Operator chose: fade lane as a shadow, open handoff floor now. v0.14.12 deployed 20:56 CT (`c3-gate` restart): `HANDOFF_UNMOVED` floor at 2 percent for bullish open handoffs (would have blocked 32 of the last 33), fade shadow lane journaling `rule='fade'` rows (expect 2 to 6 a week; first read at about 20 rows). Heavy slot confirmed fine on b10970 (A6 nightly and A5 both ran, zero errors).
 
+## Added later on 09-15: v0.14.13, the thesis store
+
+No thesis since the 08-10 seed. Cause: router rule 3 fed A5 only ticker less items, the ticker bearing wide read ran Sundays only, and 4 active theses kept the prompt in "new theses are rare" mode. v0.14.13 (deployed 21:14 CT, `a1-triage` restart): A5 deep every night and in seeding mode until 6 theses (config, live at the 09-16 20:30 CT run); router rule 5 copies material ticker bearing signals scoring 15 or more to the thesis lane. Check the 09-16 A5 digest for `bootstrap: true` and `new_theses` above zero. Operator standing instruction from tonight: an approved development item includes its deploy, no separate go (timing rules still apply).
+
 ## Open items
 
 1. **First heavy runs on b10970**: A6 nightly 19:00 CT today, A4 premarket 06:00 CT tomorrow, A7 eod 15:35 CT tomorrow. Check each journal once; A4 p50 was 141 s per call and should improve.

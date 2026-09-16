@@ -36,4 +36,4 @@ Safety net for anything seeded: C11 enters only at confidence 0.5 or above, at m
 
 ## Deploy record
 
-(filled in after the restart)
+Deployed 2026-09-15 21:14 CT (market closed): `c7-watchdog.timer` paused, `a1-triage` restarted, timer resumed. `a1-triage` active, `config version active 944a1e3cba1f`, zero errors, `triage` heartbeat fresh. A5 changes take effect at the 2026-09-16 20:30 CT run.
