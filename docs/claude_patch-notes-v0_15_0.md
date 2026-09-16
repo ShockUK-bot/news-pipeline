@@ -22,7 +22,7 @@ The "1 percent gain" idea failed every test on the data the system had (60 secon
 
 ## Deploy record
 
-2026-09-15 about 23:30 CT: migration 016 applied; foreground smoke run (148 symbols validated, SIP subscribed, heartbeat, clean shutdown on SIGTERM); unit installed, enabled and started; `c12-burst` active, `burst` heartbeat OK ("sip stream, 148 symbols"), zero errors; about 620 MB resident, under 1 percent CPU off session. First live session 2026-09-16 (detection starts 08:36 CT).
+2026-09-15 about 21:40 CT: migration 016 applied; foreground smoke run (148 symbols validated, SIP subscribed, heartbeat, clean shutdown on SIGTERM); unit installed, enabled and started; `c12-burst` active, `burst` heartbeat OK ("sip stream, 148 symbols"), zero errors; about 620 MB resident, under 1 percent CPU off session. First live session 2026-09-16 (detection starts 08:36 CT).
 
 ## How to watch it
 

@@ -1,11 +1,11 @@
-# Current state, 2026-09-16 (written overnight, about 23:35 CT on 09-15)
+# Current state, 2026-09-16 (written the evening of 09-15, about 21:50 CT)
 
 Supersedes `claude_current-state-2026-09-15.md`.
 
 ## Version and health
 
 - Repo: tag `v0.15.0` on `main`, tree identical to the tag, pushed with tags.
-- Running: every service on current code. New unit `c12-burst` active and enabled since 23:30 CT on 09-15 (real time burst stream, research only). Inference on llama.cpp b10970 on all slots since 09-15 evening.
+- Running: every service on current code. New unit `c12-burst` active and enabled since 21:43 CT on 09-15 (real time burst stream, research only). Inference on llama.cpp b10970 on all slots since 09-15 evening.
 - Shorting live (v0.14.8). Model labels correct (v0.14.9). A6 to C11 bridge live (v0.14.11). Open handoff floor and fade shadow live (v0.14.12). Thesis store seeding and router copy live (v0.14.13).
 
 ## What was done on 09-15 (evening session)

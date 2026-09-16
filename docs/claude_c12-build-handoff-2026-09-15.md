@@ -25,9 +25,9 @@ Go live rule for a later lane (not this release): a rule with 200 or more events
 
 ## Status log (append as work proceeds)
 
-- 22:40 CT: scope written. Next: websocket auth test, then code.
-- 22:50 CT: SIP websocket auth and subscription confirmed (IEX also works). No new subscription needed.
-- 23:15 CT: code, migration, config, unit, tests written. Suite 840 passed.
-- 23:25 CT: migration 016 applied on live Postgres. Foreground smoke: 148 symbols, subscribed, heartbeat, clean shutdown.
-- 23:30 CT: `c12-burst` installed, enabled, started. Active, heartbeat OK, zero errors. Watchdog entry added.
+- about 21:05 CT: scope written. Next: websocket auth test, then code.
+- 21:10 CT: SIP websocket auth and subscription confirmed (IEX also works). No new subscription needed.
+- 21:30 CT: code, migration, config, unit, tests written. Suite 840 passed.
+- 21:38 CT: migration 016 applied on live Postgres. Foreground smoke: 148 symbols, subscribed, heartbeat, clean shutdown.
+- 21:43 CT: `c12-burst` installed, enabled, started. Active, heartbeat OK, zero errors. Watchdog entry added.
 - **BUILD COMPLETE.** Tagged `v0.15.0`. Nothing left for a new session except the morning check: `journalctl -u c12-burst --since 08:30` for `burst` lines and `ops/tools/burst_report.py` after 09:10 CT (first scored rows land 30 minutes after the first detection). See `docs/claude_patch-notes-v0_15_0.md`.
