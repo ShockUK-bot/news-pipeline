@@ -285,6 +285,57 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
                   "eh_trades": eh_trades, "pending": int(pending)})
 
 
+@app.get("/api/burst")
+async def api_burst(days: int = 5, user: str = Depends(_require_user)):
+    """BURST tab (v0.15.1): what C12 sees in real time. Read-only over
+    journal.burst_events + the `burst` health row. Fetched on tab open and
+    every 10 s while the tab is showing; C12 journals a detection within
+    seconds and scores it 30 min later, so this is the live view."""
+    days = max(1, min(int(days), 60))
+    async with await _connect() as conn:
+        health = await (await conn.execute("""
+            SELECT status, detail, EXTRACT(EPOCH FROM now() - updated_ts) AS age_s
+            FROM journal.health WHERE component = 'burst'""")).fetchone()
+        today = [dict(r) for r in await (await conn.execute("""
+            SELECT EXTRACT(EPOCH FROM ts) AS ts, symbol, direction,
+                   round(price, 2) AS price,
+                   round(ret_60s * 100, 2) AS ret_60s_pct,
+                   round(ret_120s * 100, 2) AS ret_120s_pct,
+                   round(vol_mult, 1) AS vol_mult, round(spread_bps, 1) AS spread_bps,
+                   news_anchored, scanner_known, complete, first_hit, first_hit_min,
+                   round(max_fav_pct * 100, 2) AS max_fav_pct,
+                   round(max_adv_pct * 100, 2) AS max_adv_pct,
+                   round((CASE WHEN direction = 'up' THEN p_30m / price - 1
+                               ELSE 1 - p_30m / price END) * 100, 2) AS ret_30m_pct
+            FROM journal.burst_events
+            WHERE rule = 'momentum' AND ts::date = current_date
+            ORDER BY ts DESC LIMIT 80""")).fetchall()]
+        score = [dict(r) for r in await (await conn.execute("""
+            SELECT rule, direction, count(*) AS n,
+                   count(*) FILTER (WHERE complete) AS scored,
+                   round(100.0 * count(*) FILTER (WHERE first_hit = 'target')
+                         / NULLIF(count(*) FILTER (WHERE complete), 0)) AS target_pct,
+                   round(100.0 * count(*) FILTER (WHERE first_hit = 'stop')
+                         / NULLIF(count(*) FILTER (WHERE complete), 0)) AS stop_pct,
+                   round(avg(CASE WHEN direction = 'up' THEN p_30m / price - 1
+                                  ELSE 1 - p_30m / price END)
+                         FILTER (WHERE complete) * 100, 3) AS avg_30m_pct,
+                   round(avg(spread_bps), 1) AS avg_spread_bps,
+                   count(DISTINCT ts::date) AS sessions
+            FROM journal.burst_events
+            WHERE ts > now() - make_interval(days => %s)
+            GROUP BY 1, 2 ORDER BY 1, 2""", (days,))).fetchall()]
+        counts = await (await conn.execute("""
+            SELECT count(*) FILTER (WHERE rule = 'momentum') AS detections,
+                   count(*) FILTER (WHERE NOT complete) AS pending,
+                   count(DISTINCT symbol) FILTER (WHERE rule = 'momentum') AS symbols
+            FROM journal.burst_events WHERE ts::date = current_date""")).fetchone()
+    stream = ({"status": health["status"], "detail": health["detail"],
+               "age_s": round(float(health["age_s"]))} if health else None)
+    return _json({"days": days, "stream": stream, "today": today, "score": score,
+                  "counts": dict(counts) if counts else {}})
+
+
 @app.get("/api/ws-token")
 async def api_ws_token(user: str = Depends(_require_user)):
     token = secrets.token_urlsafe(24)

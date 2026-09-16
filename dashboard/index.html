@@ -91,6 +91,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
   <button id="tabHist">HISTORY</button>
   <button id="tabPerf">PERFORMANCE</button>
   <button id="tabLab">GATE LAB</button>
+  <button id="tabBurst">BURST</button>
 </div>
 
 <div id="live" class="grid">
@@ -147,6 +148,20 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
     <table><thead><tr><th>When</th><th>Ticker</th><th>Move at entry</th><th>Entry</th><th>To close</th><th>Best</th><th>Worst</th></tr></thead>
     <tbody id="labTrades"></tbody></table>
     <div class="micro" id="labPending" style="margin-top:8px"></div></div>
+</div>
+
+<div id="burst" class="grid" style="display:none">
+  <div class="panel">
+    <h2>C12 burst stream <span class="micro" id="burstStream"></span></h2>
+    <div class="micro" style="margin-bottom:6px">Real-time SIP trades for ~150 liquid names. A burst = 60 s move &ge; 0.4% (or 120 s &ge; 0.6%) on &ge; 4x volume pace at a new 30-min extreme. Research only: <b>no orders are placed</b>. Each row is scored 30 min later: did +1% (in the burst direction) or &minus;0.7% come first?</div>
+    <div class="micro" id="burstCounts" style="margin-bottom:6px"></div>
+    <table><thead><tr><th>Time</th><th>Symbol</th><th>Dir</th><th>Price</th><th>60s</th><th>120s</th><th>Vol x</th><th>Spread</th><th>News</th><th>Scanner</th><th>Outcome (30 min)</th></tr></thead>
+    <tbody id="burstToday"></tbody></table></div>
+  <div class="panel">
+    <h2>Scoreboard <span class="micro" id="burstDays"></span></h2>
+    <div class="micro" style="margin-bottom:6px">Direction-adjusted. <b>momentum</b> = with the burst, <b>fade</b> = against it, <b>news_anchored</b> = burst with an A1 escalation in the prior 15 min. Go-live bar (design memo): 200+ scored, avg 30-min return &ge; +0.25% before a 10 bps cost, &le; 40% of sessions negative.</div>
+    <table><thead><tr><th>Rule</th><th>Dir</th><th>Events</th><th>Scored</th><th>Target first</th><th>Stop first</th><th>Avg 30-min</th><th>Avg spread</th><th>Sessions</th></tr></thead>
+    <tbody id="burstScore"></tbody></table></div>
 </div>
 
 <div id="hist" class="grid" style="display:none">
@@ -482,9 +497,34 @@ async function loadLab(){
   $('labPending').textContent=d.pending?`${d.pending} row(s) still measuring — outcomes fill after the session closes`:'';
 }
 
+// ---- BURST tab (v0.15.1) ---------------------------------------------------
+let burstTimer=null;
+async function loadBurst(){
+  let d=null; try{ d=await api('/api/burst'); }catch(e){ return; }
+  const s=d.stream;
+  $('burstStream').innerHTML=s?`<span class="${s.status==='OK'?'gain':'loss'}">${s.status}</span> ${s.detail} (${s.age_s}s ago)`:'<span class="loss">no heartbeat</span>';
+  const c=d.counts||{};
+  $('burstCounts').textContent=`today: ${c.detections||0} detections across ${c.symbols||0} symbols, ${c.pending||0} row(s) still scoring`;
+  $('burstToday').innerHTML=(d.today||[]).map(r=>{
+    const out=r.complete
+      ?`<span class="${r.first_hit==='target'?'gain':r.first_hit==='stop'?'loss':''}">${r.first_hit}${r.first_hit_min!=null?' @'+r.first_hit_min+'m':''}</span> · best ${sgn(r.max_fav_pct)} worst ${r.max_adv_pct!=null?sgn(-r.max_adv_pct):'—'} · 30m ${sgn(r.ret_30m_pct)}`
+      :'<span class="detail">scoring…</span>';
+    return `<tr><td class="detail">${new Date(r.ts*1000).toLocaleTimeString()}</td><td>${r.symbol}</td>
+     <td class="${r.direction==='up'?'gain':'loss'}">${r.direction==='up'?'LONG':'SHORT'}</td><td>${px(r.price)}</td>
+     <td>${sgn(r.ret_60s_pct)}</td><td>${sgn(r.ret_120s_pct)}</td><td>${r.vol_mult??'—'}</td><td>${r.spread_bps!=null?r.spread_bps+' bps':'—'}</td>
+     <td>${r.news_anchored?'<span class="gain">yes</span>':'·'}</td><td>${r.scanner_known?'yes':'·'}</td><td>${out}</td></tr>`;}).join('')
+    ||'<tr><td colspan="11" class="detail">no bursts yet today — detection runs 08:36–14:55 CT</td></tr>';
+  $('burstDays').textContent='last '+d.days+' days';
+  $('burstScore').innerHTML=(d.score||[]).map(r=>
+    `<tr><td>${r.rule}</td><td class="${r.direction==='up'?'gain':'loss'}">${r.direction==='up'?'LONG':'SHORT'}</td><td>${r.n}</td><td>${r.scored}</td>
+     <td>${r.target_pct!=null?r.target_pct+'%':'—'}</td><td>${r.stop_pct!=null?r.stop_pct+'%':'—'}</td>
+     <td>${sgn(r.avg_30m_pct)}</td><td>${r.avg_spread_bps!=null?r.avg_spread_bps+' bps':'—'}</td><td>${r.sessions}</td></tr>`).join('')
+    ||'<tr><td colspan="9" class="detail">nothing scored yet</td></tr>';
+}
+
 function showTab(which){
   const tabs={live:['tabLive','live'],hist:['tabHist','hist'],perf:['tabPerf','perf'],
-              lab:['tabLab','lab']};
+              lab:['tabLab','lab'],burst:['tabBurst','burst']};
   for(const t in tabs){
     $(tabs[t][0]).classList.toggle('on',t===which);
     $(tabs[t][1]).style.display=(t===which)?'':'none';
@@ -494,15 +534,17 @@ function showTab(which){
   const cp=document.getElementById('chatPanel'), tc=document.getElementById('tabChat');
   if(cp) cp.style.display='none';
   if(tc) tc.classList.remove('on');
-  clearInterval(histTimer); clearInterval(perfTimer); clearInterval(labTimer);
+  clearInterval(histTimer); clearInterval(perfTimer); clearInterval(labTimer); clearInterval(burstTimer);
   if(which==='hist'){ loadHistory(); histTimer=setInterval(loadHistory,5000); }
   if(which==='perf'){ loadPerf(); perfTimer=setInterval(loadPerf,60000); }
   if(which==='lab'){ loadLab(); labTimer=setInterval(loadLab,30000); }
+  if(which==='burst'){ loadBurst(); burstTimer=setInterval(loadBurst,10000); }
 }
 $('tabLive').onclick=()=>showTab('live');
 $('tabHist').onclick=()=>showTab('hist');
 $('tabPerf').onclick=()=>showTab('perf');
 $('tabLab').onclick=()=>showTab('lab');
+$('tabBurst').onclick=()=>showTab('burst');
 $('gran').onchange=loadHistory;
 
 async function guarded(path,extra){
