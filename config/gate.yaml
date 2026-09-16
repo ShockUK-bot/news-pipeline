@@ -66,6 +66,15 @@ gate:
   extended_pct: 0.06           # baseline v0.5: skip if >= +6% from pre-news
   open_blackout_min: 15        # no entries first 15 min after open (baseline)
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN
+  handoff_min_move_pct_long: 0.02
+                               # v0.14.12 (Gate Lab review 2026-09-15): the
+                               # open-handoff LONG only passes if the name is
+                               # already up >= 2% from pre-news. Unmoved
+                               # bullish news bought at the open had no edge
+                               # (817 shadow rows +0.16%, 47%; live lane 18
+                               # trades -1,254, 39% win). Vetoes journal as
+                               # HANDOFF_UNMOVED and are measured like every
+                               # other veto. Down-theses exempt. 0 disables.
   impact_medium_min: 0.02      # magnitude_est buckets for credibility
   impact_high_min: 0.05
   required_outlets:            # independent outlets required: [impact][tier]
@@ -109,6 +118,19 @@ gate:
     max_spread_bps: 100        # EH liquidity bar — PLACEHOLDER, wide on
                                # purpose; the recorded spreads tell us where
                                # the real bar belongs
+  # -- fade lane (v0.14.12): SHADOW ONLY, no order path. A final PRICED_IN
+  # or GATE_EXTENDED veto on a BULLISH thesis, evaluated in the first
+  # window_max_min_after_open minutes with the name up min..max from
+  # pre-news, is re-read as a would-be SHORT: ETB + SSR checked, journaled
+  # as GATE rule='fade' (WOULD_TRADE or the short veto) and measured in
+  # journal.gate_counterfactuals. Gate Lab 2026-09-15: the 4-12% band at
+  # the open closed lower 67-77% of the time (n=28). Two weeks of rows
+  # decide whether this becomes a live lane (needs the A3 sizing path).
+  fade:
+    enabled: true
+    min_move_pct: 0.04
+    max_move_pct: 0.12         # >= 12% is capitulation-bounce territory
+    window_max_min_after_open: 90
   # -- scanner-origin branch (v0.12.1): "is it still tradeable", not "did the
   # move happen" — the move IS the signal. Confirmation/credibility/extended
   # checks do not apply; these do. PLACEHOLDERS, A9-tuned like everything here.

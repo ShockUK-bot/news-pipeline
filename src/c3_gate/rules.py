@@ -238,7 +238,61 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict,
     # small gap on rated news = the opportunity; still demand some confirmation
     if signed_move >= cfg["extended_pct"]:
         return GateVerdict("VETO", rule, "GATE_EXTENDED", numbers)
+    # v0.14.12: long side only — bullish news the market has NOT moved on by
+    # the open has no edge (Gate Lab 2026-09-15: 817 premarket shadow rows
+    # +0.16% to close, 47% win; the live lane 18 trades -1,254, 39% win).
+    # Demand a minimum move in the thesis direction before buying at the
+    # open. Down-theses are exempt: the <2% bearish band is the best
+    # populated positive bucket for shorts (+1.23%, 59%, n=548).
+    min_long = float(cfg.get("handoff_min_move_pct_long", 0.0) or 0.0)
+    if thesis["direction"] == "up" and min_long > 0 and signed_move < min_long:
+        return GateVerdict("VETO", rule, "HANDOFF_UNMOVED", numbers)
     return GateVerdict("PASS", rule, None, numbers)
+
+
+# ---------------------------------------------------------------------------
+# Fade lane (v0.14.12) — SHADOW ONLY: the bullish gap that fades
+# ---------------------------------------------------------------------------
+
+FADE_SOURCE_VETOES = ("PRICED_IN", "GATE_EXTENDED")
+
+
+def fade_candidate(thesis: dict, state: MarketState, verdict: GateVerdict,
+                   cfg: dict) -> Optional[dict]:
+    """Would the fade lane short this? Gate Lab 2026-09-15: bullish news
+    already up 4-12% from pre-news when evaluated in the first 90 minutes
+    of the session closes LOWER (7-12% band: +4.0% for a short, 77% win,
+    median adverse 1.7%, n=13; 4-7%: +1.3%, 67%, n=15). Above 12% the
+    bounce risk dominates; before the open the adverse excursion is 3x
+    wider. The gate already labels these names PRICED_IN / GATE_EXTENDED,
+    so the lane is a re-read of a final veto, not a new signal.
+
+    Returns the fade numbers (dict) when the veto qualifies, else None.
+    Pure; no I/O. The caller runs the short-side direction gate (ETB, SSR)
+    and journals a WOULD_TRADE / VETO with rule='fade' for measurement.
+    No order path exists on this branch."""
+    fcfg = cfg.get("fade") or {}
+    if not fcfg.get("enabled", False):
+        return None
+    if thesis.get("direction") != "up":
+        return None
+    if verdict.verdict != "VETO" or verdict.veto_reason not in FADE_SOURCE_VETOES:
+        return None
+    mso = state.minutes_since_open
+    if mso is None or mso < cfg.get("open_blackout_min", 15):
+        return None
+    if mso > int(fcfg.get("window_max_min_after_open", 90)):
+        return None
+    pct_move = ((state.last_price - state.prenews_price) / state.prenews_price
+                if state.prenews_price else 0.0)
+    lo = float(fcfg.get("min_move_pct", 0.04))
+    hi = float(fcfg.get("max_move_pct", 0.12))
+    if not (lo <= pct_move < hi):
+        return None
+    return {"source_veto": verdict.veto_reason, "source_rule": verdict.rule,
+            "pct_move": round(pct_move, 5), "minutes_since_open": mso,
+            "gap_pct": state.gap_pct, "vol_mult": state.vol_mult,
+            "band": [lo, hi]}
 
 
 # ---------------------------------------------------------------------------

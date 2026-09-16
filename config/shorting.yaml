@@ -28,6 +28,10 @@ shorting:
     news_short: true          # news lane, SHORT horizon (intraday-days)
     news_long: true           # news lane, LONG horizon (weeks-months)
     scanner: true             # scanner lane (incl. losers, scalp profile)
+    fade: true                # v0.14.12: fade lane. SHADOW ONLY regardless
+                              # of `mode`: C3 measures it, no order path
+                              # exists (see gate.yaml `fade`). This flag
+                              # only lets the short-side ETB/SSR checks run.
   etb_only: true              # only easy-to-borrow names (no locate fees);
                               # non-ETB -> SHORT_UNAVAILABLE (measured)
   ssr_veto: true              # veto short entries on names down >= 10% from

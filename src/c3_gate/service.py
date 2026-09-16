@@ -258,6 +258,50 @@ class C3Service:
         return ("news_long" if str(thesis.get("horizon")).upper() == "LONG"
                 else "news_short")
 
+    async def _fade_shadow(self, thesis: dict, state, verdict, signal_id: str,
+                           item_id: str, revision, body: dict, now) -> None:
+        """v0.14.12 — fade lane, SHADOW ONLY (the v0.12.11 EH-shadow
+        pattern). A final PRICED_IN / GATE_EXTENDED veto on a bullish
+        thesis inside the fade band becomes a would-be SHORT: the short-side
+        direction gate (ETB, SSR) is applied, the verdict is journaled as a
+        GATE row with rule='fade' (WOULD_TRADE or the short veto), and a
+        counterfactual row is recorded for the sweep. NO ORDER PATH: nothing
+        is enqueued, A3 never sees it. Flip to live is a separate build."""
+        from c3_gate.rules import direction_gate, fade_candidate
+        try:
+            fade = fade_candidate(thesis, state, verdict, self.cfg)
+            if fade is None:
+                return
+            short = await self.short_ctx({**thesis, "direction": "down"},
+                                         "fade", state.pct_from_prior_close)
+            sveto = direction_gate("down", short)
+            action = "VETO" if sveto else "WOULD_TRADE"
+            decision_id = await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=thesis["ticker"], stage="GATE", agent="C3",
+                action=action, veto_reason=sveto,
+                payload={"rule": "fade", "origin": "fade", "direction": "down",
+                         "shadow": True, **fade},
+                reason=(f"fade shadow: {sveto}" if sveto else
+                        f"fade shadow WOULD_TRADE ({fade['source_veto']} "
+                        f"+{fade['pct_move']*100:.1f}%)"),
+                regime_id=body.get("regime_id"))
+            await record_veto(
+                decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+                ticker=thesis["ticker"], direction="down", rule="fade",
+                veto_reason=sveto or "WOULD_TRADE", veto_ts=now,
+                price_at_veto=state.last_price,
+                prenews_price=state.prenews_price,
+                pct_move=fade["pct_move"], vol_mult=state.vol_mult)
+            log.info("fade shadow", extra=kv(signal_id=signal_id,
+                                             ticker=thesis["ticker"],
+                                             action=action,
+                                             pct_move=fade["pct_move"]))
+        except Exception as e:                                # noqa: BLE001
+            # measurement must never break the gate
+            log.warning("fade shadow failed", extra=kv(
+                signal_id=signal_id, error=repr(e)[:200]))
+
     async def short_ctx(self, thesis: dict, lane: str,
                         pct_from_prior_close: Optional[float]) -> Optional[ShortContext]:
         """Build the direction-gate context for a down-thesis. None for "up"
@@ -613,6 +657,8 @@ class C3Service:
                 prenews_price=state.prenews_price,
                 pct_move=(verdict.numbers or {}).get("pct_move"),
                 vol_mult=state.vol_mult)
+            await self._fade_shadow(thesis, state, verdict, signal_id,
+                                    item_id, revision, body, now)
             return
 
         quote = await self.md.snapshot(thesis["ticker"])
