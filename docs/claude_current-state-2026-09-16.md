@@ -36,6 +36,24 @@ Supersedes `claude_current-state-2026-09-15.md`.
 7. Overnight lane: 39 messages enqueued 06:00 to 08:30 still waiting after the open. Checked against `late.py`: by design, the late passes (every 10 minutes 06:00 to 08:59 CT) forward a paced allowance to the analyst and defer the rest; whatever is still deferred at the open waits for tomorrow's 06:00 sheet or expires. Not a fault.
 8. A query note for future sessions: `current_date + time 'HH:MM'` is read in the session time zone (Chicago), so compare with `(ts at time zone 'America/Chicago')::time`, not with UTC clock times. An earlier "no verdicts" reading this morning was that mistake.
 
+## End of day: BURST scoreboard, session 1 (checked 15:50 CT)
+
+158 detections across the day (15 in the 08:00 hour, 32 in the 10:00 hour, 73 in the 13:00 hour: **FOMC decision day**, the 13:00 CT print and the 13:30 press conference dominate the sample). Spreads averaged 9 bps. Zero `news_anchored` rows (no A1 escalation coincided with a burst). Scoring bracket: +1 percent target versus −0.7 percent stop within 30 minutes, entry at the detection price, cost 10 bps.
+
+| Window | Rule | n | Target first | Stop first | Avg 30 min | After cost |
+|---|---|---|---|---|---|---|
+| Before 13:00 | fade an UP burst (short) | 54 | 39% | 22% | +0.52% | **+0.42%** |
+| Before 13:00 | chase an UP burst (long) | 54 | 9% | 70% | −0.52% | −0.62% |
+| Before 13:00 | fade a DOWN burst (long) | 19 | 37% | 16% | +0.28% | +0.18% |
+| Before 13:00 | chase a DOWN burst (short) | 19 | 11% | 63% | −0.28% | −0.38% |
+| FOMC 13:00 to 14:30 | fade an UP burst (short) | 20 | 70% | 15% | +1.27% | +1.17% |
+| FOMC 13:00 to 14:30 | chase a DOWN burst (short) | 60 | 25% | 57% | +0.25% | +0.15% |
+| FOMC 13:00 to 14:30 | fade a DOWN burst (long) | 60 | 40% | 38% | −0.25% | −0.35% |
+
+Read: on session 1 the liquid universe mean reverts after a burst in both directions, strongest for up bursts, in and out of the Fed window. Momentum chasing, the original "1 percent gain" idea, loses on every cut, which matches the backtest. The fade result is one session, half of it an FOMC afternoon, so it goes into the two week measurement rather than a lane; the go live bar (200 scored, +0.15 percent after cost, no more than 40 percent of sessions negative) stands. Caveats to keep in mind when reading later sessions: the fade entry is assumed at the burst's last trade (a real short would sell into the burst at the bid and needs borrow), and the fade rows are exact mirrors of the momentum rows by construction.
+
+A7 EOD at 15:35 ran on the restored heavy build (b10064): success, 21.8 tok/s on a 297 token output, no errors.
+
 ## Open items
 
 1. C12 tuning after the first session (event rate, spread distribution); two week measurement before any lane decision.
