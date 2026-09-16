@@ -4,14 +4,17 @@ After=network-online.target
 [Service]
 Type=simple
 User=trader
-# build-2026-09 = llama.cpp b10970 (2026-09-15; was build/ = b10064).
-# ROLLBACK: path back to /opt/llama.cpp/build/bin and --load-mode none ->
-# --no-mmap (b10970 removed --no-mmap; --load-mode none is its replacement).
-ExecStart=/opt/llama.cpp/build-2026-09/bin/llama-server \
+# v0.15.2 (2026-09-16): back on build/ = b10064. The b10970 build (build-2026-09)
+# decodes this 122B MoE 26% SLOWER (7.8 vs 10.6 tok/s at the same prompt: A4
+# premarket 09-16 took 239 s per call vs 132 s on 09-14). The analyst (27B
+# dense) is 17% faster on b10970 and stays there; only this unit rolls back.
+# To retry a newer build: path -> build-YYYY-MM/bin and --no-mmap ->
+# --load-mode none (b10970+ removed --no-mmap). Measure A4 before keeping it.
+ExecStart=/opt/llama.cpp/build/bin/llama-server \
   -m /opt/models/qwen3.5-122b/Q4_K_M/Qwen3.5-122B-A10B-Q4_K_M-00001-of-00003.gguf \
   --host 127.0.0.1 --port 8084 \
   -c 32768 \
-  -ngl 999 --load-mode none --reasoning-budget 0 --chat-template-kwargs '{"enable_thinking":false}' --grammar-file /opt/llama.cpp/grammars/json.gbnf
+  -ngl 999 --no-mmap --reasoning-budget 0 --chat-template-kwargs '{"enable_thinking":false}' --grammar-file /opt/llama.cpp/grammars/json.gbnf
 Restart=no
 StandardOutput=journal
 StandardError=journal
