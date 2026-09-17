@@ -92,7 +92,7 @@ timers:
   - c5-mailer
   - pipeline-backup
   - pipeline-nav-snapshot
-  - scanner-counterfactual
+  - a11-metrics
   - queue-prune
   - earnings-calendar
   - macro-fetch
@@ -125,6 +125,9 @@ heartbeats:
   queue_prune:
     max_age_min: 1560        # queue-prune.timer, 03:10 daily
     unit: queue-prune
+  metrics:
+    max_age_min: 4500        # a11-metrics.timer, 15:20 CT weekdays (Friday to Monday gap)
+    unit: a11-metrics
   broker_api:
     max_age_min: 90          # written by C4 reconcile (every 15 min).
                              # Deliberately loose until we have confirmed the

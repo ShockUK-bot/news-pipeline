@@ -97,5 +97,6 @@ def test_units_and_watchdog_wired():
     assert "scanner_counterfactuals.py" in svc and "Type=oneshot" in svc
     assert "15:05" in tim
     wd = yaml.safe_load((ROOT / "config" / "watchdog.yaml").read_text())
-    assert "scanner-counterfactual" in wd["timers"]
+    # v0.17.0 folded the job into a11-metrics; the standalone timer is disabled
+    assert "a11-metrics" in wd["timers"] and "scanner-counterfactual" not in wd["timers"]
     assert "017-scanner-counterfactuals.sql" in {p.name for p in (ROOT / "schema" / "migrations").iterdir()}

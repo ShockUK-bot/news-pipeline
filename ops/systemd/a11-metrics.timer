@@ -1,0 +1,9 @@
+[Unit]
+Description=a11-metrics timer (15:20 CT weekdays, after force-flat, before A7)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

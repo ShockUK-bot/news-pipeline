@@ -36,3 +36,26 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 ## Files for the design chat
 
 `claude_burst-review-2026-09-17.md`, `claude_scanner-review-2026-09-17.md`, `claude_patch-notes-v0_15_4.md`, `claude_patch-notes-v0_16_0.md`, and this file.
+
+## Evening update (17:00 CT): v0.16.1 and v0.17.0
+
+- **v0.16.1** (c4-exec and c6-dashboard restarted 16:45 CT): dead and review-exit theses are sold by C4 at 09:35 ET the next session (RIOT is armed by tonight's 21:15 CT C11 run and sells tomorrow at the open); thesis re-entry cooling off of 5 days after a forced exit (INVX); Gate Lab extended hours scoreboard direction adjusted, fade shadow rows in their own panel; BURST tab shows the realistic entry columns. `docs/claude_patch-notes-v0_16_1.md`.
+- **v0.17.0, A11 built** (`a11-metrics.timer` 15:20 CT weekdays, first run 16:54 CT backfilled everything). `docs/claude_patch-notes-v0_17_0.md`. The standalone `scanner-counterfactual.timer` is disabled (A11 runs it).
+- First A11 readings worth acting on: A12 HOLD verdicts are 48 shakeouts against 16 saves (it holds losers); EXIT verdicts are 3 saves to 1 shakeout on a sample of 10. Exit efficiency this week 0.26; stop exits −0.56, trail exits +0.57.
+
+## Checks for 2026-09-18 (additions)
+
+5. 08:35 CT: C4 log shows `exit at open` for RIOT (layer REVIEW) and the position closed; INVX untouched by C11 (already held).
+6. 15:20 CT: `a11-metrics` runs (journal shows the report, `metrics` heartbeat OK); the DAY rollup for 09-18 exists.
+
+## Open items (replaces the earlier list)
+
+1. Burst: keep measuring on the realistic column (200 rows, +0.15 percent after cost).
+2. Scanner: "no scale out" decision at 30 trades, now journaled nightly.
+3. A12 guard: the HOLD verdicts are wrong more often than right by the A11 classification; review the guard prompt and the hold threshold before any auto execution decision.
+4. Not done, needs the operator: model file tidy (list in the session summary), Qwen3.8-Flash-Next download for the heavy slot evaluation, a sector data source before a sector cluster rule.
+5. Next agents: A9 (weekend review and proposals) now has rollups to read; A10 was never defined; C9 replay spec.
+
+## Files for the design chat (final for today)
+
+`claude_burst-review-2026-09-17.md`, `claude_scanner-review-2026-09-17.md`, `claude_patch-notes-v0_15_4.md`, `claude_patch-notes-v0_16_0.md`, `claude_patch-notes-v0_16_1.md`, `claude_patch-notes-v0_17_0.md`, and this file.
