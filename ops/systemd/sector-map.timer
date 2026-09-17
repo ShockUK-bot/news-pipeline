@@ -1,0 +1,9 @@
+[Unit]
+Description=sector-map timer (04:40 CT daily, after the earnings calendar)
+
+[Timer]
+OnCalendar=*-*-* 04:40:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

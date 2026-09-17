@@ -96,6 +96,7 @@ timers:
   - a9-review
   - queue-prune
   - earnings-calendar
+  - sector-map
   - macro-fetch
   - thesis-entry
   - a4-premarket
@@ -121,6 +122,9 @@ heartbeats:
     max_age_min: 1560
   earnings:
     max_age_min: 1560
+  sectors:
+    max_age_min: 1560        # sector-map.timer, 04:40 daily
+    unit: sector-map
   macro:
     max_age_min: 1560
   queue_prune:

@@ -35,6 +35,7 @@ from c1_ingestion.heartbeat import Heartbeat, set_health
 from a1_triage.backends import get_backend
 from router.facts import _schedule_cache
 
+from common import sectors
 from .sizing import (SizingInputs, hard_gates, open_risk_dollars,
                      size_entry, scanner_capital_cfg)
 
@@ -437,6 +438,10 @@ class A3Service:
             minutes_to_close=minutes_to_close(self.now_fn()),
             earnings_next_sessions=await earnings_next_sessions(ticker),
             side=side,
+            # v0.19.0: sector from journal.sectors (EDGAR SIC), fetched on a
+            # miss with a short timeout; sector heat from open positions in
+            # the same sector. Unknown stays the D7 flag path.
+            sector=await sectors.lookup_or_fetch(ticker),
             regt_buying_power=float(
                 controls.get("regt_buying_power", "0") or 0),
             open_short_heat=short_heat,
@@ -496,6 +501,7 @@ class A3Service:
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
             capital_cfg = self.capital
+        inp.sector_heat = await sectors.open_sector_heat(inp.sector)
         result = size_entry(inp, capital_cfg, self.limits, profile,
                             horizon, adj.k, shorting_cfg=self.shorting)
 

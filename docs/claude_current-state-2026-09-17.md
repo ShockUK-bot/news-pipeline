@@ -77,3 +77,9 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 ## Files for the design chat (final for today)
 
 `claude_burst-review-2026-09-17.md`, `claude_scanner-review-2026-09-17.md`, patch notes v0.15.4, v0.16.0, v0.16.1, v0.17.0, v0.17.1, v0.18.0, and this file.
+
+## Late update (17:30 CT): v0.19.0 sector data source
+
+- `journal.sectors` from SEC SIC codes, 923 of 1,024 recent tickers mapped, nightly `sector-map.timer` 04:40 CT. A3's sector heat clip is live (1.5 percent of capital per sector, stop based); A2 gets `sector`. `a3-risk` and `a2-analyst` restarted 17:22 CT. `docs/claude_patch-notes-v0_19_0.md`.
+- Check for 09-18: the first RISK SIZE decision should carry `sector` in its numbers and no `SECTOR_UNKNOWN` flag for a mapped name; `sectors` heartbeat OK after 04:40 CT.
+- Next build candidates: scanner sector cluster rule (now possible), then A12 auto execution once the guard EXIT sample passes 20.

@@ -43,6 +43,15 @@ async def _regime_features() -> tuple[int | None, dict | None]:
         return (row[0], row[1]) if row else (None, None)
 
 
+async def _sector(ticker: str):
+    """Lookup only (no fetch on the analyst path); None when unmapped."""
+    try:
+        from common.sectors import lookup
+        return await lookup(ticker)
+    except Exception:                                    # noqa: BLE001 — stable null
+        return None
+
+
 async def build_context(md: MarketData, store: VectorStore, embedder,
                         item: dict, ticker: str) -> tuple[dict, int | None]:
     """Returns (context dict for the prompt, regime_id for the decision row)."""
@@ -96,7 +105,7 @@ async def build_context(md: MarketData, store: VectorStore, embedder,
         "ta": await _ta(md, ticker),
         # P1 sources — sector/short_interest still deferred (stable null
         # keys); earnings + thesis matches live since v0.10.0/v0.9.0:
-        "sector": None,
+        "sector": await _sector(ticker),        # v0.19.0: journal.sectors (EDGAR SIC)
         "earnings_date": await _earnings_date(ticker),
         "earnings_next_sessions": await _earnings_sessions(ticker),
         "short_interest": None,
