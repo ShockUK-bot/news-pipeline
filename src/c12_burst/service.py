@@ -176,8 +176,20 @@ class C12Service:
             try:
                 if in_session(now, self.det):
                     for book in self.books.values():
+                        prior = self.last_fire.get(book.symbol)
                         ev = evaluate(book, now, self.det, self.last_fire)
                         if ev is not None:
+                            # v0.15.4: a second burst in the same name inside
+                            # repeat_window_secs is a different population
+                            # (it lost in both measured sessions); flag it so
+                            # the report can keep it out of the fade sample.
+                            gap = (now - prior) if prior is not None else None
+                            ev.detail["prior_burst_secs"] = (round(gap) if gap is not None else None)
+                            ev.detail["repeat"] = bool(
+                                gap is not None and gap <= float(self.det.get("repeat_window_secs", 1800)))
+                            size = max(abs(ev.ret_60s or 0.0), abs(ev.ret_120s or 0.0))
+                            ev.detail["fade_oversize"] = bool(
+                                size > float(self.det.get("fade_max_burst_pct", 0.015)))
                             await self._journal_event(ev)
                     await self._fill_pending(now)
                     await hb.tick(f"{self.feed} stream, {len(self.books)} symbols, "
@@ -245,12 +257,42 @@ class C12Service:
                     ids.append(((await cur.fetchone())[0], direction))
         for event_id, direction in ids:
             self.pending.append({"event_id": event_id, "symbol": ev.symbol, "ts": ev.ts,
-                                 "px": ev.price, "direction": direction})
+                                 "px": ev.price, "direction": direction,
+                                 "spread_bps": spread})
         self.stats["events"] += 1
         log.info("burst", extra=kv(symbol=ev.symbol, dir=ev.direction,
                                    ret60=round(ev.ret_60s or 0, 4), ret120=round(ev.ret_120s or 0, 4),
                                    vol_mult=round(ev.vol_mult or 0, 1), spread_bps=spread,
                                    news=news, scanner=scanner_known))
+
+    def _realistic(self, book, p: dict, horizon: int, bracket_keys) -> Optional[dict]:
+        """Score p's path from the first print entry_delay_secs after detection,
+        with half the quoted spread as crossing cost (long pays up, short sells
+        down). Returns None when no print exists after the delay."""
+        delay = float(self.det.get("entry_delay_secs", 30))
+        px, ts = book.entry_after(p["ts"], delay)
+        if px is None or ts is None:
+            return None
+        half = (float(p.get("spread_bps") or 0.0) / 2.0) / 10000.0
+        entry = px * (1 + p["direction"] * half)
+        rem = max(int(horizon - (ts - p["ts"])), 60)
+        rp = book.path(ts, entry, p["direction"], rem,
+                       float(self.det.get("score_target", 0.01)),
+                       float(self.det.get("score_stop", 0.007)))
+        p30 = book.price_at(p["ts"] + horizon)
+        ret_30 = ((p30 / entry - 1) if p["direction"] > 0 else (1 - p30 / entry)) if p30 else None
+        out = {"delay_secs": delay, "entry_px": round(entry, 4), "print_px": px,
+               "entry_ts": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+               "half_spread_bps": round(half * 10000, 2),
+               "ret_30m": (round(ret_30, 5) if ret_30 is not None else None),
+               "max_fav_pct": round(rp["max_fav_pct"], 5), "max_adv_pct": round(rp["max_adv_pct"], 5),
+               "first_hit": rp["first_hit"], "first_hit_min": rp["first_hit_min"],
+               "brackets": {}}
+        for key in bracket_keys:
+            t = float(key.split("_")[0][1:]) / 100; st = float(key.split("_")[1][1:]) / 100
+            bp = book.path(ts, entry, p["direction"], rem, t, st)
+            out["brackets"][key] = [bp["first_hit"], bp["first_hit_min"]]
+        return out
 
     async def _fill_pending(self, now: float) -> None:
         horizon = float(self.det.get("horizon_secs", 1800))
@@ -276,6 +318,12 @@ class C12Service:
                                float(t), float(s))
                 brackets[f"t{float(t)*100:g}_s{float(s)*100:g}"] = [
                     bp["first_hit"], bp["first_hit_min"]]
+            # v0.15.4: the same scoring from a REALISTIC entry. Session 1 and 2
+            # showed most fade "wins" land inside the first minute, i.e. the
+            # detection print is the spike itself. An order sent at detection
+            # fills at the first print after entry_delay_secs and crosses
+            # half the spread; score that path too so the two can be compared.
+            realistic = self._realistic(book, p, int(horizon), brackets.keys())
             pool = await get_pool()
             async with pool.connection() as conn:
                 await conn.execute(
@@ -287,7 +335,7 @@ class C12Service:
                     (path["p_1m"], path["p_5m"], path["p_15m"], path["p_30m"],
                      round(path["max_fav_pct"], 5), round(path["max_adv_pct"], 5),
                      path["first_hit"], path["first_hit_min"],
-                     json.dumps({"brackets": brackets}), p["event_id"]))
+                     json.dumps({"brackets": brackets, "realistic": realistic}), p["event_id"]))
             done.append(p)
         for p in done:
             self.pending.remove(p)

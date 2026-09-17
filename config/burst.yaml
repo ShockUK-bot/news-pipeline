@@ -140,3 +140,13 @@ detect:
   horizon_secs: 1800             # forward path scored at +30 min
   score_target: 0.01             # first-hit scoring bracket
   score_stop: 0.007
+  # v0.15.4: honest scoring. Sessions 1 and 2 put most fade "wins" inside the
+  # first minute after detection (the detection print IS the spike), so every
+  # event is also scored from the first print entry_delay_secs later with half
+  # the quoted spread as crossing cost (detail.realistic). Repeat bursts in a
+  # name inside repeat_window_secs and fades of bursts larger than
+  # fade_max_burst_pct are flagged (detail.repeat / detail.fade_oversize) and
+  # kept out of the report's fade sample; both lost in the measured sessions.
+  entry_delay_secs: 30
+  repeat_window_secs: 1800
+  fade_max_burst_pct: 0.015

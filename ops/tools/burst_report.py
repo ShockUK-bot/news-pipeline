@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""burst_report — what C12 saw today and how the rules are scoring (v0.15.0).
+"""burst_report — what C12 saw today and how the rules are scoring (v0.15.0, realistic entry v0.15.4).
 
 Usage (from /opt/pipeline, env sourced):
     .venv/bin/python ops/tools/burst_report.py            # today
@@ -95,6 +95,55 @@ async def main() -> None:
             t = float(bracket.split("_")[0][1:]); s = float(bracket.split("_")[1][1:])
             ev = (tgt * t - stp * s) / n - args.cost_bps / 100
             print(f"{rule:14s} {direction:4s} {bracket:12s} {n:5d} {100*tgt/n:7.0f}% {100*stp/n:5.0f}% {ev:+8.3f}%")
+
+    # v0.15.4: the same scoreboard from a REALISTIC entry (first print
+    # entry_delay_secs after detection, half spread crossed), fade sample
+    # without repeat bursts and without oversize bursts. This is the column
+    # the go-live bar is judged on from v0.15.4.
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT rule, direction, count(*) AS n,
+                      round(avg((detail->'realistic'->>'ret_30m')::numeric)*100, 3) AS avg30,
+                      round(100.0*count(*) FILTER (WHERE detail->'realistic'->'brackets'->'t0.5_s0.5'->>0='target')/count(*)) AS t55,
+                      round(100.0*count(*) FILTER (WHERE detail->'realistic'->'brackets'->'t0.5_s0.5'->>0='stop')/count(*)) AS s55,
+                      round(100.0*count(*) FILTER (WHERE detail->'realistic'->>'first_hit'='target')/count(*)) AS t107,
+                      round(100.0*count(*) FILTER (WHERE detail->'realistic'->>'first_hit'='stop')/count(*)) AS s107,
+                      count(DISTINCT ts::date) AS sessions,
+                      count(DISTINCT ts::date) FILTER (WHERE (detail->'realistic'->>'ret_30m')::numeric < 0) AS dummy
+               FROM journal.burst_events e
+               WHERE e.complete AND e.ts >= (current_date - (%s - 1))
+                 AND e.detail ? 'realistic' AND e.detail->'realistic'->>'ret_30m' IS NOT NULL
+                 AND NOT coalesce((e.detail->>'repeat')::boolean, false)
+                 AND NOT (e.rule='fade' AND coalesce((e.detail->>'fade_oversize')::boolean, false))
+               GROUP BY 1,2 ORDER BY 1,2""", (args.days,))
+        real = await cur.fetchall()
+        cur = await conn.execute(
+            """SELECT rule, direction, ts::date, avg((detail->'realistic'->>'ret_30m')::numeric)
+               FROM journal.burst_events e
+               WHERE e.complete AND e.ts >= (current_date - (%s - 1)) AND e.detail ? 'realistic'
+                 AND NOT coalesce((e.detail->>'repeat')::boolean, false)
+                 AND NOT (e.rule='fade' AND coalesce((e.detail->>'fade_oversize')::boolean, false))
+               GROUP BY 1,2,3""", (args.days,))
+        real_days = await cur.fetchall()
+        cur = await conn.execute(
+            """SELECT count(*) FILTER (WHERE coalesce((detail->>'repeat')::boolean,false)),
+                      count(*) FILTER (WHERE coalesce((detail->>'fade_oversize')::boolean,false))
+               FROM journal.burst_events WHERE rule='momentum' AND ts >= (current_date - (%s - 1))""", (args.days,))
+        excl = await cur.fetchone()
+    await close_pool()
+    if real:
+        print(f"\nRealistic entry (first print after the delay, half spread crossed; repeat bursts and oversize fades excluded: {excl[0]} repeat, {excl[1]} oversize detections)")
+        print(f"{'rule':14s} {'dir':4s} {'n':>5s} {'avg30m%':>8s} {'after cost':>11s} {'0.5/0.5 tgt':>11s} {'stop':>5s} {'1.0/0.7 tgt':>11s} {'stop':>5s} {'neg sessions':>13s}")
+        neg = {}
+        for rule, direction, d, ev in real_days:
+            neg.setdefault((rule, direction), [0, 0]); neg[(rule, direction)][1] += 1
+            if ev is not None and ev < 0: neg[(rule, direction)][0] += 1
+        for rule, direction, n, avg30, t55, s55, t107, s107, sess, _ in real:
+            ev_cost = (float(avg30) - args.cost_bps / 100) if avg30 is not None else None
+            nneg, ntot = neg.get((rule, direction), (0, 0))
+            bar = "GO" if n >= 200 and ev_cost is not None and ev_cost >= 0.15 and ntot and nneg / ntot <= 0.4 else "no"
+            print(f"{rule:14s} {direction:4s} {n:5d} {str(avg30):>8s} {(f'{ev_cost:+.3f}%' if ev_cost is not None else '-'):>11s} {str(t55)+'%':>11s} {str(s55)+'%':>5s} {str(t107)+'%':>11s} {str(s107)+'%':>5s} {nneg}/{ntot:<11d} {bar}")
 
 
 if __name__ == "__main__":

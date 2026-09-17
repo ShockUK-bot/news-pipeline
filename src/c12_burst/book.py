@@ -118,6 +118,16 @@ class SymbolBook:
             return None, None
         return max(b.high for b in bs), min(b.low for b in bs)
 
+    def entry_after(self, t0: float, delay_secs: float) -> tuple[Optional[float], Optional[float]]:
+        """v0.15.4: (price, ts) of the first print at or after t0 + delay_secs
+        (bucket open), i.e. what an order sent at detection and working for
+        `delay_secs` would realistically get. None if nothing printed yet."""
+        key = int((t0 + delay_secs) // BUCKET_SECS)
+        for k, b in self.buckets.items():
+            if k >= key:
+                return b.open, b.ts
+        return None, None
+
     def path(self, t0: float, px: float, direction: int, horizon_secs: int = 1800,
              target: float = 0.01, stop: float = 0.007) -> dict:
         """Forward path from t0 at price px: prices at +60/+300/+900/+1800 s,
