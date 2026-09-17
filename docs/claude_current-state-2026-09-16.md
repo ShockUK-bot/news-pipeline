@@ -64,3 +64,23 @@ A7 EOD at 15:35 ran on the restored heavy build (b10064): success, 21.8 tok/s on
 ## Files for the design chat
 
 `claude_patch-notes-v0_14_11.md`, `-12`, `-13`, `claude_patch-notes-v0_15_0.md`, `claude_gatelab-review-2026-09-15.md`, `claude_1pct-gain-design-2026-09-15.md`, `claude_c12-build-handoff-2026-09-15.md`, and this file.
+
+## Evening update (22:30 CT)
+
+- **v0.15.3 deployed 17:17 CT**: C12 scores every event against five target/stop brackets (`detail.brackets`), `burst_report.py` prints the sweep. `c12-burst` restarted after the close, tag pushed. Bracket data unverified until the first scored rows tomorrow (no bursts fire after hours). `docs/claude_patch-notes-v0_15_3.md`.
+- **Target review**: the 1 percent target was the wrong number. The reliable move is 0.3 to 0.5 percent over 5 to 15 minutes against the burst; 95 percent of up burst fades reached +0.5 percent, 54 percent reached +1 percent; chasing has no working target. Full tables and the session 2 draft in `docs/claude_burst-target-review-2026-09-16.md`. No trading change; the sweep decides.
+- **A5 seeding run 20:30 CT worked**: `deep=True`, `bootstrap=True`, heavy slot started and stopped by the run, 6 `NEW_THESIS` (th-2026-006 to 011: retail dilution wave, SPAC restructuring, micro cap delisting, restatements and auditor resignations, big tech antitrust overhang, micro cap securities fraud wave), 4 `THESIS_UPDATE`, 56 ignores, active theses 4 to 10. Check 5 from the morning list is done.
+- **C11 21:15 CT**: RIOT stop tightened to 20.25 (third consecutive A6 exit verdict; last 20.35, likely exits at the open). Planned a re-entry in INVX (th-2026-003, 62 at limit 29.92) the same day it was stopped out at 29.71; no cooling off rule exists. Watch at the open, design item for later.
+- Row count note: `journal.burst_events` holds two rows per detection (momentum and fade), so session 1's 158 detections are 316 rows. The 17:17 restart dropped 5 detections still pending their 30 minute path (in memory), harmless.
+
+## Open items (updated)
+
+1. C12: verify `detail.brackets` at 09:10 CT; two week measurement before any lane decision; v0.16 fade lane shape in the target review doc.
+2. Thesis lane: same day re-entry after a stop out (INVX); review exit that sells at the next open instead of arming a stop (RIOT gap up kept it alive a day).
+3. Dashboard cosmetics (Gate Lab EH direction, fade rows under RTH, BURST tab bracket columns).
+4. Model file tidy (28 GB); Qwen3.8-Flash-Next evaluation for the heavy slot after the Qwen 4 window.
+5. Scanner entry timing evidence (unchanged from 09-13).
+
+## Files for the design chat (updated)
+
+Add `claude_patch-notes-v0_15_1.md`, `-2`, `-3`, `claude_burst-target-review-2026-09-16.md`, and this file.
