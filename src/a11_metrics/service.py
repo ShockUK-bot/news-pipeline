@@ -172,19 +172,21 @@ async def post_exit_pass(conn, md, dry: bool, today: date) -> list[dict]:
 
 
 # ---------------------------------------------------------------- 4. guard outcomes
-async def guard_pass(conn, md, dry: bool, now: datetime) -> list[dict]:
+async def guard_pass(conn, md, dry: bool, now: datetime, reclassify: bool = False) -> list[dict]:
     cur = await conn.execute(
         """SELECT g.guard_id, g.position_id, p.ticker, p.side, g.ts, g.recommended_action,
                   p.status, p.r_unit, p.closed_ts,
                   (SELECT sum(e.price*e.qty)/NULLIF(sum(e.qty),0) FROM journal.exits e
-                    WHERE e.position_id=p.position_id AND e.ts >= g.ts) AS exit_px_after
+                    WHERE e.position_id=p.position_id AND e.ts >= g.ts) AS exit_px_after,
+                  (d.payload->'context'->'price_action'->>'unrealized_r')::numeric AS ur
            FROM journal.guard_ledger g JOIN journal.positions p USING (position_id)
-           WHERE g.outcome_class IS NULL AND p.r_unit > 0
+           LEFT JOIN journal.decisions d ON d.decision_id = g.decision_id
+           WHERE (g.outcome_class IS NULL OR %s) AND p.r_unit > 0
              AND (p.status='CLOSED' OR g.ts < %s - interval '7 days')
-           ORDER BY g.ts""", (now,))
+           ORDER BY g.ts""", (reclassify, now))
     rows = await cur.fetchall()
     out = []
-    for gid, pid, ticker, side, ts, action, status, r_unit, closed_ts, exit_px_after in rows:
+    for gid, pid, ticker, side, ts, action, status, r_unit, closed_ts, exit_px_after, ur in rows:
         try:
             near = await md.minute_bars(ticker, ts - timedelta(minutes=30), ts + timedelta(hours=18))
         except Exception as exc:                                  # noqa: BLE001
@@ -210,7 +212,8 @@ async def guard_pass(conn, md, dry: bool, now: datetime) -> list[dict]:
             final = later[min(4, len(later) - 1)]["close"]
         if final is not None:
             delta = side_sign(side) * (final - float(at_verdict)) / float(r_unit)
-            cls, pnl = classify_guard(action, delta)
+            cls, pnl = classify_guard(action, delta,
+                                      unrealized_r=(float(ur) if ur is not None else None))
         row = {"guard_id": gid, "position_id": pid, "ticker": ticker, "action": action,
                "outcome_class": cls, "outcome_pnl_r": pnl}
         if not dry:
@@ -345,7 +348,7 @@ async def run(args) -> dict:
         summary["scanner_cf"] = len(sc)
         pe = await post_exit_pass(conn, md, args.dry_run, today)
         summary["post_exit"] = len(pe)
-        gd = await guard_pass(conn, md, args.dry_run, now)
+        gd = await guard_pass(conn, md, args.dry_run, now, reclassify=bool(args.reclassify_guard))
         summary["guard_classified"] = len(gd)
         ro = await rollups_pass(conn, today, int(args.days), cfgv, args.dry_run)
         summary["rollups"] = len(ro)
@@ -374,6 +377,8 @@ def main() -> None:
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--days", type=int, default=3, help="DAY rollups to (re)compute, default 3")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--reclassify-guard", action="store_true",
+                    help="re-run the guard classification on every row (after a rule change)")
     asyncio.run(run(ap.parse_args()))
 
 

@@ -52,7 +52,11 @@ def target_price(entry_px: float, side: str, target_fraction: float, magnitude: 
     return entry_px * (1 + side_sign(side) * target_fraction * magnitude)
 
 
-def classify_guard(recommended_action: str, delta_r: float, threshold: float = SAVE_R) -> tuple[str, float]:
+WINNER_R = 1.0         # a HOLD on a position already this far in profit is the ladder's call
+
+
+def classify_guard(recommended_action: str, delta_r: float, threshold: float = SAVE_R,
+                   unrealized_r: Optional[float] = None) -> tuple[str, float]:
     """delta_r = what the position did AFTER the verdict, in R, in the
     position's direction (positive = it went on to gain).
 
@@ -69,6 +73,14 @@ def classify_guard(recommended_action: str, delta_r: float, threshold: float = S
         pnl = -delta_r
     else:
         pnl = delta_r
+        # v0.17.1: a HOLD on a position already >= WINNER_R in profit cannot
+        # be a shakeout. The guard's output space is risk-reducing only and
+        # the news was benign; whatever the position gives back afterwards
+        # is the trailing stop's design (CRWD 09-14: 15 holds at +2.3R, the
+        # trail then gave back 2.5R). Journaled NEUTRAL with the give-back
+        # kept in outcome_pnl_r so the ladder question stays measurable.
+        if unrealized_r is not None and unrealized_r >= WINNER_R:
+            return "NEUTRAL", round(pnl, 3)
     if pnl > threshold:
         cls = "SAVE"
     elif pnl < -threshold:

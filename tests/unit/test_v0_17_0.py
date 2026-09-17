@@ -44,6 +44,10 @@ def test_classify_guard_exit_and_hold():
     assert classify_guard("HOLD", 0.8) == ("SAVE", 0.8)
     assert classify_guard("HOLD", -0.8) == ("SHAKEOUT", -0.8)
     assert classify_guard("HOLD", 0.0) == ("NEUTRAL", 0.0)
+    # v0.17.1: a HOLD on a >= 1R winner is the ladder's give-back, not a shakeout
+    assert classify_guard("HOLD", -2.5, unrealized_r=2.26) == ("NEUTRAL", -2.5)
+    assert classify_guard("HOLD", -0.8, unrealized_r=0.9) == ("SHAKEOUT", -0.8)
+    assert classify_guard("EXIT", 1.0, unrealized_r=2.0) == ("SHAKEOUT", -1.0)
 
 
 def test_post_exit_outcome_sign():
