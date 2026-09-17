@@ -36,7 +36,7 @@ from a1_triage.backends import get_backend
 from router.facts import _schedule_cache
 
 from .sizing import (SizingInputs, hard_gates, open_risk_dollars,
-                     size_entry)
+                     size_entry, scanner_capital_cfg)
 
 log = get_logger("a3.service")
 
@@ -491,10 +491,8 @@ class A3Service:
                 time_window_sessions=1,
                 reason="scalp_v1 profile defaults (no discretion on scanner lane)")
             model_used = False
-            capital_cfg = dict(self.capital)
-            capital_cfg["risk_per_trade_pct"] = (
-                float(self.capital["risk_per_trade_pct"])
-                * float(self.scanner_cfg.get("risk_multiplier", 0.5)))
+            # v0.16.0: lane policy (risk multiplier + scanner notional cap)
+            capital_cfg = scanner_capital_cfg(self.capital, self.scanner_cfg)
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
             capital_cfg = self.capital

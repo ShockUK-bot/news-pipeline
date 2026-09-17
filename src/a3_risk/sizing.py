@@ -136,6 +136,21 @@ def hard_gates(inp: SizingInputs, limits_cfg: dict, profile: dict,
     return None, n, flags
 
 
+def scanner_capital_cfg(capital_cfg: dict, scanner_cfg: dict) -> dict:
+    """v0.16.0: the scanner lane's own capital policy. risk_multiplier scales
+    risk_per_trade_pct (1.0 from v0.16.0, was 0.5); max_position_notional_pct
+    under `scanner:` replaces the global notional cap for scanner entries.
+    Through v0.15 the global 15% cap bound on 15 of 17 scanner trades (131 to
+    246 dollars at risk on 14,600 notional), so risk sizing never applied."""
+    cfg = dict(capital_cfg)
+    cfg["risk_per_trade_pct"] = (float(capital_cfg["risk_per_trade_pct"])
+                                 * float(scanner_cfg.get("risk_multiplier", 0.5)))
+    lane_cap = scanner_cfg.get("max_position_notional_pct")
+    if lane_cap is not None:
+        cfg["max_position_notional_pct"] = float(lane_cap)
+    return cfg
+
+
 def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
                profile: dict, horizon: str, k_adj: float,
                earnings_blackout_sessions: int = 1,

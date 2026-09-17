@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly scanner exit-ladder counterfactuals (journal.scanner_counterfactuals, trade_metrics)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+EnvironmentFile=/etc/pipeline/pipeline.env
+Environment=PYTHONPATH=/opt/pipeline/src
+ExecStart=/opt/pipeline/.venv/bin/python /opt/pipeline/ops/scanner_counterfactuals.py --report --days 30

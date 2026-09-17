@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly scanner counterfactuals timer (15:05 CT, after force-flat)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

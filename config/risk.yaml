@@ -14,8 +14,23 @@ capital:
   max_sector_heat_pct: 0.015
   min_viable_risk_fraction: 0.5
 scanner:                             # v0.12.1 — scanner-origin sizing policy
-  risk_multiplier: 0.5               # half of risk_per_trade_pct until A11 shows
-                                     # >= 30 closed scanner trades of evidence
+  risk_multiplier: 1.0               # v0.16.0 (2026-09-17): was 0.5. 17 closed
+                                     # scanner trades, 11 winners, +1,378; the
+                                     # operator lifted it early. ROLLBACK: 0.5.
+  max_position_notional_pct: 0.30    # v0.16.0: lane cap replacing the global
+                                     # 15% for scanner entries. The 15% cap bound
+                                     # on 15 of 17 trades (2 ATR(5m) on a large
+                                     # cap is ~1% of price, so 14.6k notional
+                                     # could only carry ~150 dollars of risk).
+                                     # Why 30 and not 25: the viability rule
+                                     # (min_viable_risk_fraction 0.5) vetoes a
+                                     # trade whose clipped risk is under half the
+                                     # budget; that threshold is stop >= 0.83% of
+                                     # price at 0.15/0.5x (today) and at 0.30/1.0x,
+                                     # but 1.0% at 0.25/1.0x, which would have
+                                     # vetoed 5 of the 17 trades to date.
+                                     # ROLLBACK: delete this line (global cap
+                                     # applies again). Restart a3-risk.
   max_concurrent_positions: 2        # open origin=scanner positions (A3 veto)
 limits:
   max_trades_per_day_default: 5      # control-table override wins if present

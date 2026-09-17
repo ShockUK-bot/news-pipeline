@@ -41,13 +41,19 @@ FORCE_FLAT_CT = "14:50"
 
 
 def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
-           qty: int, atr: float, mag: float, stop_k: float) -> dict:
-    """Pure ladder replay. bars: [{ts(CT datetime), open, high, low, close}]."""
+           qty: int, atr: float, mag: float, stop_k: float,
+           trail_k: float = TRAIL_K, time_stop: bool = True,
+           scale_out: bool = True, runner_hold: bool = False) -> dict:
+    """Pure ladder replay. bars: [{ts(CT datetime), open, high, low, close}].
+    v0.16.0 variants: trail_k (ATR multiple of the trail), time_stop off,
+    scale_out off (full size rides the trail), runner_hold (after the scale-out
+    the runner keeps only the breakeven stop until force-flat)."""
     m = 1 if side == "LONG" else -1
     stop = round(entry_px - m * stop_k * atr, 2)
     r_unit = stop_k * atr
     target = round(entry_px * (1 + m * TF * mag), 4)
     hwm, basis, qty_open, scaled, pnl, exits = entry_px, "initial", qty, False, 0.0, []
+    mfe, close_r = 0.0, None
     first = entry_ts.replace(second=0, microsecond=0)
     for b in bars:
         if b["ts"] < first:
@@ -56,6 +62,7 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
         minutes_open = (b["ts"] - entry_ts).total_seconds() / 60
         lose = b["low"] if side == "LONG" else b["high"]
         win = b["high"] if side == "LONG" else b["low"]
+        mfe = max(mfe, m * (win - entry_px) / r_unit)
         if (lose <= stop) if side == "LONG" else (lose >= stop):
             layer = {"initial": "STOP", "breakeven": "BREAKEVEN", "trail": "TRAIL"}[basis]
             pnl += m * (stop - entry_px) * qty_open
@@ -68,13 +75,13 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
             exits.append((hhmm, "FORCE_FLAT", qty_open, b["close"]))
             qty_open = 0
             break
-        if minutes_open >= TIME_WIN and prog < TIME_MIN_R:
+        if time_stop and minutes_open >= TIME_WIN and prog < TIME_MIN_R:
             pnl += m * (b["close"] - entry_px) * qty_open
             exits.append((hhmm, "TIME", qty_open, b["close"]))
             qty_open = 0
             break
         if not scaled and ((win >= target) if side == "LONG" else (win <= target)):
-            half = qty_open // 2
+            half = qty_open // 2 if scale_out else 0
             if half > 0:
                 pnl += m * (target - entry_px) * half
                 qty_open -= half
@@ -82,8 +89,11 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
             scaled = True
         hwm = max(hwm, win) if side == "LONG" else min(hwm, win)
         proposed = None
-        if prog >= TRAIL_AT:
-            proposed = (round(hwm - m * TRAIL_K * atr, 2), "trail")
+        if runner_hold and scaled:
+            if basis == "initial":
+                proposed = (round(entry_px, 2), "breakeven")
+        elif prog >= TRAIL_AT:
+            proposed = (round(hwm - m * trail_k * atr, 2), "trail")
         elif prog >= BE_R and basis == "initial":
             proposed = (round(entry_px, 2), "breakeven")
         if proposed and ((proposed[0] > stop) if side == "LONG" else (proposed[0] < stop)):
@@ -92,8 +102,32 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
         last = bars[-1]["close"]
         pnl += m * (last - entry_px) * qty_open
         exits.append((bars[-1]["ts"].strftime("%H:%M"), "EOD_MARK", qty_open, last))
+    flat = next((b for b in bars if b["ts"].strftime("%H:%M") >= FORCE_FLAT_CT and b["ts"] >= first), None)
+    if flat is not None and r_unit:
+        close_r = round(m * (flat["close"] - entry_px) / r_unit, 3)
     return {"pnl": round(pnl, 2), "r": round(pnl / (qty * r_unit), 2) if qty and r_unit else 0.0,
-            "r_unit": round(r_unit, 4), "stop0": stop if not exits else None, "exits": exits}
+            "r_unit": round(r_unit, 4), "stop0": stop if not exits else None, "exits": exits,
+            "mfe_r": round(mfe, 3), "close_r": close_r}
+
+
+VARIANTS = {                       # v0.16.0: journaled nightly per scanner trade
+    "base": {},
+    "noscale": {"scale_out": False},
+    "runner_hold": {"runner_hold": True},
+    "notime": {"time_stop": False},
+    "stop3.0": {"stop_k": 3.0},
+    "trail2.5": {"trail_k": 2.5},
+    "trail3.0": {"trail_k": 3.0},
+}
+
+
+def replay_variants(bars, side, entry_ts, entry_px, qty, atr, mag) -> dict[str, dict]:
+    out = {}
+    for name, kw in VARIANTS.items():
+        kw = dict(kw)
+        k = kw.pop("stop_k", 2.0)
+        out[name] = replay(bars, side, entry_ts, entry_px, qty, atr, mag, k, **kw)
+    return out
 
 
 def atr5m_before(bars: list[dict], entry_ts: datetime, n: int = 14) -> float | None:
@@ -127,17 +161,22 @@ async def load_position(position_id: int) -> dict:
     async with pool.connection() as conn:
         cur = await conn.execute(
             """SELECT ticker, side, opened_ts, avg_entry, qty_initial, r_unit,
-                      exit_policy, realized_pnl
+                      exit_policy, realized_pnl, closed_ts
                FROM journal.positions WHERE position_id = %s""", (position_id,))
         row = await cur.fetchone()
     if not row:
         sys.exit(f"position {position_id} not found")
-    ticker, side, opened_ts, avg_entry, qty, r_unit, policy, realized = row
+    ticker, side, opened_ts, avg_entry, qty, r_unit, policy, realized, closed_ts = row
     if isinstance(policy, str):
         policy = json.loads(policy)
+    # v0.16.0: a scalp promoted to short_term_v1 has its policy rewritten with
+    # the DAILY atr, so derive ATR(5m) from the journaled R unit (2.0 x ATR at
+    # entry for scalp_v1) instead of trusting the policy's atr fields.
+    atr = float(r_unit) / 2.0 if r_unit else float(policy.get("atr_value") or policy["atr_14"])
     return {"ticker": ticker, "side": side, "entry_ts": opened_ts.astimezone(CT),
+            "closed_ts": closed_ts.astimezone(CT) if closed_ts else None,
             "entry_px": float(avg_entry), "qty": int(qty), "r_unit": float(r_unit),
-            "atr": float(policy.get("atr_value") or policy["atr_14"]),
+            "atr": atr,
             "mag": float(policy.get("magnitude_est") or 0.015),
             "actual_pnl": float(realized),
             "actual_r": round(float(realized) / (int(qty) * float(r_unit)), 2)}

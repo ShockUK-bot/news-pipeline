@@ -92,6 +92,7 @@ timers:
   - c5-mailer
   - pipeline-backup
   - pipeline-nav-snapshot
+  - scanner-counterfactual
   - queue-prune
   - earnings-calendar
   - macro-fetch
