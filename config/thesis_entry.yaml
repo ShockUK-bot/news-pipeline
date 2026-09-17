@@ -14,6 +14,11 @@
 # design; the basket exists to catch the next one.
 
 entry:
+  reentry_cooloff_days: 5      # v0.16.1: no thesis entry in a ticker that
+                               # was stopped / invalidated / reviewed out
+                               # (any lane) inside this many calendar days.
+                               # INVX was re-bought the morning after its
+                               # stop out (2026-09-16/17). 0 = off.
   min_confidence: 0.5          # ACTIVE, direction='up' theses only
   min_evidence: 0              # 0 = anchor-only theses may trade (operator
                                # chose to start immediately; raise to demand
@@ -43,6 +48,12 @@ extended:                      # the don't-chase gate (either trips = skip)
   max_5session_gain_pct: 0.15  # or up > 15% over the last 5 sessions
 
 management:                    # nightly pass over open thesis positions
+  dead_exit_at_open: true      # v0.16.1: a dead or review-exit thesis
+                               # position is SOLD by C4 at 09:35 ET the next
+                               # session (exit_policy.exit_at_open), whatever
+                               # the gap. The tightened stop below stays as
+                               # belt and braces. false = v0.14.11 behaviour
+                               # (stop only; a gap up keeps it alive: RIOT).
   exit_dead_theses: true       # thesis no longer ACTIVE -> stop tightened
                                # to just under last price: the existing L1
                                # stop machinery exits it next session.

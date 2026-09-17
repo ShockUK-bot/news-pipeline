@@ -278,7 +278,8 @@ class C4Service:
                                              fill=fill_price, cat=cat_price))
 
 
-PRECLOSE_INVALIDATION_ET = "15:55"   # v0.14.6 code default (14:55 CT)
+PRECLOSE_INVALIDATION_ET = "15:55"
+OPEN_EXIT_ET = "09:35"               # v0.16.1 code default (08:35 CT)   # v0.14.6 code default (14:55 CT)
 
 
 async def consume_loop(svc: C4Service, stop: asyncio.Event) -> None:
@@ -336,6 +337,10 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                 if svc.cfg.get("promotion_enabled", True):
                     await engine.promotion_pass(
                         exit_cfg["profiles"]["short_term_v1"])
+                # v0.16.1: positions C11 armed for "exit at open" (dead or
+                # review-exit theses) are market-exited from 09:35 ET; the
+                # pass is idempotent (the exit closes the position).
+                await engine.open_exit_pass(OPEN_EXIT_ET)
                 for pos in await open_positions():
                     # v0.12.5: check_halt flags/journals the freeze but must
                     # NOT block the bar fetch — a frozen position has to see

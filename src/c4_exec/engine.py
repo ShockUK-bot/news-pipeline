@@ -482,6 +482,40 @@ class PositionEngine:
                                             outcome=outcome))
         return flattened
 
+    # ---------------------------------------------------------------- open exit
+    async def open_exit_pass(self, not_before_et: str = "09:35") -> list[str]:
+        """v0.16.1 — sell at the next open instead of hoping for a dip. C11
+        arms `exit_policy.exit_at_open = {reason, armed_ts, label}` on a
+        dead or review-exit thesis position; this pass market-exits every
+        such position on the first engine pass at or after `not_before_et`
+        (5 min after the open, past the opening cross). Journaled as an EXIT
+        with layer REVIEW. Pure code, no discretion. Before this, the arm
+        was a tighten-only stop just under the last mark, and a gap UP kept
+        the position alive (RIOT: three sessions past its exit verdict)."""
+        now_et = self.now_fn().astimezone(ET)
+        hhmm = now_et.strftime("%H:%M")
+        if hhmm < not_before_et:
+            return []
+        done = []
+        for pos in await open_positions():
+            policy = pos["exit_policy"]
+            arm = policy.get("exit_at_open")
+            if not arm:
+                continue
+            mark = float(pos.get("last_price") or pos["avg_entry"])
+            px = marketable_exit(pos.get("side") or "LONG", mark, 0.003)
+            reason = str(arm.get("reason") or "exit at open")
+            outcome = await execute_exit(
+                self.broker, pos, int(pos["qty_open"]), "REVIEW",
+                f"exit at open ({reason}) @ {hhmm} ET", px, self.now_fn,
+                self.unprotected_max_secs, self.poll_sleep,
+                trigger_price=mark)
+            self.monitors.pop(pos["position_id"], None)
+            done.append(f"{pos['ticker']}:{outcome}")
+            log.info("exit at open", extra=kv(ticker=pos["ticker"],
+                                              reason=reason, outcome=outcome))
+        return done
+
     # ---------------------------------------------------------------- overnight
     async def overnight_pass(self, cfg: dict, earnings_fn=None,
                              pass_label: str = "15:45") -> list[tuple]:

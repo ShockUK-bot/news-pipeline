@@ -249,14 +249,36 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
                              / NULLIF(price_at_veto, 0))
                          FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
             FROM journal.gate_counterfactuals
-            WHERE rule <> 'eh_shadow'
+            WHERE rule NOT IN ('eh_shadow', 'fade')
               AND veto_ts > now() - make_interval(days => %s)
             GROUP BY 1 ORDER BY 2 DESC""", (days,))).fetchall()]
-        # EH shadow scoreboard: outcome mix during pre/post sessions
+        # v0.16.1: the fade shadow lane (v0.14.12) gets its own rows: a fade
+        # trades AGAINST the move, so its numbers are direction-adjusted to
+        # the fade's side and must not sit among the regular vetoes.
+        fade = [dict(r) for r in await (await conn.execute("""
+            SELECT veto_reason, direction, count(*) AS total,
+                   count(*) FILTER (WHERE complete) AS measured,
+                   round(avg(CASE WHEN direction = 'up' THEN max_down_pct
+                                  ELSE max_up_pct END)
+                         FILTER (WHERE complete) * 100, 2) AS avg_best_pct,
+                   round(avg(CASE WHEN direction = 'up'
+                                  THEN (price_at_veto - price_eod)
+                                  ELSE (price_eod - price_at_veto) END
+                             / NULLIF(price_at_veto, 0))
+                         FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
+            FROM journal.gate_counterfactuals
+            WHERE rule = 'fade'
+              AND veto_ts > now() - make_interval(days => %s)
+            GROUP BY 1, 2 ORDER BY 3 DESC""", (days,))).fetchall()]
+        # EH shadow scoreboard: outcome mix during pre/post sessions.
+        # v0.16.1: direction-adjusted (a down shadow trade is a short, so a
+        # falling close is a gain for it); was raw price change.
         eh = [dict(r) for r in await (await conn.execute("""
             SELECT veto_reason AS outcome, count(*) AS total,
                    count(*) FILTER (WHERE complete) AS measured,
-                   round(avg((price_eod - price_at_veto)
+                   round(avg(CASE WHEN direction = 'down'
+                                  THEN (price_at_veto - price_eod)
+                                  ELSE (price_eod - price_at_veto) END
                              / NULLIF(price_at_veto, 0))
                          FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
             FROM journal.gate_counterfactuals
@@ -265,14 +287,18 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
             GROUP BY 1 ORDER BY 2 DESC""", (days,))).fetchall()]
         # the shadow would-trades in detail — the live-EH build decision data
         eh_trades = [dict(r) for r in await (await conn.execute("""
-            SELECT EXTRACT(EPOCH FROM veto_ts) AS ts, ticker,
+            SELECT EXTRACT(EPOCH FROM veto_ts) AS ts, ticker, direction,
                    round(pct_move_at_veto * 100, 2)  AS move_at_entry_pct,
                    round(price_at_veto, 2)           AS entry,
-                   round(((price_eod - price_at_veto)
+                   round((CASE WHEN direction = 'down'
+                               THEN (price_at_veto - price_eod)
+                               ELSE (price_eod - price_at_veto) END
                           / NULLIF(price_at_veto, 0)) * 100, 2)
                                                      AS entry_to_close_pct,
-                   round(max_up_pct * 100, 2)        AS best_pct,
-                   round(max_down_pct * 100, 2)      AS worst_pct,
+                   round((CASE WHEN direction = 'down' THEN max_down_pct
+                               ELSE max_up_pct END) * 100, 2)   AS best_pct,
+                   round((CASE WHEN direction = 'down' THEN max_up_pct
+                               ELSE max_down_pct END) * 100, 2) AS worst_pct,
                    complete
             FROM journal.gate_counterfactuals
             WHERE rule = 'eh_shadow' AND veto_reason = 'WOULD_TRADE'
@@ -281,7 +307,7 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
         pending = (await (await conn.execute(
             "SELECT count(*) AS n FROM journal.gate_counterfactuals "
             "WHERE NOT complete")).fetchone())["n"]
-    return _json({"days": days, "today": today, "rth": rth, "eh": eh,
+    return _json({"days": days, "today": today, "rth": rth, "fade": fade, "eh": eh,
                   "eh_trades": eh_trades, "pending": int(pending)})
 
 
@@ -321,7 +347,32 @@ async def api_burst(days: int = 5, user: str = Depends(_require_user)):
                                   ELSE 1 - p_30m / price END)
                          FILTER (WHERE complete) * 100, 3) AS avg_30m_pct,
                    round(avg(spread_bps), 1) AS avg_spread_bps,
-                   count(DISTINCT ts::date) AS sessions
+                   count(DISTINCT ts::date) AS sessions,
+                   -- v0.16.1: the honest columns (v0.15.3 sweep + v0.15.4
+                   -- realistic entry), repeat bursts and oversize fades out
+                   count(*) FILTER (WHERE detail ? 'realistic'
+                       AND NOT coalesce((detail->>'repeat')::boolean, false)
+                       AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false)))
+                       AS real_n,
+                   round(avg((detail->'realistic'->>'ret_30m')::numeric)
+                       FILTER (WHERE detail ? 'realistic'
+                           AND NOT coalesce((detail->>'repeat')::boolean, false)
+                           AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false)))
+                       * 100, 3) AS real_avg_30m_pct,
+                   round(100.0 * count(*) FILTER (WHERE detail->'realistic'->'brackets'->'t0.5_s0.5'->>0 = 'target'
+                       AND NOT coalesce((detail->>'repeat')::boolean, false)
+                       AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false)))
+                       / NULLIF(count(*) FILTER (WHERE detail ? 'realistic'
+                           AND NOT coalesce((detail->>'repeat')::boolean, false)
+                           AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false))), 0))
+                       AS real_t55_pct,
+                   round(100.0 * count(*) FILTER (WHERE detail->'realistic'->'brackets'->'t0.5_s0.5'->>0 = 'stop'
+                       AND NOT coalesce((detail->>'repeat')::boolean, false)
+                       AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false)))
+                       / NULLIF(count(*) FILTER (WHERE detail ? 'realistic'
+                           AND NOT coalesce((detail->>'repeat')::boolean, false)
+                           AND NOT (rule = 'fade' AND coalesce((detail->>'fade_oversize')::boolean, false))), 0))
+                       AS real_s55_pct
             FROM journal.burst_events
             WHERE ts > now() - make_interval(days => %s)
             GROUP BY 1, 2 ORDER BY 1, 2""", (days,))).fetchall()]

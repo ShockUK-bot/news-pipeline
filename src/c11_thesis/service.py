@@ -185,6 +185,38 @@ def tighten_stop(exit_policy: dict, last_price: float) -> tuple[dict, float] | N
 NIGHTLY_REVIEW_DETAIL = "A6 nightly review (recommendation)"
 
 
+class _Skip(Exception):
+    """control flow: a pre-decided skip inside the per-symbol try."""
+
+
+def arm_exit_at_open(action: str, status: str, armed_ts: str) -> dict:
+    """v0.16.1: the exit_policy block C4's open_exit_pass acts on."""
+    label = "REVIEW_EXIT" if action == "REVIEW" else f"DEAD_{status}"
+    reason = ("A6 review verdicts: thesis broken" if action == "REVIEW"
+              else f"thesis {status}")
+    return {"label": label, "reason": reason, "armed_ts": armed_ts,
+            "armed_by": "C11"}
+
+
+async def recent_forced_exits(days: int) -> set[str]:
+    """v0.16.1: tickers whose position was stopped, invalidated, reviewed or
+    guarded out (any lane) inside the last `days` calendar days. A thesis
+    re-entry the day after a stop out (INVX 2026-09-16/17) has no cooling
+    off without this."""
+    if days <= 0:
+        return set()
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT DISTINCT p.ticker
+               FROM journal.exits e JOIN journal.positions p USING (position_id)
+               WHERE e.ts > now() - make_interval(days => %s)
+                 AND e.exit_layer IN ('STOP','CATASTROPHE','INVALIDATION',
+                                      'REVIEW','GUARD','BREAKER','BREAKEVEN')""",
+            (int(days),))
+        return {r[0] for r in await cur.fetchall()}
+
+
 def review_exit_due(verdicts: list[dict], n: int) -> bool:
     """v0.14.11 — the A6-to-C11 bridge (baseline: models propose, code
     disposes). `verdicts` are the newest-first `new_value` dicts of the
@@ -350,9 +382,19 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
             action = management_action(status, verdicts, mcfg)
             if action in ("DEAD", "REVIEW"):
                 tightened = tighten_stop(p["exit_policy"], mark)
-                if tightened is None:
-                    continue
-                policy, new_stop = tightened
+                at_open = bool(mcfg.get("dead_exit_at_open", True))
+                if tightened is None and (not at_open
+                                          or p["exit_policy"].get("exit_at_open")):
+                    continue                       # nothing new to arm
+                policy, new_stop = tightened or (dict(p["exit_policy"]),
+                                                 float(p["exit_policy"].get("current_stop")
+                                                       or p["exit_policy"]["initial_stop"]["price"]))
+                if at_open and not policy.get("exit_at_open"):
+                    # v0.16.1: C4 sells at 09:35 ET regardless of the gap;
+                    # the tightened stop stays as belt and braces for a dip
+                    # before then.
+                    policy["exit_at_open"] = arm_exit_at_open(
+                        action, status, now.isoformat())
                 if action == "DEAD":
                     label = status
                     event_reason = f"thesis {status} — exit armed"
@@ -428,6 +470,7 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
                                   int(ecfg.get("min_evidence", 0)))
     held = {p["ticker"] for p in positions}
     pending = await pending_thesis_intents()
+    cooloff = await recent_forced_exits(int(ecfg.get("reentry_cooloff_days", 5)))
     open_thesis_count = len(thesis_pos)
     per_thesis: dict[str, int] = {}
     for p in thesis_pos:
@@ -460,7 +503,14 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
                 break
             skip_reason = None
             numbers: dict = {}
+            if ticker in cooloff:
+                # v0.16.1: no re-entry inside the cooling off window
+                skip_reason = "COOLOFF"
+                numbers = {"reason": f"forced exit within "
+                                     f"{ecfg.get('reentry_cooloff_days', 5)} days"}
             try:
+                if skip_reason:
+                    raise _Skip()
                 daily = await md.daily_bars(ticker, 30)
                 atr = atr14(daily)
                 liq_skip, liq_n = liquidity_verdict(daily, cfg)
@@ -472,6 +522,8 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
                     skip_reason = "ILLIQUID"
                 elif ext_skip:
                     skip_reason = "EXTENDED"
+            except _Skip:
+                pass
             except Exception as e:                    # noqa: BLE001 — isolate per symbol
                 skip_reason, numbers = "DATA_UNAVAILABLE", {"error": repr(e)[:120]}
 

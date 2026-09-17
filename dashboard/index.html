@@ -140,7 +140,11 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
     <table><thead><tr><th>Veto reason</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
     <tbody id="labRth"></tbody></table></div>
   <div class="panel">
-    <h2>Extended-hours shadow — outcome mix</h2>
+    <h2>Fade shadow lane <span class="micro">v0.14.12: trade AGAINST a bullish gap; numbers are in the fade's direction</span></h2>
+    <table><thead><tr><th>Outcome</th><th>Gap dir</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
+    <tbody id="labFade"></tbody></table></div>
+  <div class="panel">
+    <h2>Extended-hours shadow — outcome mix <span class="micro">direction-adjusted since v0.16.1</span></h2>
     <table><thead><tr><th>Outcome</th><th>Total</th><th>Measured</th><th>Avg EOD %</th></tr></thead>
     <tbody id="labEh"></tbody></table></div>
   <div class="panel">
@@ -153,15 +157,16 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 <div id="burst" class="grid" style="display:none">
   <div class="panel">
     <h2>C12 burst stream <span class="micro" id="burstStream"></span></h2>
-    <div class="micro" style="margin-bottom:6px">Real-time SIP trades for ~150 liquid names. A burst = 60 s move &ge; 0.4% (or 120 s &ge; 0.6%) on &ge; 4x volume pace at a new 30-min extreme. Research only: <b>no orders are placed</b>. Each row is scored 30 min later: did +1% (in the burst direction) or &minus;0.7% come first?</div>
+    <div class="micro" style="margin-bottom:6px">Real-time SIP trades for ~150 liquid names. A burst = 60 s move &ge; 0.4% (or 120 s &ge; 0.6%) on &ge; 4x volume pace at a new 30-min extreme. Research only: <b>no orders are placed</b>. Each row is scored 30 min later against five target/stop brackets (v0.15.3) and from a realistic entry (v0.15.4).</div>
     <div class="micro" id="burstCounts" style="margin-bottom:6px"></div>
     <table><thead><tr><th>Time</th><th>Symbol</th><th>Dir</th><th>Price</th><th>60s</th><th>120s</th><th>Vol x</th><th>Spread</th><th>News</th><th>Scanner</th><th>Outcome (30 min)</th></tr></thead>
     <tbody id="burstToday"></tbody></table></div>
   <div class="panel">
     <h2>Scoreboard <span class="micro" id="burstDays"></span></h2>
     <div class="micro" style="margin-bottom:6px">Direction-adjusted. <b>momentum</b> = with the burst, <b>fade</b> = against it, <b>news_anchored</b> = burst with an A1 escalation in the prior 15 min. Go-live bar (design memo): 200+ scored, avg 30-min return &ge; +0.25% before a 10 bps cost, &le; 40% of sessions negative.</div>
-    <table><thead><tr><th>Rule</th><th>Dir</th><th>Events</th><th>Scored</th><th>Target first</th><th>Stop first</th><th>Avg 30-min</th><th>Avg spread</th><th>Sessions</th></tr></thead>
-    <tbody id="burstScore"></tbody></table></div>
+    <table><thead><tr><th>Rule</th><th>Dir</th><th>Events</th><th>Scored</th><th>Target first</th><th>Stop first</th><th>Avg 30-min</th><th>Avg spread</th><th>Sessions</th><th>Realistic n</th><th>Realistic 30-min</th><th>0.5/0.5 target</th><th>0.5/0.5 stop</th></tr></thead>
+    <tbody id="burstScore"></tbody></table>
+    <div class="micro" style="margin-top:6px">Realistic = entry at the first print 30 s after detection with half the spread crossed (v0.15.4), repeat bursts and fades of bursts over 1.5% excluded. The go-live bar is judged on the realistic columns.</div></div>
 </div>
 
 <div id="hist" class="grid" style="display:none">
@@ -484,6 +489,10 @@ async function loadLab(){
     `<tr><td>${r.veto_reason}</td><td>${r.total}</td><td>${r.measured}</td>
      <td>${sgn(r.avg_best_pct)}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
     ||'<tr><td colspan="5" class="detail">no measured vetoes yet — rows fill ~30 min after each close</td></tr>';
+  $('labFade').innerHTML=(d.fade||[]).map(r=>
+    `<tr><td class="${r.veto_reason==='WOULD_TRADE'?'gain':''}">${r.veto_reason}</td><td>${r.direction}</td>
+     <td>${r.total}</td><td>${r.measured}</td><td>${sgn(r.avg_best_pct)}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
+    ||'<tr><td colspan="6" class="detail">no fade candidates yet (a bullish gap with a flat open handoff)</td></tr>';
   $('labEh').innerHTML=(d.eh||[]).map(r=>
     `<tr><td class="${r.outcome==='WOULD_TRADE'?'gain':''}">${r.outcome}</td>
      <td>${r.total}</td><td>${r.measured}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
@@ -518,8 +527,9 @@ async function loadBurst(){
   $('burstScore').innerHTML=(d.score||[]).map(r=>
     `<tr><td>${r.rule}</td><td class="${r.direction==='up'?'gain':'loss'}">${r.direction==='up'?'LONG':'SHORT'}</td><td>${r.n}</td><td>${r.scored}</td>
      <td>${r.target_pct!=null?r.target_pct+'%':'—'}</td><td>${r.stop_pct!=null?r.stop_pct+'%':'—'}</td>
-     <td>${sgn(r.avg_30m_pct)}</td><td>${r.avg_spread_bps!=null?r.avg_spread_bps+' bps':'—'}</td><td>${r.sessions}</td></tr>`).join('')
-    ||'<tr><td colspan="9" class="detail">nothing scored yet</td></tr>';
+     <td>${sgn(r.avg_30m_pct)}</td><td>${r.avg_spread_bps!=null?r.avg_spread_bps+' bps':'—'}</td><td>${r.sessions}</td>
+     <td>${r.real_n||0}</td><td>${r.real_n?sgn(r.real_avg_30m_pct):'—'}</td><td>${r.real_t55_pct!=null?r.real_t55_pct+'%':'—'}</td><td>${r.real_s55_pct!=null?r.real_s55_pct+'%':'—'}</td></tr>`).join('')
+    ||'<tr><td colspan="13" class="detail">nothing scored yet</td></tr>';
 }
 
 function showTab(which){
