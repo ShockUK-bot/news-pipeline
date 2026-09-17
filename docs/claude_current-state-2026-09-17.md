@@ -59,3 +59,21 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 ## Files for the design chat (final for today)
 
 `claude_burst-review-2026-09-17.md`, `claude_scanner-review-2026-09-17.md`, `claude_patch-notes-v0_15_4.md`, `claude_patch-notes-v0_16_0.md`, `claude_patch-notes-v0_16_1.md`, `claude_patch-notes-v0_17_0.md`, and this file.
+
+## Late update (17:15 CT): v0.17.1 and v0.18.0
+
+- **v0.17.1**: A11 guard classification refined; a HOLD on a position already +1R is the ladder's give back, not a shakeout. Reclassified: HOLD 16 saves, 27 shakeouts (12 FRMI), 104 neutral; EXIT 3 saves, 1 shakeout, 6 neutral. Read: the guard is fine, no prompt change, auto execution stays off. `docs/claude_patch-notes-v0_17_1.md`.
+- **v0.18.0, A9 built**: Saturday 09:00 CT weekend review with six evidence rules, proposals journaled and emailed, operator approval by telling Claude Code, evaluation the following Saturday. First run: no proposal, six watch items with their sample counts. `docs/claude_patch-notes-v0_18_0.md`.
+- Model file tidy: still to run by the operator (the `rm` line in the session summary). `/opt/models` unchanged at 17:15 CT.
+
+## Open items (final for today)
+
+1. Burst: realistic scoring starts 09-18; A9 watches the 200 row bar.
+2. Scanner: no scale out decision at 30 trades; A9 proposes it when the bar is met.
+3. Sector data source (EDGAR SIC codes are a candidate: the pipeline already has a CIK map) so the sector heat clip and a scanner cluster rule can exist.
+4. Qwen3.8-Flash-Next download for the heavy slot evaluation.
+5. Not built: A10 (never defined), C9 replay spec. A12 auto execution waits for a bigger EXIT sample (10 so far).
+
+## Files for the design chat (final for today)
+
+`claude_burst-review-2026-09-17.md`, `claude_scanner-review-2026-09-17.md`, patch notes v0.15.4, v0.16.0, v0.16.1, v0.17.0, v0.17.1, v0.18.0, and this file.

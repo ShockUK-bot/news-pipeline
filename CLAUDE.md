@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.17.1` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.18.0` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.
@@ -30,7 +30,7 @@ Core principles, locked in and not up for revision:
 ## Services (systemd)
 
 Long running agents (always active): `a1-triage a2-analyst a3-risk a12-guard a13-chat`.
-Scheduled agents (oneshot, each driven by a `.timer` of the same name; `inactive` between runs is normal): `a4-premarket a4-late a5-thematic a6-nightly a6-eod a7-eod a8-briefing a11-metrics` (`a11-metrics` since v0.17.0: nightly measurement layer at 15:20 CT, writes trade_metrics, counterfactuals, guard outcomes, metric_rollups; heartbeat `metrics`). There is no `a7-heavy` unit. `scanner-counterfactual.timer` (v0.16.0) is installed but disabled: A11 runs that job.
+Scheduled agents (oneshot, each driven by a `.timer` of the same name; `inactive` between runs is normal): `a4-premarket a4-late a5-thematic a6-nightly a6-eod a7-eod a8-briefing a11-metrics a9-review` (`a11-metrics` since v0.17.0: nightly measurement layer at 15:20 CT, writes trade_metrics, counterfactuals, guard outcomes, metric_rollups; heartbeat `metrics`. `a9-review` since v0.18.0: Saturday 09:00 CT weekend review, writes journal.proposals and a WEEKEND_REVIEW email; heartbeat `review`; approve with `python -m a9_review.service --approve N --config-version <hash>`, never auto applied). There is no `a7-heavy` unit. `scanner-counterfactual.timer` (v0.16.0) is installed but disabled: A11 runs that job.
 Long running components: `c1-ingestion c2-dedup c3-gate c4-exec c6-dashboard c8-regime c10-scanner c12-burst` (`c12-burst` since v0.15.0: real time burst stream to `journal.burst_events`, research only, no order path).
 Scheduled components (oneshot plus `.timer`): `c5-mailer c7-watchdog`.
 Support timers (oneshot plus `.timer`): `earnings-calendar macro-fetch pipeline-backup pipeline-nav-snapshot queue-prune thesis-entry`. Vector store: `qdrant`.

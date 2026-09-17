@@ -93,6 +93,7 @@ timers:
   - pipeline-backup
   - pipeline-nav-snapshot
   - a11-metrics
+  - a9-review
   - queue-prune
   - earnings-calendar
   - macro-fetch
@@ -128,6 +129,9 @@ heartbeats:
   metrics:
     max_age_min: 4500        # a11-metrics.timer, 15:20 CT weekdays (Friday to Monday gap)
     unit: a11-metrics
+  review:
+    max_age_min: 11000       # a9-review.timer, Saturday 09:00 CT (a week plus slack)
+    unit: a9-review
   broker_api:
     max_age_min: 90          # written by C4 reconcile (every 15 min).
                              # Deliberately loose until we have confirmed the

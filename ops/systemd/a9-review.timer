@@ -1,0 +1,9 @@
+[Unit]
+Description=a9-review timer (Saturday 09:00 CT, after the week's A11 runs)
+
+[Timer]
+OnCalendar=Sat *-*-* 09:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

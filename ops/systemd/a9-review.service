@@ -1,0 +1,15 @@
+[Unit]
+Description=a9-review weekend review and proposals (oneshot, fired by a9-review.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/.venv/bin/python -m a9_review.service
+TimeoutStartSec=2700
+StandardOutput=journal
+StandardError=journal
