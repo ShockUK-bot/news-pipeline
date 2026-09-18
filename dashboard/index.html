@@ -96,10 +96,13 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
 
 <div id="live" class="grid">
   <div class="panel"><h2>Open positions</h2>
-    <table><thead><tr><th>Ticker</th><th>Side</th><th>Origin</th><th>Qty</th><th>Entry</th><th>Last</th>
+    <table><thead><tr><th>Ticker</th><th>Side</th><th>Origin</th><th>Sector</th><th>Qty</th><th>Entry</th><th>Last</th>
       <th>Stop</th><th>Target</th><th>Cost</th><th>Unrl P&amp;L</th><th>P/L %</th>
       <th>Thesis</th></tr></thead>
     <tbody id="positions"></tbody></table></div>
+  <div class="panel"><h2>Sector exposure <span class="micro" id="sectorPolicy"></span></h2>
+    <table><thead><tr><th>Sector</th><th>Positions</th><th>Tickers</th><th>Long risk</th><th>Short risk</th><th>Net</th><th>Gross</th><th>Notional</th><th>Of cap</th></tr></thead>
+    <tbody id="sectors"></tbody></table></div>
   <div class="panel"><h2>Momentum scanner
     <span class="micro" style="margin-left:8px">big movers without news · another input, not a firehose</span>
     <button id="scannerBtn" style="float:right;margin-top:-4px">SCANNER ON</button></h2>
@@ -177,7 +180,7 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
       <th>Realized</th><th>Best</th><th>Worst</th></tr></thead><tbody id="periods"></tbody></table>
   </div>
   <div class="panel"><h2>Closed trades</h2>
-    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Origin</th><th>Qty</th><th>Entry</th>
+    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Origin</th><th>Sector</th><th>Qty</th><th>Entry</th>
       <th>Exit</th><th>Layer</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div>
 </div>
 
@@ -247,14 +250,23 @@ function render(s){
     const u=dir*(p.current_price-p.entry_price)*p.qty;
     const pct=p.pct_pnl!=null?Number(p.pct_pnl):(p.entry_price?u/(p.entry_price*p.qty)*100:0);
     const cost=p.total_cost!=null?Number(p.total_cost):p.entry_price*p.qty;
-    return `<tr><td>${p.ticker}</td><td>${sideChip(p.side)}</td><td>${originChip(p.origin)}</td><td>${p.qty}</td>
+    return `<tr><td>${p.ticker}</td><td>${sideChip(p.side)}</td><td>${originChip(p.origin)}</td><td class="detail">${p.sector||'—'}</td><td>${p.qty}</td>
       <td>${px(p.entry_price)}</td><td>${px(p.current_price)}</td>
       <td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
       <td>${money(cost)}</td>
       <td class="${u>=0?'gain':'loss'}">${money(u)}</td>
       <td class="${pct>=0?'gain':'loss'}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>
       <td class="detail">${(p.thesis||'').slice(0,80)}</td></tr>`;}).join('')
-    ||'<tr><td colspan="12" class="detail">no open positions</td></tr>';
+    ||'<tr><td colspan="13" class="detail">no open positions</td></tr>';
+  const sp=s.sector_policy||{}, cap=(st.trading_capital||0)*(sp.max_pct||0);
+  $('sectorPolicy').textContent=`cap ${(100*(sp.max_pct||0)).toFixed(1)}% of capital = ${money(cap)} risk per sector (${sp.mode}); scanner ${sp.scanner_clip?'clipped':'exempt'}; cluster rule ${(sp.cluster||{}).mode||'off'}`;
+  $('sectors').innerHTML=(s.sectors||[]).map(x=>{
+    const net=Math.abs(x.long_risk-x.short_risk), gross=Number(x.long_risk)+Number(x.short_risk);
+    const used=sp.mode==='net'?net:gross, pct=cap?100*used/cap:0;
+    return `<tr><td>${x.sector}</td><td>${x.positions}</td><td class="detail">${x.tickers}</td>
+      <td>${money(x.long_risk)}</td><td>${money(x.short_risk)}</td><td>${money(net)}</td><td>${money(gross)}</td><td>${money(x.notional)}</td>
+      <td class="${pct>=100?'loss':pct>=70?'warn':''}">${pct.toFixed(0)}%</td></tr>`;}).join('')
+    ||'<tr><td colspan="9" class="detail">no open positions</td></tr>';
   const maxId=(s.decisions||[]).reduce((m,d)=>Math.max(m,d.id),0);
   $('tape').innerHTML=(s.decisions||[]).map(d=>{
     const col=getComputedStyle(document.documentElement).getPropertyValue(CHIP[d.stage]||'--faint');
@@ -368,7 +380,7 @@ async function loadHistory(){
     ||'<tr><td colspan="7" class="detail">no closed trades yet</td></tr>';
   $('closed').innerHTML=(h.closed||[]).map(c=>
     `<tr><td>${new Date(c.closed_ts*1000).toLocaleString()}</td><td>${c.ticker}</td>
-     <td>${originChip(c.origin)}</td>
+     <td>${originChip(c.origin)}</td><td class="detail">${c.sector||'—'}</td>
      <td>${c.qty}</td><td>${px(c.avg_entry)}</td><td>${px(c.avg_exit)}</td><td>${c.exit_layer||''}</td>
      <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td></tr>`).join('');
 }

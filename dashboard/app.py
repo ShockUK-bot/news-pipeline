@@ -72,7 +72,21 @@ async def _connect() -> psycopg.AsyncConnection:
 async def _state() -> dict:
     async with await _connect() as conn:
         positions = [dict(r) for r in await (await conn.execute(
-            "SELECT * FROM journal.dash_positions WHERE status='OPEN' ORDER BY opened_ts")).fetchall()]
+            """SELECT dp.*, s.sector FROM journal.dash_positions dp
+               LEFT JOIN journal.sectors s USING (ticker)
+               WHERE dp.status='OPEN' ORDER BY dp.opened_ts""")).fetchall()]
+        # v0.20.0: sector exposure — open risk dollars (qty x |entry - stop|)
+        # per sector, long and short, against risk.yaml max_sector_heat_pct.
+        sectors = [dict(r) for r in await (await conn.execute("""
+            SELECT COALESCE(s.sector, 'Unknown') AS sector, count(*) AS positions,
+                   string_agg(dp.ticker || CASE WHEN dp.side='SHORT' THEN ' (S)' ELSE '' END, ', ' ORDER BY dp.ticker) AS tickers,
+                   COALESCE(sum(dp.qty * abs(dp.entry_price - COALESCE(dp.stop_price, dp.entry_price)))
+                            FILTER (WHERE dp.side <> 'SHORT'), 0) AS long_risk,
+                   COALESCE(sum(dp.qty * abs(dp.entry_price - COALESCE(dp.stop_price, dp.entry_price)))
+                            FILTER (WHERE dp.side = 'SHORT'), 0) AS short_risk,
+                   COALESCE(sum(dp.qty * dp.entry_price), 0) AS notional
+            FROM journal.dash_positions dp LEFT JOIN journal.sectors s USING (ticker)
+            WHERE dp.status='OPEN' GROUP BY 1 ORDER BY 4 + 5 DESC""")).fetchall()]
         decisions = [dict(r) for r in await (await conn.execute(
             "SELECT * FROM journal.dash_decisions LIMIT 100")).fetchall()]
         vetoes = [dict(r) for r in await (await conn.execute(
@@ -135,6 +149,7 @@ async def _state() -> dict:
                  WHERE action='VETO' AND ts::date = current_date)                      AS vetoes_today
         """)).fetchone()))
     return {"ts": time.time(), "positions": positions, "decisions": decisions,
+            "sectors": sectors, "sector_policy": _sector_policy(),
             "vetoes": vetoes, "health": health, "control": control,
             "scanner": {"counts": scanner_counts, "recent": scanner_recent,
                         "losses_today": int(scanner_losses),
@@ -142,6 +157,26 @@ async def _state() -> dict:
             "load": {"queues": load_queues, "hot_tickers": hot_tickers},
             "stats": {k: (float(v) if v is not None and k != "open_positions" else
                           int(v) if v is not None else 0) for k, v in stats.items()}}
+
+
+_SECTOR_POLICY: dict | None = None
+
+
+def _sector_policy() -> dict:
+    """max_sector_heat_pct, mode and the scanner exemption from config/risk.yaml
+    (read once; the dashboard restarts with releases)."""
+    global _SECTOR_POLICY
+    if _SECTOR_POLICY is None:
+        try:
+            import yaml
+            r = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "risk.yaml").read_text())
+            _SECTOR_POLICY = {"max_pct": float(r["capital"].get("max_sector_heat_pct") or 0),
+                              "mode": str(r["capital"].get("sector_heat_mode", "gross")),
+                              "scanner_clip": bool((r.get("scanner") or {}).get("sector_clip", True)),
+                              "cluster": (r.get("scanner") or {}).get("sector_cluster") or {}}
+        except Exception:                                    # noqa: BLE001
+            _SECTOR_POLICY = {"max_pct": 0, "mode": "?", "scanner_clip": True, "cluster": {}}
+    return _SECTOR_POLICY
 
 
 def _json(payload: dict) -> JSONResponse:
@@ -176,6 +211,7 @@ async def api_history(granularity: str = "day", user: str = Depends(_require_use
             GROUP BY 1 ORDER BY 1 DESC LIMIT 60""")).fetchall()]
         closed = [dict(r) for r in await (await conn.execute("""
             SELECT EXTRACT(EPOCH FROM p.closed_ts) AS closed_ts, p.ticker,
+                   (SELECT s.sector FROM journal.sectors s WHERE s.ticker = p.ticker) AS sector,
                    p.origin, p.qty_initial AS qty, p.avg_entry,
                    round(p.avg_entry + p.realized_pnl / NULLIF(p.qty_initial,0), 4) AS avg_exit,
                    (SELECT e.exit_layer FROM journal.exits e

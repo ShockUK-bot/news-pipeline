@@ -11,7 +11,13 @@ capital:
   max_position_notional_pct: 0.15
   max_portfolio_heat_pct: 0.03
   heat_split: {SHORT: 0.02, LONG: 0.01}
-  max_sector_heat_pct: 0.015
+  max_sector_heat_pct: 0.03          # v0.20.0: was 0.015 (operator 2026-09-17:
+                                     # too tight for a technology-heavy tape).
+                                     # Risk dollars (shares x stop distance), not
+                                     # notional: 3,000 on a 100k account.
+  sector_heat_mode: net              # v0.20.0: net = |long risk - short risk| in
+                                     # the sector, so a pair trade does not double
+                                     # count. gross = the v0.19.0 sum.
   min_viable_risk_fraction: 0.5
 scanner:                             # v0.12.1 — scanner-origin sizing policy
   risk_multiplier: 1.0               # v0.16.0 (2026-09-17): was 0.5. 17 closed
@@ -32,6 +38,16 @@ scanner:                             # v0.12.1 — scanner-origin sizing policy
                                      # ROLLBACK: delete this line (global cap
                                      # applies again). Restart a3-risk.
   max_concurrent_positions: 2        # open origin=scanner positions (A3 veto)
+  sector_clip: false                 # v0.20.0: the scanner lane is NOT clipped by
+                                     # sector heat (operator: the one lane that
+                                     # works keeps its size); its positions still
+                                     # count toward the heat other lanes see.
+  sector_cluster:                    # v0.20.0: one scanner position per sector
+    mode: shadow                     # shadow = journal SCANNER_SECTOR_CLUSTER in
+                                     # the RISK payload and trade anyway; veto =
+                                     # A3 vetoes. Shadow first so A11/A9 can say
+                                     # what clustered entries actually did.
+    max_per_sector: 1
 limits:
   max_trades_per_day_default: 5      # control-table override wins if present
   adv_participation_max: 0.01

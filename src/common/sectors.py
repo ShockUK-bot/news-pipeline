@@ -150,8 +150,18 @@ def load_ticker_ciks(path: Optional[str] = None) -> dict[str, int]:
 
 
 def sector_heat_from(open_rows: list[tuple], sector: str) -> float:
-    """Sum of open risk dollars for positions in `sector`. rows: (sector, risk)."""
-    return round(sum(float(r) for s, r in open_rows if s == sector), 2)
+    """Gross open risk dollars for positions in `sector`. rows: (sector, risk[, side])."""
+    return round(sum(float(r[1]) for r in open_rows if r[0] == sector), 2)
+
+
+def sector_heat_breakdown(open_rows: list[tuple], sector: str) -> dict:
+    """v0.20.0: {gross, net, long, short, n} for `sector`. rows: (sector, risk, side).
+    net = |long - short| so a pair trade in one sector does not double count."""
+    long_r = sum(float(r[1]) for r in open_rows if r[0] == sector and (r[2] or "LONG") != "SHORT")
+    short_r = sum(float(r[1]) for r in open_rows if r[0] == sector and (r[2] or "LONG") == "SHORT")
+    return {"gross": round(long_r + short_r, 2), "net": round(abs(long_r - short_r), 2),
+            "long": round(long_r, 2), "short": round(short_r, 2),
+            "n": sum(1 for r in open_rows if r[0] == sector)}
 
 
 # ---------------------------------------------------------------- store
@@ -222,9 +232,9 @@ async def lookup_or_fetch(ticker: str, timeout_secs: float = 6.0) -> Optional[st
     return rec.get("sector")
 
 
-async def open_sector_heat(sector: Optional[str]) -> Optional[float]:
+async def open_sector_heat(sector: Optional[str]) -> Optional[dict]:
     """Open risk dollars already committed to `sector` (stop based, like the
-    lane heat). None when sector is unknown."""
+    lane heat): {gross, net, long, short, n}. None when sector is unknown."""
     if not sector:
         return None
     from a3_risk.sizing import open_risk_dollars
@@ -236,8 +246,20 @@ async def open_sector_heat(sector: Optional[str]) -> Optional[float]:
                FROM journal.positions p JOIN journal.sectors s USING (ticker)
                WHERE p.status='OPEN' AND s.sector=%s""", (sector,))
         rows = await cur.fetchall()
-    pairs = [(s, open_risk_dollars(q, float(e), float(st or 0), side or "LONG")) for s, q, e, st, side in rows]
-    return sector_heat_from(pairs, sector)
+    trip = [(s, open_risk_dollars(q, float(e), float(st or 0), side or "LONG"), side) for s, q, e, st, side in rows]
+    return sector_heat_breakdown(trip, sector)
+
+
+async def open_scanner_in_sector(sector: Optional[str]) -> int:
+    """v0.20.0: open origin=scanner positions already in `sector`."""
+    if not sector:
+        return 0
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT count(*) FROM journal.positions p JOIN journal.sectors s USING (ticker)
+               WHERE p.status='OPEN' AND p.origin='scanner' AND s.sector=%s""", (sector,))
+        return int((await cur.fetchone())[0])
 
 
 # ---------------------------------------------------------------- nightly refresh

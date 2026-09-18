@@ -148,7 +148,21 @@ def scanner_capital_cfg(capital_cfg: dict, scanner_cfg: dict) -> dict:
     lane_cap = scanner_cfg.get("max_position_notional_pct")
     if lane_cap is not None:
         cfg["max_position_notional_pct"] = float(lane_cap)
+    if scanner_cfg.get("sector_clip", True) is False:
+        cfg["max_sector_heat_pct"] = None         # v0.20.0: no sector clip on scalps
     return cfg
+
+
+def cluster_verdict(open_same_sector: int, cluster_cfg: dict | None) -> tuple[bool, str]:
+    """v0.20.0 scanner sector cluster rule. Returns (blocked, mode). blocked is
+    True when the sector already holds max_per_sector scanner positions; the
+    caller vetoes in mode 'veto' and journals a SCANNER_SECTOR_CLUSTER flag in
+    mode 'shadow'. mode 'off' never blocks."""
+    c = cluster_cfg or {}
+    mode = str(c.get("mode", "shadow")).lower()
+    if mode == "off":
+        return False, mode
+    return open_same_sector >= int(c.get("max_per_sector", 1)), mode
 
 
 def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
@@ -205,10 +219,14 @@ def size_entry(inp: SizingInputs, capital_cfg: dict, limits_cfg: dict,
     total_cap = capital_cfg["max_portfolio_heat_pct"] * inp.effective_capital
     total_used = sum(inp.open_heat.values())
     clips["total_heat"] = max(total_cap - total_used, 0.0) / stop_distance
-    # sector heat (deferred-nullable, D7)
+    # sector heat (deferred-nullable, D7). v0.20.0: a lane may switch the clip
+    # off (max_sector_heat_pct None, see scanner_capital_cfg); the sector and
+    # heat are still journaled in numbers.
+    n["sector"] = inp.sector
+    n["sector_heat"] = inp.sector_heat
     if inp.sector is None:
         flags.append("SECTOR_UNKNOWN")
-    elif inp.sector_heat is not None:
+    elif inp.sector_heat is not None and capital_cfg.get("max_sector_heat_pct") is not None:
         sector_cap = capital_cfg["max_sector_heat_pct"] * inp.effective_capital
         clips["sector_heat"] = max(sector_cap - inp.sector_heat, 0.0) / stop_distance
 

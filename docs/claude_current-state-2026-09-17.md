@@ -83,3 +83,8 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 - `journal.sectors` from SEC SIC codes, 923 of 1,024 recent tickers mapped, nightly `sector-map.timer` 04:40 CT. A3's sector heat clip is live (1.5 percent of capital per sector, stop based); A2 gets `sector`. `a3-risk` and `a2-analyst` restarted 17:22 CT. `docs/claude_patch-notes-v0_19_0.md`.
 - Check for 09-18: the first RISK SIZE decision should carry `sector` in its numbers and no `SECTOR_UNKNOWN` flag for a mapped name; `sectors` heartbeat OK after 04:40 CT.
 - Next build candidates: scanner sector cluster rule (now possible), then A12 auto execution once the guard EXIT sample passes 20.
+
+## Late update (21:25 CT): v0.20.0
+
+- Sector cap 3 percent of capital, net of direction, scanner lane exempt; scanner sector cluster rule journaled in shadow (`SCANNER_SECTOR_CLUSTER` flag); Sector column and a Sector exposure panel on the dashboard. `a3-risk` and `c6-dashboard` restarted 21:24 CT. `docs/claude_patch-notes-v0_20_0.md`.
+- Next: A12 auto execution of high urgency EXIT verdicts once the guard exit sample passes 20 and A9 has evaluated an approved proposal. Cluster rule to `veto` only if A11 shows clustered scanner entries lose.

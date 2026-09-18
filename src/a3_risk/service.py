@@ -36,8 +36,8 @@ from a1_triage.backends import get_backend
 from router.facts import _schedule_cache
 
 from common import sectors
-from .sizing import (SizingInputs, hard_gates, open_risk_dollars,
-                     size_entry, scanner_capital_cfg)
+from .sizing import (SizingInputs, cluster_verdict, hard_gates,
+                     open_risk_dollars, size_entry, scanner_capital_cfg)
 
 log = get_logger("a3.service")
 
@@ -387,10 +387,34 @@ class A3Service:
 
         heat, deployed, short_heat, short_notional = await portfolio_state()
 
+        # v0.19.0/v0.20.0: sector first (journal.sectors, EDGAR SIC), so the
+        # cluster rule and the sector heat can use it.
+        sector = await sectors.lookup_or_fetch(ticker)
+        extra_flags: list[str] = []
+
         # v0.12.1: scanner-lane concurrency cap — checked before anything
         # burns tokens; the scanner borrows SHORT-lane heat, it does not
         # get its own bucket.
         if origin == "scanner":
+            # v0.20.0: sector cluster rule (shadow by default)
+            same = await sectors.open_scanner_in_sector(sector)
+            blocked, cmode = cluster_verdict(same, self.scanner_cfg.get("sector_cluster"))
+            if blocked and cmode == "veto":
+                await write_decision(
+                    signal_id=signal_id, item_id=item_id,
+                    item_revision=revision, ticker=ticker, stage="RISK",
+                    agent="A3", action="VETO",
+                    veto_reason="SCANNER_SECTOR_CLUSTER",
+                    payload={"origin": origin, "sector": sector, "open_same_sector": same},
+                    reason=f"scanner sector cluster: {same} open in {sector}",
+                    regime_id=body.get("regime_id"))
+                log.info("risk VETO scanner sector cluster",
+                         extra=kv(signal_id=signal_id, ticker=ticker, sector=sector))
+                return
+            if blocked:
+                extra_flags.append("SCANNER_SECTOR_CLUSTER")
+                log.info("scanner sector cluster (shadow)",
+                         extra=kv(ticker=ticker, sector=sector, open_same_sector=same))
             max_conc = int(self.scanner_cfg.get("max_concurrent_positions", 2))
             if await open_scanner_positions() >= max_conc:
                 await write_decision(
@@ -441,7 +465,7 @@ class A3Service:
             # v0.19.0: sector from journal.sectors (EDGAR SIC), fetched on a
             # miss with a short timeout; sector heat from open positions in
             # the same sector. Unknown stays the D7 flag path.
-            sector=await sectors.lookup_or_fetch(ticker),
+            sector=sector,
             regt_buying_power=float(
                 controls.get("regt_buying_power", "0") or 0),
             open_short_heat=short_heat,
@@ -501,9 +525,14 @@ class A3Service:
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
             capital_cfg = self.capital
-        inp.sector_heat = await sectors.open_sector_heat(inp.sector)
+        heat_bd = await sectors.open_sector_heat(inp.sector)
+        mode = str(self.capital.get("sector_heat_mode", "net")).lower()
+        inp.sector_heat = (heat_bd[mode] if heat_bd and mode in heat_bd else
+                           (heat_bd["gross"] if heat_bd else None))
         result = size_entry(inp, capital_cfg, self.limits, profile,
                             horizon, adj.k, shorting_cfg=self.shorting)
+        result.numbers["sector_heat_breakdown"] = heat_bd
+        result.flags.extend(extra_flags)
 
         payload = {"sizing": result.numbers, "flags": result.flags,
                    "adjustments": adj.model_dump(),
