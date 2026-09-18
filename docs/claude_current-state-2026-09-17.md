@@ -96,3 +96,7 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 - Check for 09-18: any GUARD decision payload shows `auto_execute.execute`; if one executes, `journal.exits` has a GUARD layer row and the ledger row says `EXIT_ARMED`.
 - Still outstanding on the operator side: delete the two rollback model files (`rm` line in the session summary).
 - 21:38 CT incident and v0.21.1: an evening C4 restart re-ran the after close pass and fired RIOT's freshly tightened stop after hours (rejected, no order). Fixed: close only session bar, isolated errors, no re-run after 17:30 ET. RIOT's catastrophe order 61200eb0 (stop 10.67) is `pending_cancel` at the broker; it should clear at the open, and the 09:35 ET sale closes the position. Check at 08:40 CT that RIOT is closed and no stray order remains.
+
+## Late update (22:00 CT): v0.22.0 emails
+
+Two emails a day in HTML (06:35 morning briefing, 21:20 evening digest), A9 review in HTML, watchdog alerts damped. First evening digest sent 22:00 CT as a sample. `docs/claude_patch-notes-v0_22_0.md`. Tomorrow's checks: the morning briefing arrives in HTML at 06:35; the evening digest at 21:20 with RIOT's sale and the day's trades; no watchdog email for a warning that clears by itself.

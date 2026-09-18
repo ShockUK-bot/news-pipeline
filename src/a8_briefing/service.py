@@ -42,7 +42,7 @@ from a7_report.service import SlotManager
 from .facts import build_facts
 from .narrative import (NarrativeValidationError, build_messages,
                         narrative_json_schema, validate_narrative)
-from .render import render, subject_line
+from .render import render, render_html, subject_line
 
 log = get_logger("a8.briefing")
 
@@ -142,10 +142,10 @@ async def run_briefing(cfg: dict, backend_override=None,
                 conn=conn)
             cur = await conn.execute(
                 """INSERT INTO journal.outbox
-                     (kind, subject, body, fact_sheet, decision_id)
-                   VALUES (%s,%s,%s,%s,%s) RETURNING message_id""",
-                (KIND, subject, body, jb({k: facts[k] for k in
-                                          ("session_date", "earnings", "ops")}),
+                     (kind, subject, body, html, fact_sheet, decision_id)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING message_id""",
+                (KIND, subject, body, render_html(facts, narrative),
+                 jb({k: facts[k] for k in ("session_date", "earnings", "ops")}),
                  decision_id))
             outbox_id = (await cur.fetchone())[0]
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=evening-digest: the one evening email (oneshot, fired by evening-digest.timer)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+Environment=PYTHONPATH=/opt/pipeline/src
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/.venv/bin/python -m evening_digest.service
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal

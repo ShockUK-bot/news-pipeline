@@ -29,6 +29,7 @@
 # service in the pipeline.
 
 realert_hours: 6
+warn_confirm_passes: 2   # v0.22.0: warning-only findings alert on the 2nd consecutive pass (10 min), never on the first
 
 services:
   c1-ingestion:
@@ -94,6 +95,7 @@ timers:
   - pipeline-nav-snapshot
   - a11-metrics
   - a9-review
+  - evening-digest
   - queue-prune
   - earnings-calendar
   - sector-map
@@ -136,6 +138,9 @@ heartbeats:
   review:
     max_age_min: 11000       # a9-review.timer, Saturday 09:00 CT (a week plus slack)
     unit: a9-review
+  digest:
+    max_age_min: 4500        # evening-digest.timer, 21:20 CT weekdays
+    unit: evening-digest
   broker_api:
     max_age_min: 90          # written by C4 reconcile (every 15 min).
                              # Deliberately loose until we have confirmed the

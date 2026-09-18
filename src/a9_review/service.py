@@ -165,6 +165,43 @@ async def narrate(backend, proposal: dict, retries: int):
 
 
 # ---------------------------------------------------------------- render
+def render_html(week: str, proposals: list[dict], watch: list[str], evaluated: list[dict], ev: dict) -> str:
+    from common import mailkit as mk
+    lanes = ev.get("lanes") or {}
+    headline = (f"{len(proposals)} proposal{'s' if len(proposals) != 1 else ''} this week"
+                + (f", {len(evaluated)} evaluated" if evaluated else "")
+                + (". Reply 'approve proposal N' to act." if proposals else ". Nothing crossed its evidence bar."))
+    tiles = mk.tiles([(f"{k}", f'<span style="color:{mk.colour(v.get("pnl"))}">{mk.money(v.get("pnl"))}</span>'
+                       f'<div style="font-size:11px;color:{mk.MUTED};font-weight:400">{v.get("trades")} trades, {v.get("winners")} winners, {v.get("sum_r"):+.1f}R</div>', None)
+                      for k, v in lanes.items()]) if lanes else ""
+    blocks = [tiles]
+    if evaluated:
+        blocks.append(mk.section("Evaluations of approved proposals",
+                                 mk.table(["#", "Title", "Verdict", "Observed", "Target"],
+                                          [[str(e["proposal_id"]), mk.esc(e["title"]), mk.esc(e["verdict"]), mk.esc(e.get("observed")),
+                                            mk.esc(f"{e.get('op', '')} {e.get('target', '')}")] for e in evaluated])))
+    for p in proposals:
+        ev_rows = [[mk.esc(k), mk.esc(v)] for k, v in (p.get("evidence") or {}).items() if k != "source"]
+        inner = (f"<div style='font-size:13px;margin:4px 0'><b>Current:</b> {mk.esc(p['current_state'])}</div>"
+                 f"<div style='font-size:13px;margin:4px 0'><b>Change:</b> {mk.esc(p['proposed_diff'])}</div>"
+                 f"<div style='font-size:13px;margin:4px 0'><b>Expected:</b> {mk.esc(p['expected_effect'])}</div>"
+                 + mk.table(["Evidence", "Value"], ev_rows) +
+                 f"<div style='font-size:12px;color:{mk.MUTED};margin-top:6px'>Success test: {mk.esc(p['success_metric'])}</div>")
+        if p.get("narrative"):
+            inner += (f"<div style='font-size:13px;margin-top:8px'><b>Why:</b> {mk.esc(p['narrative']['rationale'])}</div>"
+                      f"<div style='font-size:13px;margin-top:4px'><b>Risk:</b> {mk.esc(p['narrative']['risk'])}</div>")
+        inner += (f"<div style='margin-top:10px;font-size:13px'>To act: reply <code>approve proposal {p['proposal_id']}</code> "
+                  f"or <code>reject proposal {p['proposal_id']}</code>.</div>")
+        blocks.append(mk.section(f"#{p['proposal_id']}  {p['title']}", inner))
+    if watch:
+        blocks.append(mk.section("Watch list", mk.bullets(watch), note="below the evidence bar; the counts show how far each sample is"))
+    wr = [[mk.esc(r["period_start"]), mk.esc(r["metric"]), mk.esc(round(r["value"], 3) if r["value"] is not None else "—")]
+          for r in (ev.get("week_rollups") or [])[-24:]]
+    if wr:
+        blocks.append(mk.section("Weekly rollups", mk.table(["Week", "Metric", "Value"], wr)))
+    return mk.page("Weekend review", headline, blocks, "news-pipeline A9 weekend review (evidence rules; nothing is applied automatically)", week)
+
+
 def render(week: str, proposals: list[dict], watch: list[str], evaluated: list[dict], ev: dict) -> str:
     L = [f"A9 weekend review, week of {week}", ""]
     L.append(f"Evidence window: last {ev['window_weeks']} weeks (since {ev['since']}).")
@@ -260,9 +297,10 @@ async def run_review(cfg: dict, dry: bool = False, backend_override=None) -> Opt
                          "lanes": ev.get("lanes"), "guard": ev.get("guard")},
                 reason=subject, conn=conn)
             cur = await conn.execute(
-                """INSERT INTO journal.outbox (kind, subject, body, fact_sheet, decision_id)
-                   VALUES (%s,%s,%s,%s,%s) RETURNING message_id""",
-                (KIND, subject, body, jb({"proposals": [p["proposal_id"] for p in proposals], "watch": watch}), decision_id))
+                """INSERT INTO journal.outbox (kind, subject, body, html, fact_sheet, decision_id)
+                   VALUES (%s,%s,%s,%s,%s,%s) RETURNING message_id""",
+                (KIND, subject, body, render_html(week, proposals, watch, evaluated, ev),
+                 jb({"proposals": [p["proposal_id"] for p in proposals], "watch": watch}), decision_id))
             outbox_id = (await cur.fetchone())[0]
     try:
         from c1_ingestion.heartbeat import set_health

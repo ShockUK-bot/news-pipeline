@@ -52,13 +52,15 @@ class SmtpTransport:
     def configured(self) -> bool:
         return bool(self.host and self.user and self.password and self.mail_to)
 
-    def send(self, subject: str, body: str) -> None:
+    def send(self, subject: str, body: str, html: str | None = None) -> None:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = self.mail_from
         msg["To"] = ", ".join(self.mail_to)
         msg["Date"] = formatdate(localtime=True)
         msg.set_content(body)
+        if html:                                  # v0.22.0: multipart/alternative
+            msg.add_alternative(html, subtype="html")
         if self.port == 465:
             with smtplib.SMTP_SSL(self.host, self.port,
                                   context=ssl.create_default_context(),
@@ -87,14 +89,14 @@ async def process_outbox(transport=None) -> dict:
     pool = await get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
-            """SELECT message_id, subject, body, attempts FROM journal.outbox
+            """SELECT message_id, subject, body, attempts, html FROM journal.outbox
                WHERE status='QUEUED' ORDER BY created_ts LIMIT %s""",
             (BATCH_LIMIT,))
         rows = await cur.fetchall()
 
-    for message_id, subject, body, attempts in rows:
+    for message_id, subject, body, attempts, html in rows:
         try:
-            await asyncio.to_thread(transport.send, subject, body)
+            await asyncio.to_thread(transport.send, subject, body, html)
         except Exception as e:                     # smtplib raises many types
             attempts += 1
             status = "FAILED" if attempts >= MAX_ATTEMPTS else "QUEUED"

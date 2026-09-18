@@ -10,7 +10,7 @@ review:
   max_positions: 20            # safety cap per run
 
 alert:
-  email: true                  # nightly trim/exit/stale recos -> one ALERT
+  email: false                 # v0.22.0: recos ride in the 21:20 CT evening digest (was one ALERT)
                                # email via journal.outbox (quiet nights: none)
 
 # --- EOD overnight-hold check (15:45 ET, DURING market hours) --------------

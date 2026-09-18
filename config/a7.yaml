@@ -1,5 +1,6 @@
 # A7 End-of-Day Report configuration (Phase 6).
 report:
+  email: false               # v0.22.0: journaled only; the 21:20 CT evening digest carries it
   send_on_nonsession: false    # holidays: journal SKIPPED_NO_SESSION, no email
 
 narrative:

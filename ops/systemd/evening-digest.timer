@@ -1,0 +1,9 @@
+[Unit]
+Description=evening-digest timer (21:20 CT weekdays, after C11 at 21:15)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 21:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

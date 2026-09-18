@@ -52,7 +52,7 @@ store:
                                # by the NewThesis list schema (was 5)          # how many theses to ask for when seeding
 
 digest:
-  email: true                  # nightly digest via journal.outbox (C5 mails)
+  email: false                 # v0.22.0: rides in the 21:20 CT evening digest
 
 narrative:                     # model-call parameters (SlotManager contract)
   max_tokens: 8000             # v0.12.23: was 3000. All five REJECTs to date

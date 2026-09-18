@@ -220,18 +220,47 @@ def fingerprint(findings: list[dict]) -> str:
     return hashlib.sha256(json.dumps(key).encode()).hexdigest()[:16] if key else ""
 
 
+PENDING_FP_KEY = "watchdog_pending_fp"
+PENDING_N_KEY = "watchdog_pending_n"
+LAST_SEV_KEY = "watchdog_last_alert_sev"
+
+
 def should_alert(findings: list[dict], prev_fp: str, last_alert: datetime | None,
                  now: datetime, realert_hours: float) -> str | None:
-    """Returns 'NEW' | 'REPEAT' | 'RECOVERED' | None."""
+    """Pre-v0.22.0 decision, kept for its tests: 'NEW' | 'REPEAT' | 'RECOVERED' | None."""
+    return should_alert_damped(findings, prev_fp, last_alert, now, realert_hours,
+                               ("", 0), 1, "CRITICAL")[0]
+
+
+def should_alert_damped(findings: list[dict], prev_fp: str, last_alert: datetime | None,
+                        now: datetime, realert_hours: float,
+                        pending: tuple[str, int] = ("", 0), warn_confirm_passes: int = 1,
+                        last_sev: str = "") -> tuple[str | None, tuple[str, int]]:
+    """Returns (mode, pending) with mode 'NEW' | 'REPEAT' | 'RECOVERED' |
+    'CLEARED' | None.
+
+    v0.22.0 damping: a finding set with NO critical must be seen on
+    `warn_confirm_passes` consecutive passes before it alerts (a timer whose
+    next run clears it never emails); after a warning-only alert clears the
+    mode is CLEARED (no email), RECOVERED is only for alerts that had a
+    critical. `pending` = (fingerprint, passes seen)."""
     fp = fingerprint(findings)
     if findings:
+        has_crit = any(f["severity"] == "CRITICAL" for f in findings)
         if fp != prev_fp:
-            return "NEW"
+            if has_crit or warn_confirm_passes <= 1:
+                return "NEW", ("", 0)
+            seen = pending[1] + 1 if pending[0] == fp else 1
+            if seen >= warn_confirm_passes:
+                return "NEW", ("", 0)
+            return None, (fp, seen)
         if last_alert is None or \
                 (now - last_alert).total_seconds() >= realert_hours * 3600:
-            return "REPEAT"
-        return None
-    return "RECOVERED" if prev_fp else None
+            return "REPEAT", ("", 0)
+        return None, ("", 0)
+    if prev_fp:
+        return ("RECOVERED" if last_sev == "CRITICAL" else "CLEARED"), ("", 0)
+    return None, ("", 0)
 
 
 def render(findings: list[dict], mode: str, realert_hours: float) -> tuple[str, str]:
@@ -313,13 +342,30 @@ async def _set_control(key: str, value: str) -> None:
             (key, value))
 
 
-async def _queue_alert(subject: str, body: str, findings: list[dict]) -> None:
+def render_html(findings: list[dict], mode: str, realert_hours: float) -> str:
+    from common import mailkit as mk
+    if mode == "RECOVERED":
+        return mk.page("Watchdog", "Recovered: all monitored units healthy.",
+                       [mk.section("Status", mk.bullets(["All previously reported problems have cleared. No action needed."]))],
+                       "c7-watchdog (every 5 minutes, holds no credentials, changes nothing)", "")
+    crit = [f for f in findings if f["severity"] == "CRITICAL"]
+    warn = [f for f in findings if f["severity"] == "WARNING"]
+    rows = [[mk.chip("CRITICAL", "#fbe9e7", mk.RED) if f["severity"] == "CRITICAL" else mk.chip("WARNING", "#fff6e5", "#7a4b00"),
+             mk.esc(f["unit"]), mk.esc(f["code"]), mk.esc(f["detail"])] for f in crit + warn]
+    head = f"{len(crit)} critical, {len(warn)} warning" + (" (repeat)" if mode == "REPEAT" else "") + "."
+    return mk.page("Watchdog", head, [mk.section("Findings", mk.table(["Severity", "Unit", "Code", "Detail"], rows)),
+                                      mk.section("First move", mk.bullets(["systemctl status <unit>; cold start order is in ops/RUNBOOK.md section 6.",
+                                                                            f"This email repeats every {realert_hours:g}h until resolved."]))],
+                   "c7-watchdog (every 5 minutes, holds no credentials, changes nothing)", "")
+
+
+async def _queue_alert(subject: str, body: str, findings: list[dict], html: str | None = None) -> None:
     pool = await get_pool()
     async with pool.connection() as conn:
         await conn.execute(
-            """INSERT INTO journal.outbox (kind, subject, body, fact_sheet)
-               VALUES ('ALERT', %s, %s, %s::jsonb)""",
-            (subject, body, json.dumps({"findings": findings})))
+            """INSERT INTO journal.outbox (kind, subject, body, fact_sheet, html)
+               VALUES ('ALERT', %s, %s, %s::jsonb, %s)""",
+            (subject, body, json.dumps({"findings": findings}), html))
 
 
 async def _delete_orphans(cfg: dict, ages_min: dict[str, float]) -> list[str]:
@@ -377,12 +423,28 @@ async def run_pass(cfg: dict, now: datetime | None = None,
             last_alert = None
     realert_hours = float(cfg.get("realert_hours", 6))
 
-    mode = should_alert(findings, prev_fp, last_alert, now, realert_hours)
-    if mode:
+    pending = (await _get_control(PENDING_FP_KEY) or "",
+               int(await _get_control(PENDING_N_KEY) or 0))
+    last_sev = await _get_control(LAST_SEV_KEY) or ""
+    mode, pending_out = should_alert_damped(
+        findings, prev_fp, last_alert, now, realert_hours, pending,
+        int(cfg.get("warn_confirm_passes", 2)), last_sev)
+    if pending_out != pending:
+        await _set_control(PENDING_FP_KEY, pending_out[0])
+        await _set_control(PENDING_N_KEY, str(pending_out[1]))
+    if mode == "CLEARED":
+        # v0.22.0: a warning-only alert cleared: no email, just forget it
+        await _set_control(FP_KEY, "")
+        await _set_control(LAST_SEV_KEY, "")
+        log.info("warnings cleared, no recovery email")
+        mode = None
+    elif mode:
         subject, body = render(findings, mode, realert_hours)
-        await _queue_alert(subject, body, findings)
+        await _queue_alert(subject, body, findings, render_html(findings, mode, realert_hours))
         await _set_control(FP_KEY, fingerprint(findings))
         await _set_control(TS_KEY, now.isoformat())
+        await _set_control(LAST_SEV_KEY, "" if mode == "RECOVERED" else
+                           ("CRITICAL" if any(f["severity"] == "CRITICAL" for f in findings) else "WARNING"))
         log.warning("alert queued", extra=kv(mode=mode, subject=subject[:100]))
     elif not findings and not prev_fp:
         pass                                              # steady-state quiet

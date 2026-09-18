@@ -211,12 +211,16 @@ async def run_report(cfg: dict, backend_override=None) -> int | None:
                          "slot": slot_name, "subject": subject},
                 reason=subject, model_id=model_id, latency_ms=latency,
                 conn=conn)
-            cur = await conn.execute(
-                """INSERT INTO journal.outbox
-                     (kind, subject, body, fact_sheet, decision_id)
-                   VALUES (%s,%s,%s,%s,%s) RETURNING message_id""",
-                (KIND, subject, body, jb(facts), decision_id))
-            outbox_id = (await cur.fetchone())[0]
+            outbox_id = None
+            if bool((cfg.get("report") or {}).get("email", True)):
+                cur = await conn.execute(
+                    """INSERT INTO journal.outbox
+                         (kind, subject, body, fact_sheet, decision_id)
+                       VALUES (%s,%s,%s,%s,%s) RETURNING message_id""",
+                    (KIND, subject, body, jb(facts), decision_id))
+                outbox_id = (await cur.fetchone())[0]
+            # v0.22.0: with report.email false the report is journaled only;
+            # the 21:20 CT evening digest carries it (one evening email).
 
     log.info("report queued", extra=kv(
         outbox_id=outbox_id, decision_id=decision_id, slot=slot_name,

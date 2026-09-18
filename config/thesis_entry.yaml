@@ -74,4 +74,4 @@ management:                    # nightly pass over open thesis positions
                                # deferred — it needs C4 surgery).
 
 digest:
-  email: true                  # nightly plan digest via journal.outbox
+  email: false                 # v0.22.0: rides in the 21:20 CT evening digest
