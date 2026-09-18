@@ -6,7 +6,7 @@ The operator is Ian. He is not a Linux or git user. He designs releases with Cla
 
 ## What the system is
 
-A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.21.0` (verify with `git describe --tags`).
+A locally hosted, news and sentiment driven, multi-agent trading pipeline for US equities. 13 agents (A1 triage through A13 operator chat) plus supporting components C1 through C10, built in versioned phases. Currently at tag `v0.21.1` (verify with `git describe --tags`).
 
 Core principles, locked in and not up for revision:
 - Pipeline, not conversation: strict JSON contracts between stages.
@@ -72,6 +72,7 @@ US market hours are 08:30 to 15:00 America/Chicago, Monday to Friday. Check with
 - Resolved 2026-09-11: the `journal.health` `risk` heartbeat was genuinely stale (about 11,400 minutes old on the morning of 2026-09-11). Cause: the v0.14.4 changeset (periodic heartbeats for risk, dedup and chat, `common/health.py`, watchdog freshness checks) had been tagged but never written to the working tree, so those services only wrote a heartbeat at startup. A re-sync on 2026-09-11 restored the files from the v0.14.5 tag and restarted a1, a2, a3, a13, c2 and c4 at 16:45 CT. The pre re-sync files are in the stash above. Lesson: after tagging, confirm the working tree matches the tag (`git diff <tag> --stat` should be empty) before restarting.
 - `config/shorting.yaml` `mode` is the whole short selling switch (`live` since v0.14.8, 2026-09-14). It was silently reverted to `shadow` once (a `git reset` on 2026-08-22 that nobody restarted for) and shorts stopped for three weeks unnoticed. If shorts seem to have stopped, check that line first, then `journal.decisions` for `SHADOW_SHORT` rows. Services read it at startup only; a file change without a restart of a3-risk, c3-gate and c4-exec does nothing until the next restart.
 - `journal.health` rows named `ingestion:<source>` (for example `ingestion:alpaca`) record connection events (connect, drop, reconnect), not liveness; an old timestamp there means a long held connection, not a dead feed. Liveness is the `ingestion` heartbeat and the GapMonitor rows (`ingestion:alpaca_benzinga`, `ingestion:edgar`, `ingestion:rss`).
+- An evening `c4-exec` restart used to re-run the after close session pass (`session_close_pass`) on a fresh process, which fed the full day bar (high and low) to the stop layers; a stop tightened by C11 at 21:15 above the day's low then fired a sell after hours (RIOT 2026-09-17: broker rejected it, catastrophe stop left `pending_cancel`). Fixed in v0.21.1: the session bar is close only, per position errors are isolated, and the pass is not re-run after 17:30 ET. If you see `insufficient qty available` or a 422 on a stop order in the C4 log after a restart, this is the pattern.
 - `journal.health` keeps only the latest row per component (primary key on `component`), so it has no history. To find out when a heartbeat went stale or recovered, read the c7-watchdog journal: `sudo -n journalctl -u c7-watchdog --since <date> --no-pager | grep 'alert queued'`.
 
 ## How to work

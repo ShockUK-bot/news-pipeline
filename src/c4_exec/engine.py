@@ -318,15 +318,33 @@ class PositionEngine:
                    WHERE position_id=%s""",
                 (price, self.now_fn(), position_id))
 
-    async def session_close_pass(self, daily_bar_fn) -> None:
+    async def session_close_pass(self, daily_bar_fn) -> list[str]:
         """After the close: feed each open position its completed session bar
         so session-tf MIP predicates (e.g. close_below_prenews) can evaluate.
-        daily_bar_fn(ticker) -> {open,high,low,close} of the finished session."""
+        daily_bar_fn(ticker) -> {open,high,low,close} of the finished session.
+
+        v0.21.1: the bar's high and low are collapsed to the close. The price
+        layers (STOP / TRAIL / BREAKEVEN / TARGET) already saw every minute of
+        the session; re-testing them against the day's range after the close
+        fires stops that were tightened AFTER the low printed (RIOT
+        2026-09-17: C11 tightened to 21.77 at 21:15, day low 20.65, an
+        evening C4 restart re-ran this pass and tried to sell after hours).
+        A close through the stop still fires, which is what a stop would do
+        at the next open anyway. Per-position errors are logged, not raised,
+        so one broker reject cannot make the loop retry the pass all night."""
+        out = []
         for pos in await open_positions():
-            b = await daily_bar_fn(pos["ticker"])
-            if not b:
-                continue
-            await self.step(pos, {**b, "tf": "session"})
+            try:
+                b = await daily_bar_fn(pos["ticker"])
+                if not b:
+                    continue
+                bar = {**b, "high": b["close"], "low": b["close"], "tf": "session"}
+                out.extend(await self.step(pos, bar))
+            except Exception as e:                                  # noqa: BLE001
+                log.error("session close pass failed for position",
+                          extra=kv(position_id=pos["position_id"], ticker=pos["ticker"],
+                                   error=repr(e)[:200]))
+        return out
 
     async def preclose_invalidation_pass(self, session_bar_fn,
                                          pass_label: str = "15:55") -> list[str]:

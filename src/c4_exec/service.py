@@ -279,7 +279,8 @@ class C4Service:
 
 
 PRECLOSE_INVALIDATION_ET = "15:55"
-OPEN_EXIT_ET = "09:35"               # v0.16.1 code default (08:35 CT)   # v0.14.6 code default (14:55 CT)
+OPEN_EXIT_ET = "09:35"               # v0.16.1 code default (08:35 CT)
+SESSION_CLOSE_PASS_UNTIL_ET = "17:30"   # v0.21.1: the 16:01 pass is not re-run after this   # v0.14.6 code default (14:55 CT)
 
 
 async def consume_loop(svc: C4Service, stop: asyncio.Event) -> None:
@@ -403,7 +404,14 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                 # on the finished session bar
                 et = now.astimezone(ET)
                 today = et.date().isoformat()
-                if et.strftime("%H:%M") >= "16:01" \
+                # v0.21.1: the pass runs once in its own window; a process
+                # started later in the evening (a deploy restart) does not
+                # re-run it, the 16:01 process already did.
+                hhmm_after = et.strftime("%H:%M")
+                if hhmm_after >= SESSION_CLOSE_PASS_UNTIL_ET \
+                        and overnight_done.get(today) != "session_close":
+                    overnight_done[today] = "session_close"
+                if hhmm_after >= "16:01" \
                         and overnight_done.get(today) != "session_close":
                     async def _daily(ticker):
                         bars = await marketdata.daily_bars(ticker, 1)
