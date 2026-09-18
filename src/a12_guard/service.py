@@ -58,6 +58,7 @@ from .context import build_guard_context, fetch_thesis, position_pack
 from .prompt import build_messages
 from .schema import (ACTION_MAP, GuardValidationError, guard_json_schema,
                      validate_guard)
+from .auto import arm_block, auto_execute_gate
 from .wake import ensure_model_up
 
 log = get_logger("a12.service")
@@ -125,14 +126,34 @@ async def _existing_guard_decision(signal_id: str, revision: int,
 
 
 async def write_ledger(conn, decision_id: int, position_id: int, item_id: str,
-                       verdict) -> None:
+                       verdict, auto_executed: bool = False,
+                       action_taken: str = "JOURNALED") -> None:
     await conn.execute(
         """INSERT INTO journal.guard_ledger
            (decision_id, position_id, item_id, ts, thesis_intact,
             recommended_action, urgency, auto_executed, action_taken)
-           VALUES (%s,%s,%s, now(), %s,%s,%s, FALSE, 'JOURNALED')""",
+           VALUES (%s,%s,%s, now(), %s,%s,%s, %s, %s)""",
         (decision_id, position_id, item_id, verdict.thesis_intact,
-         ACTION_MAP[verdict.recommended_action], verdict.urgency))
+         ACTION_MAP[verdict.recommended_action], verdict.urgency,
+         auto_executed, action_taken))
+
+
+async def arm_guard_exit(conn, position_id: int, block: dict) -> bool:
+    """v0.21.0: mark the position for C4's guard_exit_pass (next engine pass
+    in session). Returns False if the position is no longer OPEN."""
+    cur = await conn.execute(
+        """UPDATE journal.positions
+           SET exit_policy = exit_policy || jsonb_build_object('guard_exit', %s::jsonb)
+           WHERE position_id=%s AND status='OPEN' RETURNING position_id""",
+        (jb(block), position_id))
+    if await cur.fetchone() is None:
+        return False
+    await conn.execute(
+        """INSERT INTO journal.position_events (position_id, event_type, actor, new_value, detail)
+           VALUES (%s, 'GUARD_ACTION', 'A12', %s, %s)""",
+        (position_id, jb({"armed": "guard_exit", **block}),
+         f"guard auto-exit armed: {block.get('reason', '')[:120]}"))
+    return True
 
 
 class A12Service:
@@ -283,6 +304,8 @@ class A12Service:
                         item_id=item_id, position_id=pos["position_id"]))
                 continue
 
+            # v0.21.0: gated auto execution (code decides, C4 executes)
+            execute, why = auto_execute_gate(verdict, item, self.cfg.get("auto_execute"))
             pool = await get_pool()
             async with pool.connection() as conn:
                 async with conn.transaction():
@@ -294,12 +317,22 @@ class A12Service:
                         payload={"position_id": pos["position_id"],
                                  "verdict": verdict.model_dump(),
                                  "position": pos_pack,
-                                 "context": context},
+                                 "context": context,
+                                 "auto_execute": {"execute": execute, "why": why}},
                         reason=verdict.reason, confidence=verdict.confidence,
                         model_id=self.backend.model_id,
                         latency_ms=total_latency, conn=conn)
+                    armed = False
+                    if execute:
+                        armed = await arm_guard_exit(
+                            conn, pos["position_id"],
+                            arm_block(decision_id, why, utcnow().isoformat()))
                     await write_ledger(conn, decision_id, pos["position_id"],
-                                       item_id, verdict)
+                                       item_id, verdict, auto_executed=armed,
+                                       action_taken="EXIT_ARMED" if armed else "JOURNALED")
+            if execute:
+                log.warning("guard auto-exit armed" if armed else "guard auto-exit not armed (position closed)",
+                            extra=kv(position_id=pos["position_id"], ticker=pos["ticker"], why=why))
 
             log.info("guard verdict", extra=kv(
                 signal_id=signal_id, position_id=pos["position_id"],

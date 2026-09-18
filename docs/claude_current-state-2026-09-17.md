@@ -88,3 +88,10 @@ From the 2026-09-18 open, scanner entries size to about twice their previous not
 
 - Sector cap 3 percent of capital, net of direction, scanner lane exempt; scanner sector cluster rule journaled in shadow (`SCANNER_SECTOR_CLUSTER` flag); Sector column and a Sector exposure panel on the dashboard. `a3-risk` and `c6-dashboard` restarted 21:24 CT. `docs/claude_patch-notes-v0_20_0.md`.
 - Next: A12 auto execution of high urgency EXIT verdicts once the guard exit sample passes 20 and A9 has evaluated an approved proposal. Cluster rule to `veto` only if A11 shows clustered scanner entries lose.
+
+## Late update (21:50 CT): v0.20.1 and v0.21.0
+
+- v0.20.1: sector cap back to 1.5 percent (net mode and scanner exemption kept). `a3-risk` restarted 21:31 CT.
+- v0.21.0: A12 auto execution, gated to high urgency EXIT verdicts on a watch list hit or a correction; C4 executes on its next pass in session (layer GUARD). SIC ranges completed, 961 of 1,024 tickers mapped. `a12-guard` and `c4-exec` restarted 21:50 CT. `docs/claude_patch-notes-v0_21_0.md`.
+- Check for 09-18: any GUARD decision payload shows `auto_execute.execute`; if one executes, `journal.exits` has a GUARD layer row and the ledger row says `EXIT_ARMED`.
+- Still outstanding on the operator side: delete the two rollback model files (`rm` line in the session summary).

@@ -29,3 +29,16 @@ wake:
   command: "sudo systemctl start llama-a2.service"
   ready_timeout_secs: 240
   poll_secs: 5
+auto_execute:                  # v0.21.0 — gated auto execution (phase 5, rule 12)
+  enabled: true                # false = every verdict stays advisory (v0.20 behaviour)
+  actions: [exit]              # never tighten_stop yet: no evidence
+  urgencies: [high]
+  require_watch_hit_or_correction: true
+                               # only a verbatim watch-list hit or a correction
+                               # of the entry story executes: the subset A11
+                               # showed to be right (3 saves, 0 shakeouts).
+                               # C4 sells on its next engine pass in session
+                               # (exit layer GUARD); off-hours verdicts execute
+                               # at the next open. A11 classifies the outcome
+                               # like any other verdict; A9 evaluates the
+                               # guard_save_rate.

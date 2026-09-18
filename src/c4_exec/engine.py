@@ -482,6 +482,32 @@ class PositionEngine:
                                             outcome=outcome))
         return flattened
 
+    # ---------------------------------------------------------------- guard exit
+    async def guard_exit_pass(self) -> list[str]:
+        """v0.21.0 — A12's gated auto execution. A12 arms
+        `exit_policy.guard_exit` (high urgency EXIT on a watch-list hit or a
+        correction); this pass market-exits it on the next engine pass in
+        session, layer GUARD. Pure code, idempotent."""
+        hhmm = self.now_fn().astimezone(ET).strftime("%H:%M")
+        done = []
+        for pos in await open_positions():
+            arm = pos["exit_policy"].get("guard_exit")
+            if not arm:
+                continue
+            mark = float(pos.get("last_price") or pos["avg_entry"])
+            px = marketable_exit(pos.get("side") or "LONG", mark, 0.003)
+            reason = str(arm.get("reason") or "guard exit")
+            outcome = await execute_exit(
+                self.broker, pos, int(pos["qty_open"]), "GUARD",
+                f"guard auto-exit ({reason[:80]}) @ {hhmm} ET", px, self.now_fn,
+                self.unprotected_max_secs, self.poll_sleep,
+                trigger_price=mark)
+            self.monitors.pop(pos["position_id"], None)
+            done.append(f"{pos['ticker']}:{outcome}")
+            log.info("guard auto-exit", extra=kv(ticker=pos["ticker"],
+                                                 reason=reason[:80], outcome=outcome))
+        return done
+
     # ---------------------------------------------------------------- open exit
     async def open_exit_pass(self, not_before_et: str = "09:35") -> list[str]:
         """v0.16.1 — sell at the next open instead of hoping for a dip. C11

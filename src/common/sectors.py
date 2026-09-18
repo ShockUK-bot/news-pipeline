@@ -59,16 +59,21 @@ SIC_SECTORS: list[tuple[int, int, str]] = [
     (3600, 3629, "Industrials"),        # electrical equipment, motors and generators (3621)
     (3640, 3649, "Industrials"),        # lighting, wiring
     (8731, 8731, "Health Care"),        # commercial physical and biological research
+    (5160, 5160, "Materials"),          # chemicals wholesale
     # broad divisions
+    (100, 999, "Consumer Staples"),     # agriculture, forestry, fishing (0700 agricultural services)
     (1100, 1499, "Energy"),             # coal, oil and gas (1311, 1381, 1389)
     (1500, 1799, "Industrials"),        # construction
     (2000, 2099, "Consumer Staples"),   # food
     (2100, 2199, "Consumer Staples"),   # tobacco
-    (2300, 2399, "Consumer Discretionary"),   # apparel
+    (2200, 2399, "Consumer Discretionary"),   # textiles, apparel
+    (2400, 2499, "Materials"),          # lumber, wood
+    (2500, 2599, "Consumer Discretionary"),   # furniture (2510 household furniture)
     (2600, 2699, "Materials"),          # paper
     (2711, 2741, "Communication Services"),   # newspapers, periodicals, publishing
     (2800, 2899, "Materials"),          # chemicals (after the carve-outs)
     (2911, 2911, "Energy"),             # petroleum refining
+    (3000, 3199, "Consumer Discretionary"),   # rubber, plastics, leather
     (3200, 3299, "Materials"),          # stone, clay, glass
     (3300, 3399, "Materials"),          # primary metals
     (3400, 3569, "Industrials"),        # fabricated metal, machinery
@@ -78,13 +83,14 @@ SIC_SECTORS: list[tuple[int, int, str]] = [
     (3700, 3710, "Industrials"),        # transportation equipment
     (3711, 3799, "Consumer Discretionary"),   # motor vehicles, boats, motorcycles
     (3820, 3829, "Information Technology"),   # measuring and controlling instruments
-    (3942, 3949, "Consumer Discretionary"),   # toys, sporting goods
+    (3900, 3999, "Consumer Discretionary"),   # misc manufacturing, toys, sporting goods
     (4000, 4599, "Industrials"),        # railroads, trucking, air transport
     (4610, 4619, "Energy"),             # pipelines
     (4700, 4799, "Industrials"),        # transportation services
     (4810, 4899, "Communication Services"),   # telephone, radio, cable
     (4900, 4991, "Utilities"),          # electric, gas, water
     (5000, 5099, "Industrials"),        # wholesale durable goods
+    (5100, 5199, "Consumer Staples"),   # wholesale nondurable goods
     (5200, 5999, "Consumer Discretionary"),   # retail
     (6000, 6799, "Financials"),         # banks, brokers, insurance
     (7000, 7099, "Consumer Discretionary"),   # hotels
@@ -93,10 +99,13 @@ SIC_SECTORS: list[tuple[int, int, str]] = [
     (7370, 7379, "Information Technology"),   # software, data processing
     (7380, 7399, "Industrials"),        # misc business services
     (7500, 7549, "Consumer Discretionary"),   # auto repair, rental
+    (7600, 7699, "Industrials"),        # misc repair services
     (7810, 7841, "Communication Services"),   # motion pictures
     (7900, 7999, "Communication Services"),   # amusement, recreation
     (8000, 8099, "Health Care"),        # health services
+    (8100, 8699, "Consumer Discretionary"),   # legal, education, social, membership services
     (8700, 8799, "Industrials"),        # engineering, management services
+    (8900, 8999, "Industrials"),        # misc services
 ]
 
 SECTORS = sorted({s for _, _, s in SIC_SECTORS})
@@ -116,14 +125,36 @@ def sector_for_sic(sic: Optional[int | str]) -> Optional[str]:
     return None
 
 
+import re as _re
+
+_FUND_RE = _re.compile(r"\b(fund|trust|etf|bdc|capital corp|capital corporation|acquisition corp|"
+                       r"acquisition co|holdings? ltd|income|closed.end|investment corp|"
+                       r"finance corp|financial corp|reit)\b", _re.I)
+
+
+def name_sector_heuristic(name: Optional[str]) -> Optional[str]:
+    """v0.21.0: filers with a CIK but no SIC are almost all funds, BDCs, SPACs
+    and trusts (44 of 1,024 in the first backfill). Their sector is Financials
+    by construction; the source column says `name_heuristic` so the guess is
+    never mistaken for a SIC. None when the name does not say so."""
+    if not name:
+        return None
+    return "Financials" if _FUND_RE.search(name) else None
+
+
 def parse_submissions(payload: dict) -> dict:
     """The fields we keep from a submissions record."""
     sic = payload.get("sic")
+    sector = sector_for_sic(sic)
+    source = "edgar_submissions"
+    if sector is None and not str(sic or "").strip().isdigit():
+        guess = name_sector_heuristic(payload.get("name"))
+        if guess:
+            sector, source = guess, "name_heuristic"
     return {"cik": int(payload.get("cik") or 0) or None,
             "sic": int(sic) if str(sic or "").strip().isdigit() else None,
             "sic_description": (payload.get("sicDescription") or None),
-            "sector": sector_for_sic(sic),
-            "name": payload.get("name")}
+            "sector": sector, "name": payload.get("name"), "source": source}
 
 
 def load_ticker_ciks(path: Optional[str] = None) -> dict[str, int]:
@@ -177,7 +208,11 @@ async def fetch_one(client: httpx.AsyncClient, ticker: str, cik: int) -> Optiona
     try:
         resp = await client.get(SUBMISSIONS_URL.format(cik=cik))
         if resp.status_code == 404:
-            return {"cik": cik, "sic": None, "sic_description": None, "sector": None, "name": None}
+            # v0.21.0: a 404 is retried on a later refresh (source edgar_404),
+            # not stored as a permanent unknown (the first backfill lost 30
+            # operating companies this way)
+            return {"cik": cik, "sic": None, "sic_description": None, "sector": None,
+                    "name": None, "source": "edgar_404"}
         resp.raise_for_status()
         return parse_submissions(resp.json())
     except (httpx.HTTPError, ValueError) as e:
@@ -186,6 +221,7 @@ async def fetch_one(client: httpx.AsyncClient, ticker: str, cik: int) -> Optiona
 
 
 async def store(conn, ticker: str, rec: dict, source: str = "edgar_submissions") -> None:
+    source = rec.get("source") or source
     await conn.execute(
         """INSERT INTO journal.sectors (ticker, cik, sic, sic_description, sector, name, source, updated_ts)
            VALUES (%s,%s,%s,%s,%s,%s,%s, now())
@@ -263,6 +299,49 @@ async def open_scanner_in_sector(sector: Optional[str]) -> int:
 
 
 # ---------------------------------------------------------------- nightly refresh
+async def refetch_unknown(rate_per_sec: float = 8.0) -> dict:
+    """v0.21.0: refetch every row that has a CIK but no SIC and no sector."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT ticker, cik FROM journal.sectors WHERE cik IS NOT NULL AND sic IS NULL AND sector IS NULL ORDER BY 1")
+        rows = await cur.fetchall()
+    summary = {"candidates": len(rows), "fetched": 0, "mapped": 0, "failed": 0}
+    async with _client() as client:
+        async with pool.connection() as conn:
+            for t, cik in rows:
+                rec = await fetch_one(client, t, int(cik))
+                if rec is None:
+                    summary["failed"] += 1
+                    continue
+                await store(conn, t, rec)
+                summary["fetched"] += 1
+                if rec.get("sector"):
+                    summary["mapped"] += 1
+                await asyncio.sleep(1.0 / rate_per_sec)
+    log.info("sector refetch done", extra=kv(**summary))
+    return summary
+
+
+async def fill_gaps() -> int:
+    """v0.21.0: apply the name heuristic to stored rows with a CIK but no SIC."""
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT ticker, name FROM journal.sectors WHERE cik IS NOT NULL AND sic IS NULL AND sector IS NULL")
+        rows = await cur.fetchall()
+        filled = 0
+        for ticker, name in rows:
+            guess = name_sector_heuristic(name)
+            if guess:
+                await conn.execute(
+                    "UPDATE journal.sectors SET sector=%s, source='name_heuristic', updated_ts=now() WHERE ticker=%s",
+                    (guess, ticker))
+                filled += 1
+    log.info("sector gap fill done", extra=kv(rows=len(rows), filled=filled))
+    return filled
+
+
 async def remap() -> int:
     """Recompute `sector` from the stored SIC for every row (after a table
     change). No network."""
@@ -297,7 +376,8 @@ async def refresh(days: int = 7, rate_per_sec: float = 8.0, dry: bool = False) -
                  UNION SELECT DISTINCT symbol FROM journal.burst_events WHERE ts >= now() - interval '30 days')
                SELECT u.ticker FROM u LEFT JOIN journal.sectors s USING (ticker)
                WHERE u.ticker IS NOT NULL AND u.ticker <> ''
-                 AND (s.ticker IS NULL OR s.updated_ts < now() - make_interval(days => %s))
+                 AND (s.ticker IS NULL OR s.updated_ts < now() - make_interval(days => %s)
+                      OR (s.cik IS NOT NULL AND s.sic IS NULL AND s.sector IS NULL))
                ORDER BY 1""", (days, days, REFRESH_DAYS))
         todo = [r[0] for r in await cur.fetchall()]
     ciks = load_ticker_ciks()
@@ -340,6 +420,8 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--lookup")
     ap.add_argument("--remap", action="store_true", help="recompute sectors from stored SIC codes")
+    ap.add_argument("--fill-gaps", action="store_true", help="name heuristic for CIK rows without a SIC")
+    ap.add_argument("--refetch-unknown", action="store_true", help="refetch CIK rows without a SIC or sector")
     args = ap.parse_args()
 
     async def _run():
@@ -350,6 +432,10 @@ def main() -> None:
             print(s)
         elif args.remap:
             print("remapped", await remap())
+        elif args.fill_gaps:
+            print("filled", await fill_gaps())
+        elif args.refetch_unknown:
+            print(await refetch_unknown())
         await close_pool()
     asyncio.run(_run())
 

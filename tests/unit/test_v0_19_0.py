@@ -42,7 +42,8 @@ def test_sic_ranges():
 def test_parse_submissions():
     rec = parse_submissions({"cik": "320193", "sic": "3571", "sicDescription": "Electronic Computers", "name": "Apple Inc."})
     assert rec == {"cik": 320193, "sic": 3571, "sic_description": "Electronic Computers",
-                   "sector": "Information Technology", "name": "Apple Inc."}
+                   "sector": "Information Technology", "name": "Apple Inc.",
+                   "source": "edgar_submissions"}          # source since v0.21.0
     rec = parse_submissions({"cik": "1", "sic": "", "sicDescription": None, "name": "Shell"})
     assert rec["sic"] is None and rec["sector"] is None
 

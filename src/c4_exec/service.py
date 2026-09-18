@@ -341,6 +341,8 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                 # review-exit theses) are market-exited from 09:35 ET; the
                 # pass is idempotent (the exit closes the position).
                 await engine.open_exit_pass(OPEN_EXIT_ET)
+                # v0.21.0: A12 gated auto-exits, every pass in session
+                await engine.guard_exit_pass()
                 for pos in await open_positions():
                     # v0.12.5: check_halt flags/journals the freeze but must
                     # NOT block the bar fetch — a frozen position has to see
