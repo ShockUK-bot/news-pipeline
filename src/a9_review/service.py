@@ -106,6 +106,13 @@ async def build_evidence(conn, weeks: int = 4) -> dict:
     n, avg = b[0]
     ev["burst"] = {"real_n": n, "real_avg_30m_pct": (round(float(avg), 3) if avg is not None else None),
                    "real_after_cost": (round(float(avg) - 0.10, 3) if avg is not None else None)}
+    # v0.23.0: scanner funnel counterfactuals (A11 funnel pass)
+    try:
+        from a11_metrics.funnel import summary as funnel_summary
+        ev["funnel"] = await funnel_summary(conn, weeks * 7)
+    except Exception as exc:                                      # noqa: BLE001
+        log.warning("funnel evidence unavailable", extra=kv(error=repr(exc)[:120]))
+        ev["funnel"] = {}
     ev["week_rollups"] = [{"period_start": ps.isoformat(), "metric": m, "value": (float(v) if v is not None else None)}
                           for ps, m, v in await _rows(conn, """
         SELECT period_start, metric, value FROM journal.metric_rollups

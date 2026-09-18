@@ -348,6 +348,9 @@ async def run(args) -> dict:
         summary["scanner_cf"] = len(sc)
         pe = await post_exit_pass(conn, md, args.dry_run, today)
         summary["post_exit"] = len(pe)
+        from .funnel import funnel_pass, summary as funnel_summary
+        fn = await funnel_pass(conn, int(args.funnel_days), args.dry_run)
+        summary["scanner_funnel"] = len(fn)
         gd = await guard_pass(conn, md, args.dry_run, now, reclassify=bool(args.reclassify_guard))
         summary["guard_classified"] = len(gd)
         ro = await rollups_pass(conn, today, int(args.days), cfgv, args.dry_run)
@@ -359,6 +362,15 @@ async def run(args) -> dict:
                 print(f"    guard {r['guard_id']:4d} {r['ticker']:6s} {r['action']:12s} -> {r['outcome_class']:8s} {r['outcome_pnl_r']:+.2f}R")
             for r in pe:
                 print(f"    post-exit {r['ticker']:6s} pos {r['position_id']:4d} {r['horizon']:10s} {r['outcome_r']:+.2f}R")
+            for r in fn:
+                print(f"    funnel {r['scan_date']} {r['ticker']:6s} {r['outcome']:20s} move {r['move_direction']:4s} "
+                      f"analyst {str(r['analyst_direction']):5s} long {r['long_r']:+.2f}R short {r['short_r']:+.2f}R")
+            fs = await funnel_summary(conn, 30)
+            print("    funnel 30d by outcome (n, with-move R, long R, short R, with-move winners):")
+            for k, v in fs["by_outcome"].items():
+                print(f"      {k:20s} {v['n']:3d} {v['with_move_r']:+7.2f} {v['long_r']:+7.2f} {v['short_r']:+7.2f} {v['with_move_winners']:3d}")
+            a = fs["analyst_short_on_up_move"]
+            print(f"    analyst shorts on up-moves: n={a['n']} short {a['short_sum_r']:+.2f}R vs long {a['long_sum_r']:+.2f}R (long better in {a['long_better']})")
             for r in ro:
                 print(f"    rollup {r['granularity']:4s} {r['period_start']} trades {r['trades_closed']} "
                       f"win {r['win_rate']} sumR {r['sum_r']} gate_pass {r['gate_pass_rate']} guard_save {r['guard_save_rate']}")
@@ -377,6 +389,7 @@ def main() -> None:
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--days", type=int, default=3, help="DAY rollups to (re)compute, default 3")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--funnel-days", type=int, default=14, help="scanner funnel backfill window")
     ap.add_argument("--reclassify-guard", action="store_true",
                     help="re-run the guard classification on every row (after a rule change)")
     asyncio.run(run(ap.parse_args()))

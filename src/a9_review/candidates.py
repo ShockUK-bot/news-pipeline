@@ -128,8 +128,49 @@ def rule_lane_negative(ev: dict) -> tuple[Optional[dict], Optional[str]]:
               metric_json("sum_r", ">", 0, r["sum_r"])), None
 
 
+def rule_scanner_concurrency(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.23.0: the concurrency cap costs money if the with-move trades it
+    blocked would have made more than +3R over 10 or more instances."""
+    f = ((ev.get("funnel") or {}).get("by_outcome") or {}).get("CAPPED_CONCURRENT") or {}
+    n = int(f.get("n") or 0)
+    r = f.get("with_move_r")
+    if n < 10:
+        return None, f"scanner concurrency cap: {n} of 10 capped instances journaled" + (f", with-move {r:+.1f}R" if r is not None else "")
+    if r is None or r <= 3.0:
+        return None, f"scanner concurrency cap: n={n}, with-move {r:+.1f}R, the cap is not costing money"
+    return _p("Scanner: raise the concurrency cap from 2 to 3",
+              "config/risk.yaml scanner.max_concurrent_positions: 2",
+              "scanner.max_concurrent_positions: 2 -> 3 (A3 veto SCANNER_CONCURRENT)",
+              {"n_instances": n, "with_move_sum_r": r, "winners": f.get("with_move_winners"),
+               "source": "journal.scanner_funnel_cf outcome=CAPPED_CONCURRENT"},
+              f"The {n} entries blocked by the cap would have made {r:+.1f}R trading with the move.",
+              metric_json("sum_r", ">", 0, None)), None
+
+
+def rule_analyst_short_bias(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.23.0: on scanner up-moves the analyst sometimes proposes a short
+    (an exhaustion fade) which the gate then vetoes on structure. If the
+    with-move long beats the proposed short by 2R or more over 8 or more
+    cases, propose forcing the momentum direction on the scanner lane."""
+    a = (ev.get("funnel") or {}).get("analyst_short_on_up_move") or {}
+    n = int(a.get("n") or 0)
+    if n < 8:
+        return None, f"analyst shorts on scanner up-moves: {n} of 8 cases journaled"
+    gap = float(a.get("long_sum_r") or 0) - float(a.get("short_sum_r") or 0)
+    if gap < 2.0:
+        return None, f"analyst shorts on scanner up-moves: n={n}, long beats short by {gap:+.1f}R, under the 2R bar"
+    return _p("Scanner: analyst must trade WITH the detected move (no exhaustion shorts on up-moves)",
+              "src/a2_analyst prompt: the analyst chooses direction on scanner items",
+              "Scanner items: direction fixed to the scanner's move direction; the analyst only decides trade / no trade",
+              {"n_instances": n, "long_sum_r": a.get("long_sum_r"), "short_sum_r": a.get("short_sum_r"),
+               "long_better": a.get("long_better"), "source": "journal.scanner_funnel_cf (move up, analyst down)"},
+              f"Over {n} cases the with-move long made {a.get('long_sum_r'):+.1f}R against {a.get('short_sum_r'):+.1f}R for the proposed shorts.",
+              metric_json("sum_r", ">", 0, None)), None
+
+
 RULES = [rule_lane_negative, rule_gate_money_left, rule_stop_layer_inefficiency,
-         rule_guard_hold_bias, rule_scanner_no_scale_out, rule_burst_go_live]
+         rule_guard_hold_bias, rule_scanner_no_scale_out, rule_scanner_concurrency,
+         rule_analyst_short_bias, rule_burst_go_live]
 
 
 def generate(ev: dict, max_proposals: int = 3) -> tuple[list[dict], list[str]]:
