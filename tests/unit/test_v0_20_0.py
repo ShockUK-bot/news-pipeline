@@ -48,7 +48,7 @@ def test_cluster_verdict_modes():
 
 def test_risk_yaml_pins():
     r = yaml.safe_load((ROOT / "config" / "risk.yaml").read_text())
-    assert r["capital"]["max_sector_heat_pct"] == 0.03
+    assert r["capital"]["max_sector_heat_pct"] == 0.015    # v0.20.1
     assert r["capital"]["sector_heat_mode"] == "net"
     assert r["scanner"]["sector_clip"] is False
     assert r["scanner"]["sector_cluster"]["mode"] == "shadow" and r["scanner"]["sector_cluster"]["max_per_sector"] == 1
