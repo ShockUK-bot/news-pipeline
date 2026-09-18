@@ -196,9 +196,16 @@ def render_html(facts: dict, narrative=None) -> str:
     from common import mailkit as mk
     positions = facts.get("positions") or []
     a4 = facts.get("a4") or {}
-    cands = a4.get("candidates") or a4.get("open_candidates") or []
+    # a4: {fresh, ignored, summary, open_forwarded: [{rank, tickers, headline}], ...}
+    cands = a4.get("open_forwarded") or []
+    if not isinstance(cands, list):
+        cands = []
     a6 = facts.get("a6") or {}
-    recos = a6.get("recos") or a6.get("recommendations") or []
+    # a6: {review: {recos: [...], holds}, eod: {verdicts: [...]}}
+    recos = ((a6.get("review") or {}).get("recos") if isinstance(a6.get("review"), dict) else None) or []
+    if not isinstance(recos, list):
+        recos = []
+    thesis_active = (facts.get("thesis") or {}).get("active") or []
     ops = facts.get("ops") or {}
     earnings = facts.get("earnings") or {}
     needs = []
@@ -233,7 +240,14 @@ def render_html(facts: dict, narrative=None) -> str:
             crow.append([str(c.get("rank", "")), mk.esc(", ".join(c.get("tickers") or []) if isinstance(c.get("tickers"), list) else c.get("ticker") or ""),
                          mk.esc(str(c.get("headline") or c.get("summary") or c.get("why") or "")[:90])])
     blocks.append(mk.section("Overnight candidates", mk.table(["#", "Ticker", "Why"], crow, "no candidates"),
-                             note=(a4.get("summary") or "")[:300] or None))
+                             note=(f"{a4.get('fresh', '?')} fresh items overnight, {len(cands)} forwarded to the open. "
+                                   + str(a4.get("summary") or "")[:280]) if a4 else None))
+    if recos:
+        blocks.append(mk.section("Last night's review", mk.table(["Ticker", "Action", "Why"],
+                                 [[mk.esc(r.get("ticker")), mk.esc(r.get("action")), mk.esc(str(r.get("rationale", ""))[:110])] for r in recos])))
+    if thesis_active:
+        blocks.append(mk.section("Active theses", mk.bullets([str(t.get("title", ""))[:90] for t in thesis_active[:10]]),
+                                 note=f"{len(thesis_active)} active"))
     if narrative is not None:
         n = narrative.model_dump() if hasattr(narrative, "model_dump") else dict(narrative)
         blocks.append(mk.section("Briefing", "<div style='font-size:13px;line-height:1.5'>" + mk.esc(n.get("summary", "")) + "</div>"

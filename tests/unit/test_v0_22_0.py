@@ -121,3 +121,23 @@ def test_wiring():
     assert "html" in (ROOT / "src" / "c5_mailer" / "service.py").read_text()
     assert "render_html" in (ROOT / "src" / "a8_briefing" / "service.py").read_text()
     assert "render_html" in (ROOT / "src" / "a9_review" / "service.py").read_text()
+
+
+def test_morning_html_on_real_fact_shape():
+    from a8_briefing.render import render_html
+    facts = {"session_date": "2026-09-17",
+             "a4": {"fresh": 182, "ignored": 175, "summary": "Overnight summary.",
+                    "open_forwarded": [{"rank": 1, "tickers": ["LGVN"], "headline": "Trading halt: LGVN"}]},
+             "thesis": {"active": [{"title": "Biotech Capital Dilution", "driver": "x"}]},
+             "positions": [{"side": "LONG", "ticker": "RIOT", "horizon": "LONG_TERM", "qty_open": 34, "avg_entry": 21.43,
+                            "last_price": 20.35, "r_progress": -0.15, "position_id": 7, "current_stop": 20.25,
+                            "blackout_soon": False, "earnings_next_sessions": 30}],
+             "a6": {"review": {"holds": 1, "recos": [{"action": "STALE", "ticker": "RIOT", "rationale": "staleness rule", "position_id": 7}]},
+                    "eod": {"verdicts": []}},
+             "earnings": {"reporting_today": 42, "held_reporting_soon": []},
+             "ops": {"queues": {"signal.thesis": 4}, "outages": [], "health_not_ok": [], "newest_item_age_hours": 0.0}}
+    html = render_html(facts, None)
+    assert "1 candidate from overnight, 1 open position. 1 item need you." in html or "1 candidate from overnight, 1 open position. 1 items need you." in html
+    assert "LGVN" in html and "Biotech Capital Dilution" in html and "STALE" in html and "182 fresh items" in html
+    # degenerate shapes must not raise
+    render_html({"a4": {"open_forwarded": 7}, "a6": {"review": 3}, "positions": [], "ops": {}, "earnings": {}}, None)

@@ -1,0 +1,3 @@
+# Patch notes v0.22.1 (2026-09-17, 22:00 CT): morning briefing HTML fixed on the real fact shape
+
+Generating today's briefing as a sample of the new format (sent 22:00 CT, subject prefixed "[sample of the new format]") showed `render_html` had assumed list shapes the A8 fact sheet does not have: the overnight candidates live in `a4.open_forwarded` (rank, tickers, headline) with `a4.fresh` a count, and last night's recommendations in `a6.review.recos`. Tomorrow's real 06:35 CT briefing would have failed. Fixed in `src/a8_briefing/render.py`, which also gains a "Last night's review" table and an "Active theses" list; degenerate shapes no longer raise. Test on the real shape added. Suite 891 passed. No service touched (A8 is a timer).
