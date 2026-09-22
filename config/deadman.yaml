@@ -24,6 +24,11 @@ c4:
   reconcile_interval_min: 15
   exit_unprotected_max_secs: 45      # D3 cancel-and-replace reinstatement window
   drawdown_breaker_pct: 0.02
+  breaker_auto_reset:                # v0.25.1 (operator away October 2026):
+    enabled: true                    # a trip clears at the first pass of the
+    max_trips_per_30d: 3             # next session, emailed; the 3rd trip in
+                                     # 30 days stays tripped for the operator.
+                                     # false restores the one way breaker.
   heartbeat_secs: 60
   promotion_enabled: true            # v0.12.2 — scanner->short_term_v1 promotion
                                      # on A12 news_confirms_move (code executes)

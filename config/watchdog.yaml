@@ -92,6 +92,7 @@ timers:
   - a11-metrics
   - a9-review
   - evening-digest
+  - llama-heavy-guard
   - queue-prune
   - earnings-calendar
   - sector-map

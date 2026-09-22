@@ -1,0 +1,9 @@
+[Unit]
+Description=llama-heavy morning guard timer (08:15 CT weekdays, before the open)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

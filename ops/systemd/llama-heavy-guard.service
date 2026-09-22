@@ -1,0 +1,9 @@
+[Unit]
+Description=llama-heavy morning guard: stop the heavy slot if a nightly run left it up (oneshot, fired by llama-heavy-guard.timer)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'if systemctl is-active --quiet llama-heavy.service; then echo "llama-heavy was still running: stopping"; systemctl stop llama-heavy.service; else echo "llama-heavy not running: nothing to do"; fi'
+StandardOutput=journal
+StandardError=journal

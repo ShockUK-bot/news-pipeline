@@ -312,7 +312,7 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
     from datetime import timedelta
     from zoneinfo import ZoneInfo
     from a3_risk.service import minutes_to_close
-    from .breaker import check_breaker
+    from .breaker import check_breaker, maybe_auto_reset
     from .deadman import check as deadman_check
     from .flags import get_flag
     from .state import open_positions
@@ -328,6 +328,7 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
         try:
             await deadman_check(deadman_cfg["components"] and deadman_cfg,
                                 now, in_session)
+            await maybe_auto_reset(svc.cfg.get("breaker_auto_reset"), now)   # v0.25.1
             await check_breaker(float(svc.cfg["drawdown_breaker_pct"]))
             await set_health("exec", "OK", "engine loop")
 
