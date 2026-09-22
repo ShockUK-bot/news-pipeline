@@ -46,13 +46,21 @@ MATERIAL — the item must fit one of these catalyst classes:
 6. Leadership: unexpected CEO/CFO departure, effective now or imminent.
 7. 8-K or other filings with substantive items of the classes above.
 8. Analyst rating changes: an actual upgrade or downgrade from a named firm
-   — the rating itself changes. (Maintains/reiterates, price-target-only
-   moves, and coverage initiations remain negative category 1.)
+   — the rating itself changes — AND a coverage INITIATION that assigns a
+   directional rating (Buy / Outperform / Overweight / Sell / Underperform /
+   Underweight) from a named firm: a new rating is a rating change from
+   none, and it moves the stock the same way (SNDK 2026-09-22: a Buy
+   initiation ran +7% at the open while the item sat discarded).
+   direction_hint follows the rating. (Maintains/reiterates, price-target-
+   only moves, and initiations at Hold / Neutral / Market Perform remain
+   negative category 1.)
 
 NOT MATERIAL — these categories are never material, regardless of wording:
 1. Analyst actions without a rating change: "Maintains"/"Reiterates" with a
-   price-target raise or cut; coverage initiations; price-target-only moves.
-   (An actual upgrade/downgrade of the rating is class 8 — material.)
+   price-target raise or cut; price-target-only moves; coverage initiations
+   at Hold / Neutral / Market Perform or without a stated rating.
+   (An actual upgrade/downgrade, or an initiation at a directional rating,
+   is class 8 — material.)
 2. Price-action commentary: 52-week highs/lows, "shares rise/fall X%",
    unusual-volume movers, technical levels. News ABOUT the price is not a
    catalyst — that move has already happened. EXCEPTION: if the item itself
