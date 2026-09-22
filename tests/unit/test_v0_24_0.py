@@ -93,8 +93,9 @@ def test_yaml_pins():
 
 def test_triage_prompt_makes_rated_initiations_material():
     from a1_triage.prompt import SYSTEM_PROMPT
-    material, not_material = SYSTEM_PROMPT.split("NOT MATERIAL — these categories", 1)
+    flat = " ".join(SYSTEM_PROMPT.split())
+    material, not_material = flat.split("NOT MATERIAL — these categories", 1)
     assert "coverage INITIATION that assigns a directional rating" in material
     assert "Buy / Outperform / Overweight" in material
-    assert "initiations\n   at Hold / Neutral / Market Perform" in not_material or "at Hold / Neutral / Market Perform" in not_material
-    assert "coverage initiations remain negative category 1" not in SYSTEM_PROMPT
+    assert "at Hold / Neutral / Market Perform" in not_material
+    assert "coverage initiations remain negative category 1" not in flat
