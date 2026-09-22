@@ -86,4 +86,4 @@ def test_dashboard_shapes():
     assert "WHERE rule NOT IN ('eh_shadow', 'fade')" in app
     assert "\"fade\": fade" in app and "labFade" in html
     assert "CASE WHEN direction = 'down'" in app        # EH direction-adjusted
-    assert "real_t55_pct" in app and "Realistic n" in html
+    assert "burst" not in app.lower() and "tabBurst" not in html      # v0.25.0: C12 retired

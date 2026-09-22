@@ -30,7 +30,6 @@ def test_generate_orders_rules_and_caps():
     rules = [p["rule"] for p in props]
     assert rules[:3] == ["rule_lane_negative", "rule_gate_money_left", "rule_stop_layer_inefficiency"]
     assert any("scanner no-scale-out: 17 of 30" in w for w in watch)
-    assert any("burst fade: 73 of 200" in w for w in watch)
     assert any("guard HOLD bias" in w and "61%" in w for w in watch)
     for p in props:
         for k in ("title", "current_state", "proposed_diff", "evidence", "expected_effect", "success_metric"):

@@ -9,3 +9,9 @@ Supersedes `claude_current-state-2026-09-18.md`.
 - Open: burst retire decision this week; scanner no scale out at 30 trades; A1 treatment of coverage initiations; operator still to delete the two rollback model files.
 
 Files for the design chat: `claude_patch-notes-v0_24_0.md` and this file.
+
+## Late update (16:30 CT)
+
+- v0.24.1/v0.24.2: rated coverage initiations are material at triage (`a1-triage` restarted 15:51 CT). v0.24.1 was tagged with one test failing (a test bug, prompt correct); fixed as v0.24.2.
+- v0.25.0: C12 burst stream retired (stopped, disabled, removed from dashboard and watchdog, A9 rule retired; code, config and table kept). Reuse plan for a scanner fast lane in `docs/claude_c12-retirement-and-reuse-2026-09-22.md`, gated on the early window shadow evidence.
+- Files for the design chat: `claude_patch-notes-v0_24_1.md`, `claude_patch-notes-v0_25_0.md`, `claude_c12-retirement-and-reuse-2026-09-22.md`, and this file.

@@ -226,8 +226,9 @@ def rule_scanner_early_window(ev: dict) -> tuple[Optional[dict], Optional[str]]:
 
 RULES = [rule_lane_negative, rule_gate_money_left, rule_stop_layer_inefficiency,
          rule_guard_hold_bias, rule_scanner_no_scale_out, rule_scanner_concurrency,
-         rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window,
-         rule_burst_go_live]
+         rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window]
+# rule_burst_go_live retired with C12 (v0.25.0, 2026-09-22): three sessions on the
+# realistic column were negative after cost in every cell. Kept for the record.
 
 
 def generate(ev: dict, max_proposals: int = 3) -> tuple[list[dict], list[str]]:
