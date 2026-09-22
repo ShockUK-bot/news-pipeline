@@ -168,9 +168,66 @@ def rule_analyst_short_bias(ev: dict) -> tuple[Optional[dict], Optional[str]]:
               metric_json("sum_r", ">", 0, None)), None
 
 
+def _shadow_lane_rule(ev: dict, rule: str, title: str, current: str, diff: str, effect: str,
+                      n_min: int = 60, avg_min: float = 0.4, win_min: float = 55.0, cost_pct: float = 0.10):
+    lane = ((ev.get("shadow_lanes") or {}).get(rule)) or {}
+    n = int(lane.get("n") or 0)
+    if n < n_min:
+        return None, f"{rule} shadow: {n} of {n_min} would-trades measured" + (
+            f", avg {lane.get('avg_eod_pct'):+.2f}% win {lane.get('win_pct')}%" if lane.get("avg_eod_pct") is not None else "")
+    avg = float(lane.get("avg_eod_pct") or 0) - cost_pct
+    med = float(lane.get("median_eod_pct") or 0)
+    win = float(lane.get("win_pct") or 0)
+    sess, neg = int(lane.get("sessions") or 0), int(lane.get("neg_sessions") or 0)
+    if avg < avg_min or med <= 0 or win < win_min or (sess and neg / sess > 0.4):
+        return None, (f"{rule} shadow: n={n}, avg after cost {avg:+.2f}%, median {med:+.2f}%, win {win:.0f}%, "
+                      f"{neg}/{sess} sessions negative: under the bar")
+    return _p(title, current, diff,
+              {"n_instances": n, "avg_eod_after_cost_pct": round(avg, 3), "median_eod_pct": med, "win_pct": win,
+               "sessions": sess, "neg_sessions": neg, "source": f"journal.gate_counterfactuals rule={rule}"},
+              effect, metric_json("realized_pnl", ">", 0, None)), None
+
+
+def rule_drift_short(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.24.0: bad-news drift short shadow (gate rule drift_short)."""
+    return _shadow_lane_rule(ev, "drift_short",
+                             "Build the bad-news drift short lane (bearish news the gate calls priced in keeps falling)",
+                             "config/gate.yaml drift: shadow only, no order path",
+                             "New lane: drift_short WOULD_TRADE -> A3 sizing (ETB only), exit at the close or a 2 ATR stop",
+                             "Bearish news vetoed as priced in or extended is sold short for the rest of the session.")
+
+
+def rule_fade_lane(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.24.0: the (widened) bullish fade shadow."""
+    return _shadow_lane_rule(ev, "fade",
+                             "Build the bullish fade lane (bullish news vetoed at the gate closes lower)",
+                             "config/gate.yaml fade: shadow only, no order path",
+                             "New lane: fade WOULD_TRADE -> A3 sizing (ETB only), exit at the close or a 2 ATR stop",
+                             "Bullish news the gate vetoes inside the first three hours is sold short into the close.")
+
+
+def rule_scanner_early_window(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.24.0: the scanner's early shadow window (09:33 to 09:50 ET)."""
+    f = ((ev.get("funnel") or {}).get("by_outcome") or {}).get("CAPPED_EARLY_WINDOW") or {}
+    n = int(f.get("n") or 0)
+    r = f.get("with_move_r")
+    w = int(f.get("with_move_winners") or 0)
+    if n < 20:
+        return None, f"scanner early window: {n} of 20 shadow candidates replayed" + (f", with-move {r:+.1f}R" if r is not None else "")
+    if r is None or r < 3.0 or w / n < 0.5:
+        return None, f"scanner early window: n={n}, with-move {r:+.1f}R, {w} winners: under the bar"
+    return _p("Scanner: open the window at 09:33 ET (from 09:50)",
+              "config/scanner.yaml session_start_et: 09:50, early_window shadow from 09:33",
+              "session_start_et: 09:50 -> 09:33 (early_window becomes live)",
+              {"n_instances": n, "with_move_sum_r": r, "winners": w, "source": "journal.scanner_funnel_cf outcome=CAPPED_EARLY_WINDOW"},
+              f"The {n} early-window candidates would have made {r:+.1f}R with the move ({w} winners).",
+              metric_json("sum_r", ">", 0, None)), None
+
+
 RULES = [rule_lane_negative, rule_gate_money_left, rule_stop_layer_inefficiency,
          rule_guard_hold_bias, rule_scanner_no_scale_out, rule_scanner_concurrency,
-         rule_analyst_short_bias, rule_burst_go_live]
+         rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window,
+         rule_burst_go_live]
 
 
 def generate(ev: dict, max_proposals: int = 3) -> tuple[list[dict], list[str]]:

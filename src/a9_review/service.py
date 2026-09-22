@@ -113,6 +113,29 @@ async def build_evidence(conn, weeks: int = 4) -> dict:
     except Exception as exc:                                      # noqa: BLE001
         log.warning("funnel evidence unavailable", extra=kv(error=repr(exc)[:120]))
         ev["funnel"] = {}
+    # v0.24.0: shadow lanes (fade, drift_short) from the gate counterfactuals
+    ev["shadow_lanes"] = {}
+    for rule in ("fade", "drift_short"):
+        rows = await _rows(conn, """
+            SELECT count(*), avg(x.r) * 100, percentile_cont(0.5) WITHIN GROUP (ORDER BY x.r) * 100,
+                   100.0 * count(*) FILTER (WHERE x.r > 0) / NULLIF(count(*), 0),
+                   count(DISTINCT x.d), count(DISTINCT x.d) FILTER (WHERE x.r < 0)
+            FROM (SELECT veto_ts::date AS d,
+                         (price_at_veto - price_eod) / NULLIF(price_at_veto, 0) AS r
+                  FROM journal.gate_counterfactuals
+                  WHERE rule=%s AND veto_reason='WOULD_TRADE' AND complete
+                    AND veto_ts::date >= %s) x""", (rule, since))
+        n, avg, med, win, sess, neg = rows[0]
+        # sessions negative counts sessions whose MEAN is negative
+        neg_rows = await _rows(conn, """
+            SELECT count(*) FROM (SELECT veto_ts::date, avg((price_at_veto - price_eod) / NULLIF(price_at_veto, 0)) AS m
+                                  FROM journal.gate_counterfactuals
+                                  WHERE rule=%s AND veto_reason='WOULD_TRADE' AND complete AND veto_ts::date >= %s
+                                  GROUP BY 1) s WHERE m < 0""", (rule, since))
+        ev["shadow_lanes"][rule] = {"n": n, "avg_eod_pct": (round(float(avg), 3) if avg is not None else None),
+                                    "median_eod_pct": (round(float(med), 3) if med is not None else None),
+                                    "win_pct": (round(float(win), 1) if win is not None else None),
+                                    "sessions": sess, "neg_sessions": int(neg_rows[0][0])}
     ev["week_rollups"] = [{"period_start": ps.isoformat(), "metric": m, "value": (float(v) if v is not None else None)}
                           for ps, m, v in await _rows(conn, """
         SELECT period_start, metric, value FROM journal.metric_rollups

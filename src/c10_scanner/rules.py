@@ -308,7 +308,8 @@ def scan_mode(emitted_today: int, cfg: dict) -> str:
 def emission_disposition(score: float, m: CandidateMetrics, cfg: dict, *,
                          emitted_this_scan: int, emitted_today: int,
                          emitted_last_hour: int, open_scanner: int,
-                         etb_ok: Optional[bool] = None
+                         etb_ok: Optional[bool] = None,
+                         early: bool = False
                          ) -> Optional[tuple[str, str]]:
     """v0.13.8 — one pure decision for a ranked survivor: None = EMIT, else
     the (status, reject_reason) pair to journal. Check order is the point:
@@ -340,6 +341,8 @@ def emission_disposition(score: float, m: CandidateMetrics, cfg: dict, *,
             return ("FILTERED", "SSR_RESTRICTED")
         if etb_ok is False:
             return ("FILTERED", "SHORT_UNAVAILABLE")
+    if early:
+        return ("CAPPED", "EARLY_WINDOW")     # v0.24.0 shadow: journal, never emit
     if emitted_this_scan >= int(cfg["max_per_scan"]):
         return ("CAPPED", "PER_SCAN")
     if emitted_today >= int(cfg["max_per_day"]):
@@ -362,4 +365,21 @@ def scanner_headline(m: CandidateMetrics, news_match: str) -> str:
 
 
 def in_scan_window(now_et_hhmm: str, cfg: dict) -> bool:
-    return cfg["session_start_et"] <= now_et_hhmm < cfg["session_end_et"]
+    """Inside the scan window, INCLUDING the v0.24.0 early shadow window."""
+    start = cfg["session_start_et"]
+    ew = cfg.get("early_window") or {}
+    if ew.get("enabled", False):
+        start = min(start, str(ew.get("start_et", start)))
+    return start <= now_et_hhmm < cfg["session_end_et"]
+
+
+def in_early_window(now_et_hhmm: str, cfg: dict) -> bool:
+    """v0.24.0: before session_start_et but inside the early shadow window.
+    SNDK 2026-09-22: +5% from 09:30 to 09:40 ET and +7.7% by 09:45, all
+    inside the open blackout; the scanner's first look at 09:51 bought the
+    top. Candidates seen here are journaled CAPPED / EARLY_WINDOW and
+    replayed both ways by A11's funnel pass; nothing is emitted."""
+    ew = cfg.get("early_window") or {}
+    if not ew.get("enabled", False):
+        return False
+    return str(ew.get("start_et", "09:33")) <= now_et_hhmm < cfg["session_start_et"]

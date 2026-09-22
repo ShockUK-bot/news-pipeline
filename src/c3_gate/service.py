@@ -258,6 +258,46 @@ class C3Service:
         return ("news_long" if str(thesis.get("horizon")).upper() == "LONG"
                 else "news_short")
 
+    async def _drift_shadow(self, thesis: dict, state, verdict, signal_id: str,
+                            item_id: str, revision, body: dict, now) -> None:
+        """v0.24.0 — bad-news drift short, SHADOW ONLY (same pattern as the
+        fade lane). A final PRICED_IN / GATE_EXTENDED veto on a BEARISH
+        thesis becomes a would-be SHORT: short-side gate applied, journaled
+        as a GATE row with rule='drift_short', counterfactual row recorded
+        for the sweep. NO ORDER PATH."""
+        from c3_gate.rules import direction_gate, drift_candidate
+        try:
+            drift = drift_candidate(thesis, state, verdict, self.cfg)
+            if drift is None:
+                return
+            short = await self.short_ctx(thesis, "drift_short",
+                                         state.pct_from_prior_close)
+            sveto = direction_gate("down", short)
+            action = "VETO" if sveto else "WOULD_TRADE"
+            decision_id = await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=thesis["ticker"], stage="GATE", agent="C3",
+                action=action, veto_reason=sveto,
+                payload={"rule": "drift_short", "origin": "drift_short",
+                         "direction": "down", "shadow": True, **drift},
+                reason=(f"drift shadow: {sveto}" if sveto else
+                        f"drift shadow WOULD_TRADE ({drift['source_veto']} "
+                        f"-{drift['drop_pct']*100:.1f}%)"),
+                regime_id=body.get("regime_id"))
+            await record_veto(
+                decision_id=decision_id, signal_id=signal_id, item_id=item_id,
+                ticker=thesis["ticker"], direction="down", rule="drift_short",
+                veto_reason=sveto or "WOULD_TRADE", veto_ts=now,
+                price_at_veto=state.last_price,
+                prenews_price=state.prenews_price,
+                pct_move=drift["pct_move"], vol_mult=state.vol_mult)
+            log.info("drift shadow", extra=kv(signal_id=signal_id,
+                                              ticker=thesis["ticker"],
+                                              action=action,
+                                              drop_pct=drift["drop_pct"]))
+        except Exception as e:                                # noqa: BLE001
+            log.warning("drift shadow failed", extra=kv(error=repr(e)[:200]))
+
     async def _fade_shadow(self, thesis: dict, state, verdict, signal_id: str,
                            item_id: str, revision, body: dict, now) -> None:
         """v0.14.12 — fade lane, SHADOW ONLY (the v0.12.11 EH-shadow
@@ -658,6 +698,8 @@ class C3Service:
                 pct_move=(verdict.numbers or {}).get("pct_move"),
                 vol_mult=state.vol_mult)
             await self._fade_shadow(thesis, state, verdict, signal_id,
+                                    item_id, revision, body, now)
+            await self._drift_shadow(thesis, state, verdict, signal_id,
                                     item_id, revision, body, now)
             return
 

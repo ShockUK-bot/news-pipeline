@@ -128,9 +128,19 @@ gate:
   # decide whether this becomes a live lane (needs the A3 sizing path).
   fade:
     enabled: true
-    min_move_pct: 0.04
+    min_move_pct: 0.01         # v0.24.0: was 0.04 (2 rows in a week; the
+                               # bullish vetoes cluster under 2% and closed
+                               # lower too). A9 reads the band per row.
     max_move_pct: 0.12         # >= 12% is capitulation-bounce territory
-    window_max_min_after_open: 90
+    window_max_min_after_open: 180   # v0.24.0: was 90
+    source_vetoes: [PRICED_IN, GATE_EXTENDED, HANDOFF_UNMOVED, GATE_NO_CONFIRM]
+                               # v0.24.0: was the first two only
+  drift:                       # v0.24.0 — bad-news drift SHORT, shadow only
+    enabled: true              # journal WOULD_TRADE / VETO rows, rule=drift_short
+    source_vetoes: [PRICED_IN, GATE_EXTENDED]
+    min_drop_pct: 0.01         # already down 1% to 15% from the pre-news price
+    max_drop_pct: 0.15
+    window_max_min_after_open: 240
   # -- scanner-origin branch (v0.12.1): "is it still tradeable", not "did the
   # move happen" — the move IS the signal. Confirmation/credibility/extended
   # checks do not apply; these do. PLACEHOLDERS, A9-tuned like everything here.

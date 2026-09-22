@@ -143,8 +143,8 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
     <table><thead><tr><th>Veto reason</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
     <tbody id="labRth"></tbody></table></div>
   <div class="panel">
-    <h2>Fade shadow lane <span class="micro">v0.14.12: trade AGAINST a bullish gap; numbers are in the fade's direction</span></h2>
-    <table><thead><tr><th>Outcome</th><th>Gap dir</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
+    <h2>Shadow lanes <span class="micro">fade = short bullish news the gate vetoed; drift_short = short bearish news the gate called priced in (v0.24.0); numbers in the short's direction</span></h2>
+    <table><thead><tr><th>Lane</th><th>Outcome</th><th>Dir</th><th>Total</th><th>Measured</th><th>Avg best %</th><th>Avg EOD %</th></tr></thead>
     <tbody id="labFade"></tbody></table></div>
   <div class="panel">
     <h2>Extended-hours shadow — outcome mix <span class="micro">direction-adjusted since v0.16.1</span></h2>
@@ -502,9 +502,9 @@ async function loadLab(){
      <td>${sgn(r.avg_best_pct)}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
     ||'<tr><td colspan="5" class="detail">no measured vetoes yet — rows fill ~30 min after each close</td></tr>';
   $('labFade').innerHTML=(d.fade||[]).map(r=>
-    `<tr><td class="${r.veto_reason==='WOULD_TRADE'?'gain':''}">${r.veto_reason}</td><td>${r.direction}</td>
+    `<tr><td>${r.rule}</td><td class="${r.veto_reason==='WOULD_TRADE'?'gain':''}">${r.veto_reason}</td><td>${r.direction}</td>
      <td>${r.total}</td><td>${r.measured}</td><td>${sgn(r.avg_best_pct)}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')
-    ||'<tr><td colspan="6" class="detail">no fade candidates yet (a bullish gap with a flat open handoff)</td></tr>';
+    ||'<tr><td colspan="7" class="detail">no shadow lane rows yet</td></tr>';
   $('labEh').innerHTML=(d.eh||[]).map(r=>
     `<tr><td class="${r.outcome==='WOULD_TRADE'?'gain':''}">${r.outcome}</td>
      <td>${r.total}</td><td>${r.measured}</td><td>${sgn(r.avg_eod_pct)}</td></tr>`).join('')

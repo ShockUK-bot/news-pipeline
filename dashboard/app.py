@@ -292,7 +292,7 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
         # trades AGAINST the move, so its numbers are direction-adjusted to
         # the fade's side and must not sit among the regular vetoes.
         fade = [dict(r) for r in await (await conn.execute("""
-            SELECT veto_reason, direction, count(*) AS total,
+            SELECT rule, veto_reason, direction, count(*) AS total,
                    count(*) FILTER (WHERE complete) AS measured,
                    round(avg(CASE WHEN direction = 'up' THEN max_down_pct
                                   ELSE max_up_pct END)
@@ -303,9 +303,9 @@ async def api_gatelab(days: int = 14, user: str = Depends(_require_user)):
                              / NULLIF(price_at_veto, 0))
                          FILTER (WHERE complete) * 100, 2) AS avg_eod_pct
             FROM journal.gate_counterfactuals
-            WHERE rule = 'fade'
+            WHERE rule IN ('fade', 'drift_short')
               AND veto_ts > now() - make_interval(days => %s)
-            GROUP BY 1, 2 ORDER BY 3 DESC""", (days,))).fetchall()]
+            GROUP BY 1, 2, 3 ORDER BY 1, 4 DESC""", (days,))).fetchall()]
         # EH shadow scoreboard: outcome mix during pre/post sessions.
         # v0.16.1: direction-adjusted (a down shadow trade is a short, so a
         # falling close is a gain for it); was raw price change.

@@ -276,7 +276,11 @@ def fade_candidate(thesis: dict, state: MarketState, verdict: GateVerdict,
         return None
     if thesis.get("direction") != "up":
         return None
-    if verdict.verdict != "VETO" or verdict.veto_reason not in FADE_SOURCE_VETOES:
+    # v0.24.0: source vetoes and band are config (the 4-12% / two-veto
+    # trigger produced 2 rows in a week; the bullish vetoes cluster under
+    # 2% as GATE_NO_CONFIRM and HANDOFF_UNMOVED, and those closed lower too)
+    sources = tuple(fcfg.get("source_vetoes") or FADE_SOURCE_VETOES)
+    if verdict.verdict != "VETO" or verdict.veto_reason not in sources:
         return None
     mso = state.minutes_since_open
     if mso is None or mso < cfg.get("open_blackout_min", 15):
@@ -293,6 +297,46 @@ def fade_candidate(thesis: dict, state: MarketState, verdict: GateVerdict,
             "pct_move": round(pct_move, 5), "minutes_since_open": mso,
             "gap_pct": state.gap_pct, "vol_mult": state.vol_mult,
             "band": [lo, hi]}
+
+
+DRIFT_SOURCE_VETOES = ("PRICED_IN", "GATE_EXTENDED")
+
+
+def drift_candidate(thesis: dict, state: MarketState, verdict: GateVerdict,
+                    cfg: dict) -> Optional[dict]:
+    """v0.24.0 — bad-news drift SHORT, shadow only. A BEARISH thesis the gate
+    vetoed as PRICED_IN or GATE_EXTENDED kept falling to the close in the
+    30 days to 2026-09-18 (64 rows, about +0.9% for a short, 73% / 45% of
+    them lower). Post-news drift after negative news is the best documented
+    effect in the literature; this measures ours. Returns the drift numbers
+    when the veto qualifies (in session, past the open blackout, inside the
+    window, drop between min_drop_pct and max_drop_pct from the pre-news
+    price), else None. Pure. The caller applies the short-side gate (ETB,
+    SSR) and journals WOULD_TRADE / VETO with rule='drift_short'. NO ORDER
+    PATH."""
+    dcfg = cfg.get("drift") or {}
+    if not dcfg.get("enabled", False):
+        return None
+    if thesis.get("direction") != "down":
+        return None
+    sources = tuple(dcfg.get("source_vetoes") or DRIFT_SOURCE_VETOES)
+    if verdict.verdict != "VETO" or verdict.veto_reason not in sources:
+        return None
+    mso = state.minutes_since_open
+    if mso is None or mso < cfg.get("open_blackout_min", 15):
+        return None
+    if mso > int(dcfg.get("window_max_min_after_open", 240)):
+        return None
+    drop = ((state.prenews_price - state.last_price) / state.prenews_price
+            if state.prenews_price else 0.0)
+    lo = float(dcfg.get("min_drop_pct", 0.01))
+    hi = float(dcfg.get("max_drop_pct", 0.15))
+    if not (lo <= drop < hi):
+        return None
+    return {"source_veto": verdict.veto_reason, "source_rule": verdict.rule,
+            "drop_pct": round(drop, 5), "pct_move": round(-drop, 5),
+            "minutes_since_open": mso, "gap_pct": state.gap_pct,
+            "vol_mult": state.vol_mult, "band": [lo, hi]}
 
 
 # ---------------------------------------------------------------------------

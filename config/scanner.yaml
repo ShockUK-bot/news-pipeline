@@ -35,6 +35,12 @@ scanner:
                                  # four market-data calls each to reach a
                                  # guaranteed PRICE_FLOOR reject.
   session_start_et: "09:50"      # open blackout (15m) + 5m of settling
+  early_window:                  # v0.24.0 — SHADOW: scan from start_et, journal
+    enabled: true                # survivors as CAPPED / EARLY_WINDOW, emit
+    start_et: "09:33"            # nothing. A11 replays them both ways; A9
+                                 # proposes opening the window on evidence.
+                                 # SNDK 2026-09-22 made its whole move inside
+                                 # the blackout; the 09:51 entry bought the top.
   session_end_et: "15:15"        # last emission — room to work before force-flat
   # -- candidate filters (ALL must pass) --------------------------------------
   min_price: 5.0                 # no penny-stock tape games

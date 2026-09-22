@@ -39,7 +39,7 @@ from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
 
 from .rules import (CandidateMetrics, emission_disposition, filter_candidate,
-                    in_scan_window, looks_like_derivative, luld_headroom,
+                    in_early_window, in_scan_window, looks_like_derivative, luld_headroom,
                     scan_mode, scanner_headline, score_candidate)
 from .screener import get_screener
 
@@ -495,7 +495,8 @@ class C10Service:
                     emitted_today=emitted_count + emitted,
                     emitted_last_hour=emitted_hour + emitted,
                     open_scanner=open_scanner,
-                    etb_ok=await self._etb_ok(m.ticker))
+                    etb_ok=await self._etb_ok(m.ticker),
+                    early=in_early_window(now_et.strftime("%H:%M"), self.cfg))
             if disp is not None:
                 status, reason = disp
                 await self._journal_candidate(m.ticker, status, reason,
