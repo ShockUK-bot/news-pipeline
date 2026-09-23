@@ -240,6 +240,24 @@ class PositionEngine:
         return pid in self.frozen
 
     # ------------------------------------------------------------------- apply
+    async def _exit_price(self, ticker: str, side: str, bar: dict) -> float:
+        """Marketable exit limit: 20 bps through the live bid (long) or ask
+        (short); the bar's bid/ask or last close with a 10 bps concession is
+        the fallback when no quote is reachable."""
+        quote_fn = getattr(self, "quote_fn", None)
+        if quote_fn is not None:
+            try:
+                q = await quote_fn(ticker)
+                ref = float(q.ask if side == "SHORT" else q.bid)
+                if ref > 0:
+                    return marketable_exit(side, ref, 0.002)
+            except Exception as e:                                # noqa: BLE001
+                log.warning("quote unavailable for exit pricing; using bar",
+                            extra=kv(ticker=ticker, error=repr(e)[:120]))
+        if side == "SHORT":
+            return bar.get("ask") or marketable_exit(side, bar["close"], 0.001)
+        return bar.get("bid") or marketable_exit(side, bar["close"], 0.001)
+
     async def _apply(self, pos: dict, actions: list[ExitAction],
                      bar: dict) -> list[str]:
         applied = []
@@ -248,12 +266,13 @@ class PositionEngine:
             if a.kind in ("EXIT", "SCALE_OUT"):
                 # v0.13: sell a long at/under the bid; cover a short at/OVER
                 # the ask — both are marketable toward the fill.
-                if side == "SHORT":
-                    px = bar.get("ask") or marketable_exit(side, bar["close"],
-                                                           0.001)
-                else:
-                    px = bar.get("bid") or marketable_exit(side, bar["close"],
-                                                           0.001)
+                # v0.26.1: price from the LIVE quote when one is reachable.
+                # Minute bars carry no bid/ask, so exits were priced off the
+                # last trade; on a thin name (FRMI 2026-09-23, bid 4.88 / ask
+                # 4.89, last 4.914) the sell limit sat above the bid, went
+                # unfilled for 45 s, was cancelled, the catastrophe stop
+                # re-placed, and the cycle repeated every two minutes.
+                px = await self._exit_price(pos["ticker"], side, bar)
                 outcome = await execute_exit(
                     self.broker, pos, a.qty, a.layer, a.reason, px,
                     self.now_fn, self.unprotected_max_secs, self.poll_sleep,

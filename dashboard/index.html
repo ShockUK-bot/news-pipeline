@@ -236,7 +236,7 @@ function render(s){
     const cost=p.total_cost!=null?Number(p.total_cost):p.entry_price*p.qty;
     return `<tr><td>${p.ticker}</td><td>${sideChip(p.side)}</td><td>${originChip(p.origin)}</td><td class="detail">${p.sector||'—'}</td><td>${p.qty}</td>
       <td>${px(p.entry_price)}</td><td>${px(p.current_price)}</td>
-      <td>${px(p.stop_price)}</td><td>${px(p.target_price)}</td>
+      <td>${px(p.stop_price)}${p.stop_basis&&p.stop_basis!=='initial'?` <span class="micro">${p.stop_basis}</span>`:''}</td><td>${px(p.target_price)}</td>
       <td>${money(cost)}</td>
       <td class="${u>=0?'gain':'loss'}">${money(u)}</td>
       <td class="${pct>=0?'gain':'loss'}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>

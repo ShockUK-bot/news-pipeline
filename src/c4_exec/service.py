@@ -448,6 +448,7 @@ async def main() -> None:
         unprotected_max_secs=float(cfg["c4"]["exit_unprotected_max_secs"]))
     engine.profiles = exit_cfg.get("profiles") or {}      # v0.26.0 profit_lock fallback
     marketdata = get_marketdata()
+    engine.quote_fn = marketdata.snapshot                # v0.26.1 live bid/ask for exits
     # reconciliation gate: NO intents accepted before this completes
     await reconcile(svc.broker, shorting_cfg=shorting_cfg)
     log.info("C4 up (reconciled)", extra=kv(consumer=CONSUMER))
