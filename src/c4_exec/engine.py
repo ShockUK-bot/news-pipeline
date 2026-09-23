@@ -147,6 +147,13 @@ class PositionEngine:
 
         await self._mark(pid, bar["close"])
         pos = {**pos, "last_price": bar["close"]}
+        # v0.26.0: a position opened before its profile gained profit_lock
+        # reads it from the live profile (in memory only; no journal edit)
+        policy0 = pos.get("exit_policy") or {}
+        if "profit_lock" not in policy0:
+            prof = (getattr(self, "profiles", None) or {}).get(policy0.get("profile") or "") or {}
+            if prof.get("profit_lock"):
+                pos = {**pos, "exit_policy": {**policy0, "profit_lock": prof["profit_lock"]}}
 
         # MIP monitors
         # v0.12.5: marketdata adapters (Alpaca and Fake alike) return

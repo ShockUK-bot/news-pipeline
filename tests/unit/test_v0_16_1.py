@@ -70,7 +70,7 @@ def test_open_exit_pass_sells_armed_positions_after_0935(monkeypatch):
 def test_yaml_pins():
     t = yaml.safe_load((ROOT / "config" / "thesis_entry.yaml").read_text())
     assert t["management"]["dead_exit_at_open"] is True
-    assert 3 <= t["entry"]["reentry_cooloff_days"] <= 10
+    assert 1 <= t["entry"]["reentry_cooloff_days"] <= 10    # v0.26.0: 1, price decides re-entry now
 
 
 def test_c4_service_calls_open_exit_pass_in_session():

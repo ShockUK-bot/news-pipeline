@@ -446,6 +446,7 @@ async def main() -> None:
     engine = PositionEngine(
         svc.broker, now_fn=svc.now_fn,
         unprotected_max_secs=float(cfg["c4"]["exit_unprotected_max_secs"]))
+    engine.profiles = exit_cfg.get("profiles") or {}      # v0.26.0 profit_lock fallback
     marketdata = get_marketdata()
     # reconciliation gate: NO intents accepted before this completes
     await reconcile(svc.broker, shorting_cfg=shorting_cfg)

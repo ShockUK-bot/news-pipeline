@@ -198,6 +198,38 @@ def arm_exit_at_open(action: str, status: str, armed_ts: str) -> dict:
             "armed_by": "C11"}
 
 
+async def forced_exit_levels(days: int) -> dict[str, float]:
+    """v0.26.0: ticker -> price of its most recent forced exit (any lane)
+    inside `days`. A re-entry must first RECLAIM that level: the reason for
+    the trade may still stand, but the price has to agree before the lane
+    buys it back (INVX was bought back the morning after its stop and fell
+    another 6 percent)."""
+    if days <= 0:
+        return {}
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """SELECT DISTINCT ON (p.ticker) p.ticker, e.price
+               FROM journal.exits e JOIN journal.positions p USING (position_id)
+               WHERE e.ts > now() - make_interval(days => %s)
+                 AND e.exit_layer IN ('STOP','CATASTROPHE','INVALIDATION',
+                                      'REVIEW','GUARD','BREAKER','BREAKEVEN')
+               ORDER BY p.ticker, e.ts DESC""", (int(days),))
+        return {r[0]: float(r[1]) for r in await cur.fetchall()}
+
+
+def reentry_verdict(ticker: str, last_close: float | None, levels: dict[str, float],
+                    buffer_pct: float = 0.0) -> tuple[bool, dict]:
+    """Pure. (ok, numbers). ok is False while the last close has not reclaimed
+    the forced-exit level (plus buffer)."""
+    lvl = levels.get(ticker)
+    if lvl is None or last_close is None:
+        return True, {}
+    need = lvl * (1.0 + buffer_pct)
+    return (last_close > need), {"reentry_exit_px": round(lvl, 4), "reentry_need": round(need, 4),
+                                 "last_close": round(float(last_close), 4)}
+
+
 async def recent_forced_exits(days: int) -> set[str]:
     """v0.16.1: tickers whose position was stopped, invalidated, reviewed or
     guarded out (any lane) inside the last `days` calendar days. A thesis
@@ -471,6 +503,8 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
     held = {p["ticker"] for p in positions}
     pending = await pending_thesis_intents()
     cooloff = await recent_forced_exits(int(ecfg.get("reentry_cooloff_days", 5)))
+    rcfg = ecfg.get("reentry") or {}
+    levels = await forced_exit_levels(int(rcfg.get("lookback_days", 30))) if rcfg.get("enabled", True) else {}
     open_thesis_count = len(thesis_pos)
     per_thesis: dict[str, int] = {}
     for p in thesis_pos:
@@ -518,6 +552,14 @@ async def run_thesis_entries(cfg: dict, profiles: dict,
                 numbers = {**liq_n, **ext_n}
                 if not daily or not atr:
                     skip_reason = "DATA_UNAVAILABLE"
+                elif ticker in levels and not reentry_verdict(
+                        ticker, float(daily[-1]["close"]), levels,
+                        float(rcfg.get("reclaim_buffer_pct", 0.0)))[0]:
+                    # v0.26.0: price has not reclaimed the level it was
+                    # stopped at; the thesis may live, the re-entry waits
+                    skip_reason = "REENTRY_WAIT"
+                    numbers.update(reentry_verdict(ticker, float(daily[-1]["close"]), levels,
+                                                   float(rcfg.get("reclaim_buffer_pct", 0.0)))[1])
                 elif liq_skip:
                     skip_reason = "ILLIQUID"
                 elif ext_skip:

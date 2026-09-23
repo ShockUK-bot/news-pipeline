@@ -25,6 +25,7 @@ profiles:
     catastrophe:    {method: atr, k: 4.5}
     breakeven_at_R: 1.0
     trail:          {activate_at_R: 2.0, method: atr_weekly, k: 4.0}
+    profit_lock:    {activate_pct: 0.08, trail_pct: 0.05}   # v0.26.0: once up 8%, stop trails 5% behind the high (tighter of this and the R trail)
     time_stop:      null
     realization:    {target_fraction: 0.7, action: review_flag}
     earnings_blackout_exit: false
@@ -34,6 +35,7 @@ profiles:
     catastrophe:    {method: atr, k: 4.5}
     breakeven_at_R: 1.0
     trail:          {activate_at_R: 2.0, method: atr_weekly, k: 4.0}
+    profit_lock:    {activate_pct: 0.08, trail_pct: 0.05}   # v0.26.0: once up 8%, stop trails 5% behind the high (tighter of this and the R trail)
     time_stop:      null               # the thesis store IS the time stop:
                                        # C11 arms an exit when the thesis
                                        # dies (invalidated/realized/stale)

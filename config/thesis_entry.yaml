@@ -14,7 +14,15 @@
 # design; the basket exists to catch the next one.
 
 entry:
-  reentry_cooloff_days: 5      # v0.16.1: no thesis entry in a ticker that
+  reentry:                     # v0.26.0: price-confirmed re-entry. A name the
+    enabled: true              # lane was stopped out of (any lane, last
+    lookback_days: 30          # lookback_days) is only bought back once its
+    reclaim_buffer_pct: 0.0    # last close is back ABOVE the exit price
+                               # (plus buffer). Declined attempts journal
+                               # THESIS_SKIP / REENTRY_WAIT with the numbers.
+  reentry_cooloff_days: 1      # v0.26.0: was 5. The calendar no longer decides
+                               # re-entry, price does; 1 keeps the next-morning
+                               # rebuy out. v0.16.1: no thesis entry in a ticker that
                                # was stopped / invalidated / reviewed out
                                # (any lane) inside this many calendar days.
                                # INVX was re-bought the morning after its

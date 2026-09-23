@@ -179,13 +179,29 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
             and state["stop_basis"] == "initial":
         proposed = (round(avg_entry, 2), "breakeven")
 
+    # v0.26.0: percent profit lock (operator 2026-09-22). The R ladder never
+    # protected a thesis position: one R is 3 daily ATRs, 17 to 35 percent of
+    # price on RIOT / FRMI / INVX, so "up 10 percent" was a third of an R and
+    # breakeven (1R) never came. Once the high-water mark is activate_pct in
+    # our favour, the stop trails trail_pct behind it; the tighter of this and
+    # the R ladder wins. Tighten-only like every ratchet. Attribution TRAIL.
+    lock = policy.get("profit_lock") or {}
+    lock_note = ""
+    if lock and float(lock.get("activate_pct", 0) or 0) > 0:
+        gain = dir_mult(side) * (new_hwm / avg_entry - 1.0)
+        if gain >= float(lock["activate_pct"]):
+            lock_stop = round(new_hwm * (1.0 - dir_mult(side) * float(lock.get("trail_pct", 0.05))), 2)
+            if proposed is None or is_tighter(side, lock_stop, proposed[0]):
+                proposed = (lock_stop, "trail")
+                lock_note = f" (profit lock: hwm {new_hwm} up {gain*100:.1f}%, trail {float(lock.get('trail_pct', 0.05))*100:g}%)"
+
     # v0.13: tighten-only is side-aware — "tighter" is HIGHER for a long,
     # LOWER for a short (common.direction.is_tighter).
     if proposed and is_tighter(side, proposed[0], state["current_stop"]):
         actions.append(ExitAction("SET_STOP", "", 0,
                                   new_stop=proposed[0], new_basis=proposed[1],
                                   reason=f"{proposed[1]} ratchet to "
-                                         f"{proposed[0]} at {progress_r:.2f}R",
+                                         f"{proposed[0]} at {progress_r:.2f}R{lock_note}",
                                   new_hwm=new_hwm))
     elif dir_mult(side) * (new_hwm - state["hwm"]) > 0:
         actions.append(ExitAction("EVENT", "", 0, event_type=None,
