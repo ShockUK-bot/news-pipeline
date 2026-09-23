@@ -88,6 +88,8 @@ services:
 timers:
   - c5-mailer
   - pipeline-backup
+  - backup-offsite
+  - journal-extract
   - pipeline-nav-snapshot
   - a11-metrics
   - a9-review
@@ -119,6 +121,12 @@ heartbeats:
     unit: c5-mailer
   backup:
     max_age_min: 1560
+  backup_offsite:
+    max_age_min: 1560        # backup-offsite.timer 02:50 daily (DEGRADED until Google Drive is authorised)
+    unit: backup-offsite
+  journal_extract:
+    max_age_min: 1560        # journal-extract.timer 03:05 daily
+    unit: journal-extract
   earnings:
     max_age_min: 1560
   sectors:

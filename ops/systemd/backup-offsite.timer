@@ -1,0 +1,9 @@
+[Unit]
+Description=Offsite backup timer (02:50 daily, after the 02:30 dump)
+
+[Timer]
+OnCalendar=*-*-* 02:50:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

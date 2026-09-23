@@ -1,0 +1,9 @@
+[Unit]
+Description=Journal extract timer (03:05 daily)
+
+[Timer]
+OnCalendar=*-*-* 03:05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

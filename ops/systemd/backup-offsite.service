@@ -1,0 +1,14 @@
+[Unit]
+Description=Offsite copy of the newest journal dump to Google Drive (oneshot, fired by backup-offsite.timer)
+After=network-online.target pipeline-backup.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/pipeline
+EnvironmentFile=/etc/pipeline/pipeline.env
+ExecStart=/opt/pipeline/ops/backup_offsite.sh
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
