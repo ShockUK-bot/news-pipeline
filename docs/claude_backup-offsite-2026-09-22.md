@@ -30,10 +30,10 @@ If the token ever stops working (Google revokes it, password change), the evenin
 
 While you are home, a full copy of the last dump onto your own computer is one command from that computer (replace the path with where you want it):
 
-- Windows (PowerShell): `scp trader@192.168.1.XX:/home/trader/pipeline-backups/trading-*.dump C:\Backups\`
-- Mac or Linux: `scp trader@192.168.1.XX:/home/trader/pipeline-backups/trading-*.dump ~/Backups/`
+- Windows (PowerShell): `scp trader@192.168.1.101:/home/trader/pipeline-backups/trading-*.dump C:\Backups\`
+- Mac or Linux: `scp trader@192.168.1.101:/home/trader/pipeline-backups/trading-*.dump ~/Backups/`
 
-Ask Claude Code for the Spark's LAN address (`hostname -I`) and it will fill in the XX. This is a manual step and it only protects against a Spark failure while the home computer survives; layers 1 and 2 cover the rest.
+This is a manual step and it only protects against a Spark failure while the home computer survives; layers 1 and 2 cover the rest.
 
 ## Restoring
 
