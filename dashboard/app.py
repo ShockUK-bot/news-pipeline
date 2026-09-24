@@ -209,16 +209,21 @@ async def api_history(granularity: str = "day", user: str = Depends(_require_use
                    min(realized_pnl)                          AS worst
             FROM journal.positions WHERE status='CLOSED'
             GROUP BY 1 ORDER BY 1 DESC LIMIT 60""")).fetchall()]
+        # v0.26.3: one row per EXIT (target half, trail, stop, time, force
+        # flat, guard, review), newest first, with the exit's own dollars and
+        # percent. Before this the table only showed a position once fully
+        # closed, so scale-outs and trailing exits were invisible.
         closed = [dict(r) for r in await (await conn.execute("""
-            SELECT EXTRACT(EPOCH FROM p.closed_ts) AS closed_ts, p.ticker,
+            SELECT EXTRACT(EPOCH FROM e.ts) AS closed_ts, p.ticker, p.side,
                    (SELECT s.sector FROM journal.sectors s WHERE s.ticker = p.ticker) AS sector,
-                   p.origin, p.qty_initial AS qty, p.avg_entry,
-                   round(p.avg_entry + p.realized_pnl / NULLIF(p.qty_initial,0), 4) AS avg_exit,
-                   (SELECT e.exit_layer FROM journal.exits e
-                     WHERE e.position_id = p.position_id ORDER BY e.ts DESC LIMIT 1) AS exit_layer,
-                   p.realized_pnl
-            FROM journal.positions p WHERE p.status='CLOSED'
-            ORDER BY p.closed_ts DESC LIMIT 100""")).fetchall()]
+                   p.origin, e.qty, p.qty_initial, p.avg_entry,
+                   round(e.price, 4) AS avg_exit, e.exit_layer, e.is_partial,
+                   e.realized_pnl,
+                   round((e.price - p.avg_entry) / NULLIF(p.avg_entry, 0)
+                         * CASE WHEN p.side = 'SHORT' THEN -100 ELSE 100 END, 2) AS pct,
+                   p.status AS position_status, p.position_id
+            FROM journal.exits e JOIN journal.positions p USING (position_id)
+            ORDER BY e.ts DESC LIMIT 150""")).fetchall()]
     return _json({"granularity": granularity, "periods": periods, "closed": closed})
 
 

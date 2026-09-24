@@ -163,9 +163,9 @@ h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute
     <table><thead><tr><th>Period</th><th>Trades</th><th>Wins</th><th>Win %</th>
       <th>Realized</th><th>Best</th><th>Worst</th></tr></thead><tbody id="periods"></tbody></table>
   </div>
-  <div class="panel"><h2>Closed trades</h2>
-    <table><thead><tr><th>Closed</th><th>Ticker</th><th>Origin</th><th>Sector</th><th>Qty</th><th>Entry</th>
-      <th>Exit</th><th>Layer</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div>
+  <div class="panel"><h2>Exits <span class="micro">one row per exit: a target half, a trail, a stop, a time stop or a force flat each show as they happen; "runner open" means the rest of the position is still held</span></h2>
+    <table><thead><tr><th>When</th><th>Ticker</th><th>Side</th><th>Origin</th><th>Sector</th><th>Exit</th><th>Qty</th><th>Entry</th>
+      <th>Exit px</th><th>P&amp;L</th><th>P&amp;L %</th></tr></thead><tbody id="closed"></tbody></table></div>
 </div>
 
 <script>
@@ -362,11 +362,15 @@ async function loadHistory(){
      <td class="${p.realized>=0?'gain':'loss'}">${money(p.realized)}</td>
      <td class="gain">${money(p.best)}</td><td class="loss">${money(p.worst)}</td></tr>`).join('')
     ||'<tr><td colspan="7" class="detail">no closed trades yet</td></tr>';
-  $('closed').innerHTML=(h.closed||[]).map(c=>
-    `<tr><td>${new Date(c.closed_ts*1000).toLocaleString()}</td><td>${c.ticker}</td>
-     <td>${originChip(c.origin)}</td><td class="detail">${c.sector||'—'}</td>
-     <td>${c.qty}</td><td>${px(c.avg_entry)}</td><td>${px(c.avg_exit)}</td><td>${c.exit_layer||''}</td>
-     <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td></tr>`).join('');
+  $('closed').innerHTML=(h.closed||[]).map(c=>{
+    const layer=`${c.exit_layer||''}${c.is_partial?' <span class="micro">half</span>':''}${c.is_partial&&c.position_status==='OPEN'?' <span class="micro gain">runner open</span>':''}`;
+    return `<tr><td>${new Date(c.closed_ts*1000).toLocaleString()}</td><td>${c.ticker}</td><td>${sideChip(c.side)}</td>
+     <td>${originChip(c.origin)}</td><td class="detail">${c.sector||'—'}</td><td>${layer}</td>
+     <td>${c.qty}${c.qty_initial&&c.qty!==c.qty_initial?` <span class="micro">of ${c.qty_initial}</span>`:''}</td>
+     <td>${px(c.avg_entry)}</td><td>${px(c.avg_exit)}</td>
+     <td class="${c.realized_pnl>=0?'gain':'loss'}">${money(c.realized_pnl)}</td>
+     <td class="${c.pct>=0?'gain':'loss'}">${c.pct!=null?(c.pct>=0?'+':'')+Number(c.pct).toFixed(2)+'%':'—'}</td></tr>`;}).join('')
+    ||'<tr><td colspan="11" class="detail">no exits yet</td></tr>';
 }
 
 // ---- PERFORMANCE tab (v0.12.2) --------------------------------------------
