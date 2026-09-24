@@ -98,9 +98,11 @@ def test_promotion_changes_the_right_things():
     assert p["overnight_hold"] == "eod_rule_v1"
     assert "force_flat_time_et" not in p
     assert p["time_stop"] == {"window": "2_sessions", "min_progress_R": 0.5}
-    assert p["trail"] == SHORT_PROFILE["trail"]
-    assert p["breakeven_at_R"] == 1.0
-    assert p["atr_value"] == 4.0 and p["atr_method"] == "atr"   # daily basis now
+    # v0.26.2: the entry trail, breakeven and ATR basis are KEPT (HOOD
+    # 2026-09-18 gave back half its runner profit on the daily-ATR trail)
+    assert p["trail"] == {"activate_at_R": 1.0, "method": "atr_5m", "k": 1.5}
+    assert p["breakeven_at_R"] == 0.75
+    assert p["atr_value"] == 0.5 and p["atr_method"] == "atr_5m"
 
 
 def test_promotion_never_touches_risk_state():

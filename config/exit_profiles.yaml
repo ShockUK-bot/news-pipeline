@@ -6,6 +6,9 @@ profiles:
     catastrophe:    {method: atr, k: 3.5}
     breakeven_at_R: 1.0
     trail:          {activate_at_R: 1.5, method: atr, k: 2.5}
+    profit_lock:    {activate_pct: 0.05, trail_pct: 0.04}   # v0.26.2: once up 5%, stop trails 4% behind the high
+    promotion_keeps_trail: true    # v0.26.2: a promoted scalp keeps its 1.5 x 5-min ATR trail
+                                   # (HOOD 09-18: the daily-ATR trail sat 17 dollars back and never moved)
     time_stop:      {window: thesis, min_progress_R: 0.5}
     realization:    {target_fraction: 0.7, action: scale_out_50}
     earnings_blackout_exit: true

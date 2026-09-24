@@ -62,7 +62,7 @@ def test_config_pins_and_wiring():
     prof = yaml.safe_load((ROOT / "config" / "exit_profiles.yaml").read_text())["profiles"]
     for p in ("thesis_v1", "long_term_v1"):
         assert prof[p]["profit_lock"] == {"activate_pct": 0.08, "trail_pct": 0.05}
-    assert "profit_lock" not in prof["scalp_v1"] and "profit_lock" not in prof["short_term_v1"]
+    assert "profit_lock" not in prof["scalp_v1"]          # short_term_v1 gained one in v0.26.2
     t = yaml.safe_load((ROOT / "config" / "thesis_entry.yaml").read_text())["entry"]
     assert t["reentry"]["enabled"] is True and t["reentry"]["lookback_days"] == 30 and t["reentry_cooloff_days"] == 1
     svc = (ROOT / "src" / "c4_exec" / "service.py").read_text()

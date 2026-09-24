@@ -46,6 +46,29 @@ def sessions_between(opened_ts: datetime, now: datetime) -> int:
     return _session_cache[key]
 
 
+def effective_policy(policy: dict, profiles: dict, r_unit: float) -> dict:
+    """Pure. The exit policy as the engine should evaluate it today:
+    - profit_lock from the live profile when the journaled policy predates it;
+    - for a position promoted before v0.26.2 (daily-ATR trail journaled), the
+      entry profile's trail and breakeven with the entry ATR recovered from
+      r_unit / initial k, so the runner trails as it did before promotion."""
+    out = dict(policy)
+    prof = profiles.get(policy.get("profile") or "") or {}
+    if "profit_lock" not in out and prof.get("profit_lock"):
+        out["profit_lock"] = prof["profit_lock"]
+    src = policy.get("promoted_from")
+    if src and (profiles.get("short_term_v1") or {}).get("promotion_keeps_trail", True) \
+            and str(policy.get("atr_method")) == "atr" and profiles.get(src):
+        entry = profiles[src]
+        k0 = float((policy.get("initial_stop") or {}).get("k") or (entry.get("initial_stop") or {}).get("k") or 2.0)
+        if r_unit > 0 and k0 > 0:
+            out["trail"] = dict(entry["trail"])
+            out["breakeven_at_R"] = entry.get("breakeven_at_R", out.get("breakeven_at_R"))
+            out["atr_value"] = round(r_unit / k0, 4)
+            out["atr_method"] = "atr_5m_recovered"
+    return out
+
+
 def promoted_policy(policy: dict, target: dict, decision_id: int,
                     now_iso: str) -> dict:
     """v0.12.2 — pure transform: graduate a scalp_v1 exit policy to
@@ -73,11 +96,21 @@ def promoted_policy(policy: dict, target: dict, decision_id: int,
     new["time_stop"] = {"window": "2_sessions",
                         "min_progress_R": float(
                             ts_target.get("min_progress_R", 0.5))}
-    new["trail"] = dict(target["trail"])
-    new["breakeven_at_R"] = target["breakeven_at_R"]
-    if new.get("atr_14"):
-        new["atr_value"] = new["atr_14"]   # future ratchet math on daily ATR
-        new["atr_method"] = "atr"
+    # v0.26.2: the trail geometry that EARNED the profit stays. Promotion
+    # used to swap the 1.5 x 5-minute ATR trail for the swing profile's
+    # 2.5 x DAILY ATR (HOOD 2026-09-18: 2.40 -> 17.30 dollars behind the
+    # high, below the stop already reached, so the stop never moved again
+    # and 1,318 of runner profit became 561). Only the overnight rule and
+    # the time stop graduate; trail, breakeven and the ATR basis are kept.
+    if target.get("promotion_keeps_trail", True):
+        new["trail"] = dict(policy.get("trail") or target["trail"])
+        new["breakeven_at_R"] = policy.get("breakeven_at_R", target["breakeven_at_R"])
+    else:
+        new["trail"] = dict(target["trail"])
+        new["breakeven_at_R"] = target["breakeven_at_R"]
+        if new.get("atr_14"):
+            new["atr_value"] = new["atr_14"]   # ratchet math on the daily ATR
+            new["atr_method"] = "atr"
     return new
 
 
@@ -147,13 +180,13 @@ class PositionEngine:
 
         await self._mark(pid, bar["close"])
         pos = {**pos, "last_price": bar["close"]}
-        # v0.26.0: a position opened before its profile gained profit_lock
-        # reads it from the live profile (in memory only; no journal edit)
-        policy0 = pos.get("exit_policy") or {}
-        if "profit_lock" not in policy0:
-            prof = (getattr(self, "profiles", None) or {}).get(policy0.get("profile") or "") or {}
-            if prof.get("profit_lock"):
-                pos = {**pos, "exit_policy": {**policy0, "profit_lock": prof["profit_lock"]}}
+        # v0.26.0 / v0.26.2: live-profile adjustments applied in memory (no
+        # journal edit): profit_lock for positions opened before the profile
+        # carried it, and the entry trail restored on positions promoted
+        # before v0.26.2 swapped it for the daily-ATR trail.
+        pos = {**pos, "exit_policy": effective_policy(
+            pos.get("exit_policy") or {}, getattr(self, "profiles", None) or {},
+            float(pos.get("r_unit") or 0))}
 
         # MIP monitors
         # v0.12.5: marketdata adapters (Alpaca and Fake alike) return
