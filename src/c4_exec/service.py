@@ -351,14 +351,22 @@ async def engine_loop(svc: C4Service, engine, marketdata, stop: asyncio.Event,
                     # the next bar to resume (step() clears the freeze and
                     # journals HALT_RESUMED). During a real halt the feed
                     # returns no bars, so the position stays safely frozen.
-                    await engine.check_halt(pos)
-                    end = now
-                    start = end - timedelta(minutes=3)
-                    bars = await marketdata.minute_bars(pos["ticker"], start, end)
-                    if not bars:
-                        continue                  # halt heuristic accumulates
-                    b = bars[-1]
-                    await engine.step(pos, b)
+                    # v0.26.4: one position's failure is logged and the pass
+                    # continues; before this an exception on one name skipped
+                    # every other position's stop check for the whole pass.
+                    try:
+                        await engine.check_halt(pos)
+                        end = now
+                        start = end - timedelta(minutes=3)
+                        bars = await marketdata.minute_bars(pos["ticker"], start, end)
+                        if not bars:
+                            continue                  # halt heuristic accumulates
+                        b = bars[-1]
+                        await engine.step(pos, b)
+                    except Exception as e:                        # noqa: BLE001
+                        log.error("engine step failed for position; continuing",
+                                  extra=kv(position_id=pos.get("position_id"),
+                                           ticker=pos.get("ticker"), error=repr(e)[:300]))
 
                 et = now.astimezone(ET)
                 today = et.date().isoformat()

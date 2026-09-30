@@ -26,9 +26,32 @@ from common.log import get_logger, kv
 from c1_ingestion.heartbeat import set_health
 
 from .flags import set_flag
-from .state import position_event
+from .state import record_exit, transition_order, position_event
 
 log = get_logger("c4.reconcile")
+
+
+async def _catastrophe_fill(broker, position_id: int):
+    """v0.26.4: (order_row_id, broker order, r_unit, stop_price) when the
+    position's catastrophe stop has FILLED at the broker, else None."""
+    try:
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT o.order_id, o.broker_order_id, o.stop_price, p.r_unit
+                   FROM journal.orders o JOIN journal.positions p
+                     ON p.catastrophe_stop_order_id = o.order_id
+                   WHERE p.position_id=%s""", (position_id,))
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        co = await broker.get_order(row[1])
+        if co is None or co.status != "filled" or not co.filled_qty:
+            return None
+        return row[0], co, row[3], (float(row[2]) if row[2] is not None else None)
+    except Exception as e:                                    # noqa: BLE001
+        log.warning("catastrophe fill check failed", extra=kv(position_id=position_id, error=repr(e)[:150]))
+        return None
 
 
 async def reconcile(broker: Broker, shorting_cfg: dict | None = None,
@@ -60,6 +83,29 @@ async def reconcile(broker: Broker, shorting_cfg: dict | None = None,
                 # treat like missing (drift alarm), never silently merge. A
                 # vanished short may be a broker BUY-IN: journaled as such.
                 if bp is None or bp.qty <= 0 or bp.side != side:
+                    # v0.26.4: a position missing at the broker whose
+                    # catastrophe stop FILLED is a CATASTROPHE exit with a
+                    # real price and P&L, not an external mystery (LITE
+                    # 2026-09-29: filled 29 @ 971.24, journaled as closed
+                    # externally with realized 0).
+                    fill = await _catastrophe_fill(broker, position_id)
+                    if fill is not None and (bp is None or bp.qty <= 0):
+                        order_row, co, r_unit, stop_px = fill
+                        await transition_order(order_row, co)
+                        await record_exit(position_id, order_row, utcnow(),
+                                          "CATASTROPHE", int(co.filled_qty),
+                                          float(co.filled_avg_price), float(avg_entry),
+                                          float(r_unit or 0), is_partial=False, side=side,
+                                          conn=conn, trigger_price=stop_px)
+                        await conn.execute(
+                            """INSERT INTO journal.audit (actor, action, old_value, new_value, detail)
+                               VALUES ('C4','RECONCILE_CATASTROPHE_FILL',%s,%s,%s)""",
+                            (str(qty_open), "0", f"{ticker} @ {co.filled_avg_price}"))
+                        summary.setdefault("catastrophe_filled", []).append(ticker)
+                        log.warning("reconcile: catastrophe fill journaled",
+                                    extra=kv(ticker=ticker, position_id=position_id,
+                                             price=co.filled_avg_price))
+                        continue
                     detail = "CLOSED_EXTERNAL: missing at broker"
                     if bp is not None and bp.qty > 0 and bp.side != side:
                         detail = (f"CLOSED_EXTERNAL: broker side {bp.side} != "

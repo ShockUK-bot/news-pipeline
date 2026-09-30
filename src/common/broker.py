@@ -199,8 +199,15 @@ class AlpacaBroker:
             await self._req("DELETE", f"/v2/orders/{broker_order_id}")
             return True
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return False       # already terminal
+            # 404: unknown / already terminal. 422 (v0.26.4): Alpaca's answer
+            # to cancelling an order that is already filled, cancelled or
+            # expired. Both mean "not cancellable": the caller then reads the
+            # order and, if it filled, journals the fill. Raising here (LITE
+            # 2026-09-29: the catastrophe stop had filled 24 s before the
+            # engine tried to cancel it) aborted the whole engine pass every
+            # minute for 13 minutes and left the exit unrecorded.
+            if e.response.status_code in (404, 422):
+                return False
             raise
 
 
