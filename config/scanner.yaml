@@ -36,7 +36,21 @@ scanner:
                                  # guaranteed PRICE_FLOOR reject.
   session_start_et: "10:00"   # v0.27.0: was 09:50. Five October stop-outs (-2,097) were entries at 09:50-09:52 ET;
                               # 8-15% movers are a coin flip at 09:45 and +1.5%/66% after a pull-back by 10:00.
-  stop_out_cooloff_sessions: 3  # v0.27.0: no scanner re-entry in a name for 3 sessions after a losing scanner
+  stop_out_cooloff_sessions: 3
+  catalyst_shadow:              # v0.28.0 (2026-11-02): journal-only lanes, see docs/claude_october-loss-review-2026-11-02.md 5.1
+    enabled: true
+    mode: shadow                # the only mode this release implements; 'live' is a later release once A9 clears the bar
+    start_et: "09:45"
+    end_et: "10:05"
+    min_move_pct: 0.08          # EARNINGS_CONTINUATION: reported today / last evening and 8%+ from prev close, either way
+    gap_fade_min_move_pct: 0.15 # GAP_FADE: no earnings, +15% or more; the shadow trade is the SHORT
+    min_price: 5.0
+    min_adv20_dollars: 20000000
+    max_spread_bps: 60
+    stop_pct: 0.04              # replay: fixed stop 4% (25th pct adverse excursion in October), hold to close
+    gap_fade_stop_pct: 0.03
+    trail_k: 3.0                # replay: 3.0 x ATR(5m) trail from trail_at_r
+    trail_at_r: 2.0  # v0.27.0: no scanner re-entry in a name for 3 sessions after a losing scanner
                               # trade in it (CRWV: three stop-outs on 10-15, 10-16, 10-20 for -1,327).      # open blackout (15m) + 5m of settling
   early_window:                  # v0.24.0 — SHADOW: scan from start_et, journal
     enabled: true                # survivors as CAPPED / EARLY_WINDOW, emit

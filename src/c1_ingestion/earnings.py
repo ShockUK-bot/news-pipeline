@@ -253,3 +253,31 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+async def reported_recently(ticker: str, now: datetime | None = None
+                            ) -> Optional[date]:
+    """v0.28.0: the report date when `ticker` reported TODAY (ET) or after
+    the previous session's close (yesterday, or Friday on a Monday, with
+    session AMC or UNKNOWN), else None. This is the earnings-reaction day
+    test for the catalyst shadow lane; holidays are ignored (a report on the
+    session before a holiday is missed, never invented)."""
+    try:
+        today_et = (now or utcnow()).astimezone(ET).date()
+        prev = today_et - timedelta(days=3 if today_et.weekday() == 0 else 1)
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT report_date, session FROM news.earnings_calendar
+                   WHERE ticker = %s AND report_date IN (%s, %s)
+                   ORDER BY report_date DESC""",
+                (ticker.strip().upper(), today_et, prev))
+            for report_date, session in await cur.fetchall():
+                if report_date == today_et:
+                    return report_date
+                if session in ("AMC", "UNKNOWN"):
+                    return report_date
+        return None
+    except Exception as e:                        # table missing / db error
+        log.warning("reported_recently degraded to None: %s", repr(e)[:150])
+        return None

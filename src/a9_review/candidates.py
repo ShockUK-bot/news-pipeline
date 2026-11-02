@@ -224,9 +224,47 @@ def rule_scanner_early_window(ev: dict) -> tuple[Optional[dict], Optional[str]]:
               metric_json("sum_r", ">", 0, None)), None
 
 
+def rule_earnings_lane(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.28.0: catalyst shadow lane A, earnings reaction continuation.
+    Bar: 20 replayed rows, with-move sum >= +5R and 55 percent winners."""
+    f = ((ev.get("funnel") or {}).get("by_outcome") or {}).get("SHADOW_EARNINGS_CONTINUATION") or {}
+    n = int(f.get("n") or 0)
+    r = f.get("with_move_r")
+    w = int(f.get("with_move_winners") or 0)
+    if n < 20:
+        return None, f"earnings continuation shadow: {n} of 20 rows replayed" + (f", with-move {r:+.1f}R" if r is not None else "")
+    if r is None or r < 5.0 or w / n < 0.55:
+        return None, f"earnings continuation shadow: n={n}, with-move {r:+.1f}R, {w} winners: under the bar"
+    return _p("Catalyst lane A: earnings reaction continuation, go live at half size",
+              "config/scanner.yaml catalyst_shadow.mode: shadow",
+              "catalyst_shadow.mode: shadow -> live (needs the live order path release)",
+              {"n_instances": n, "with_move_sum_r": r, "winners": w, "source": "journal.scanner_funnel_cf outcome=SHADOW_EARNINGS_CONTINUATION"},
+              f"The {n} shadow rows would have made {r:+.1f}R with the move ({w} winners).",
+              metric_json("sum_r", ">", 0, None)), None
+
+
+def rule_gap_fade_lane(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.28.0: catalyst shadow lane B, non-earnings 15 percent gap fade (short)."""
+    f = ((ev.get("funnel") or {}).get("by_outcome") or {}).get("SHADOW_GAP_FADE") or {}
+    n = int(f.get("n") or 0)
+    r = f.get("short_r")
+    w = int(f.get("short_winners") or 0)
+    if n < 20:
+        return None, f"gap fade shadow: {n} of 20 rows replayed" + (f", short {r:+.1f}R" if r is not None else "")
+    if r is None or r < 5.0 or w / n < 0.55:
+        return None, f"gap fade shadow: n={n}, short {r:+.1f}R, {w} winners: under the bar"
+    return _p("Catalyst lane B: non-earnings gap fade, go live at half size",
+              "config/scanner.yaml catalyst_shadow.mode: shadow",
+              "catalyst_shadow.mode: shadow -> live for GAP_FADE (needs the live order path release)",
+              {"n_instances": n, "short_sum_r": r, "winners": w, "source": "journal.scanner_funnel_cf outcome=SHADOW_GAP_FADE"},
+              f"The {n} shadow rows would have made {r:+.1f}R short ({w} winners).",
+              metric_json("sum_r", ">", 0, None)), None
+
+
 RULES = [rule_lane_negative, rule_gate_money_left, rule_stop_layer_inefficiency,
          rule_guard_hold_bias, rule_scanner_no_scale_out, rule_scanner_concurrency,
-         rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window]
+         rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window,
+         rule_earnings_lane, rule_gap_fade_lane]
 # rule_burst_go_live retired with C12 (v0.25.0, 2026-09-22): three sessions on the
 # realistic column were negative after cost in every cell. Kept for the record.
 

@@ -110,6 +110,57 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
             "mfe_r": round(mfe, 3), "close_r": close_r}
 
 
+def replay_hold(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
+                qty: int, stop_pct: float, atr: float, trail_k: float = 3.0,
+                trail_at_r: float = 2.0, be_r: float = 1.0) -> dict:
+    """v0.28.0 catalyst-lane ladder: fixed percent stop, NO time stop, NO
+    scale-out, breakeven at be_r, a trail_k x ATR(5m) trail from trail_at_r
+    (tighten only), force-flat 14:50 CT. Same return shape as replay()."""
+    m = 1 if side == "LONG" else -1
+    r_unit = stop_pct * entry_px
+    stop = round(entry_px - m * r_unit, 2)
+    hwm, basis, pnl, exits, mfe, close_r = entry_px, "initial", 0.0, [], 0.0, None
+    qty_open = qty
+    first = entry_ts.replace(second=0, microsecond=0)
+    for b in bars:
+        if b["ts"] < first:
+            continue
+        hhmm = b["ts"].strftime("%H:%M")
+        lose = b["low"] if side == "LONG" else b["high"]
+        win = b["high"] if side == "LONG" else b["low"]
+        mfe = max(mfe, m * (win - entry_px) / r_unit)
+        if (lose <= stop) if side == "LONG" else (lose >= stop):
+            layer = {"initial": "STOP", "breakeven": "BREAKEVEN", "trail": "TRAIL"}[basis]
+            pnl += m * (stop - entry_px) * qty_open
+            exits.append((hhmm, layer, qty_open, stop))
+            qty_open = 0
+            break
+        if hhmm >= FORCE_FLAT_CT:
+            pnl += m * (b["close"] - entry_px) * qty_open
+            exits.append((hhmm, "FORCE_FLAT", qty_open, b["close"]))
+            qty_open = 0
+            break
+        prog = m * (b["close"] - entry_px) / r_unit
+        hwm = max(hwm, win) if side == "LONG" else min(hwm, win)
+        proposed = None
+        if prog >= trail_at_r and atr:
+            proposed = (round(hwm - m * trail_k * atr, 2), "trail")
+        elif prog >= be_r and basis == "initial":
+            proposed = (round(entry_px, 2), "breakeven")
+        if proposed and ((proposed[0] > stop) if side == "LONG" else (proposed[0] < stop)):
+            stop, basis = proposed
+    if qty_open and bars:
+        last = bars[-1]["close"]
+        pnl += m * (last - entry_px) * qty_open
+        exits.append((bars[-1]["ts"].strftime("%H:%M"), "EOD_MARK", qty_open, last))
+    flat = next((b for b in bars if b["ts"].strftime("%H:%M") >= FORCE_FLAT_CT and b["ts"] >= first), None)
+    if flat is not None and r_unit:
+        close_r = round(m * (flat["close"] - entry_px) / r_unit, 3)
+    return {"pnl": round(pnl, 2), "r": round(pnl / (qty * r_unit), 2) if qty and r_unit else 0.0,
+            "r_unit": round(r_unit, 4), "stop0": None, "exits": exits,
+            "mfe_r": round(mfe, 3), "close_r": close_r}
+
+
 VARIANTS = {                       # v0.16.0: journaled nightly per scanner trade
     "base": {},
     "noscale": {"scale_out": False},

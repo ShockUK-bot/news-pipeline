@@ -38,7 +38,8 @@ from common.queue import enqueue
 from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
 
-from .rules import (cooloff_calendar_days, CandidateMetrics, emission_disposition, filter_candidate,
+from .rules import (cooloff_calendar_days, CandidateMetrics, catalyst_shadow_lane,
+                    emission_disposition, filter_candidate, in_catalyst_window,
                     in_early_window, in_scan_window, looks_like_derivative, luld_headroom,
                     scan_mode, scanner_headline, score_candidate)
 from .screener import get_screener
@@ -85,6 +86,8 @@ class C10Service:
         # still runs where broker creds are absent (tests, dev boxes).
         self._assets = None
         self._assets_unavailable = False
+        self._shadow_seen: set[tuple] = set()      # v0.28.0 (day, ticker)
+        self._live_warned = False
 
     # ------------------------------------------------------------------ state
     def _roll_day(self, today: str) -> None:
@@ -533,6 +536,75 @@ class C10Service:
             emitted += 1
         return emitted
 
+    # ------------------------------------------------------ v0.28.0 shadows
+    async def catalyst_shadow_pass(self) -> int:
+        """v0.28.0: between 09:45 and 10:05 ET journal every liquid name that
+        is 8 percent or more from the previous close on its earnings
+        reaction day (EARNINGS_CONTINUATION) or 15 percent or more up with no
+        earnings (GAP_FADE) as scanner_candidates status SHADOW. Nothing is
+        emitted; A11 replays each row with the lane's own exits and A9 holds
+        the go-live bar. Returns the number of rows journaled (tests)."""
+        c = self.cfg.get("catalyst_shadow") or {}
+        now_et = self.now_fn().astimezone(ET)
+        self._roll_day(now_et.date().isoformat())
+        if not in_catalyst_window(now_et.strftime("%H:%M"), self.cfg):
+            return 0
+        if str(c.get("mode", "shadow")).lower() != "shadow" and not self._live_warned:
+            self._live_warned = True
+            log.warning("catalyst_shadow.mode is not 'shadow'; v0.28.0 only "
+                        "journals (no order path yet)")
+        try:
+            movers = await self.screener.movers(
+                top=int(self.cfg.get("movers_top", 50)), include_losers=True)
+            legs = []
+            for by in [str(b) for b in (self.cfg.get("most_actives_by") or ["volume"])]:
+                try:
+                    legs.append(await self.screener.most_actives(
+                        top=int(self.cfg.get("most_actives_top", 50)), by=by))
+                except Exception as e:
+                    log.warning("shadow most-actives fetch failed",
+                                extra=kv(by=by, error=repr(e)[:120]))
+        except Exception as e:
+            log.warning("shadow screener fetch failed", extra=kv(error=repr(e)[:160]))
+            return 0
+        floor = min(float(c.get("min_move_pct", 0.08)),
+                    float(c.get("gap_fade_min_move_pct", 0.15)))
+        rows = 0
+        for mv in merge_universe(movers, *legs):
+            t = mv["symbol"]
+            if (self._day, t) in self._shadow_seen:
+                continue
+            if mv.get("change_pct") is not None and abs(mv["change_pct"]) < floor:
+                continue
+            if looks_like_derivative(t):
+                continue
+            m = await self._measure(t, mv.get("price"))
+            # one look per name per day: the study's selection is the 09:45
+            # print, and re-measuring every minute would quadruple the load
+            self._shadow_seen.add((self._day, t))
+            if m is None or m.move_magnitude is None or m.move_magnitude < floor:
+                continue
+            from c1_ingestion.earnings import reported_recently
+            report_date = await reported_recently(t, self.now_fn())
+            if t not in self._asset_names:
+                self._asset_names[t] = await self.screener.asset_name(t)
+            lane = catalyst_shadow_lane(m, report_date is not None, self.cfg,
+                                        asset_name=self._asset_names[t])
+            if lane is None:
+                continue
+            direction = "down" if m.is_down else "up"
+            await self._journal_candidate(t, "SHADOW", lane, {
+                **m.payload(), "lane": lane, "move_direction": direction,
+                "shadow_side": ("SHORT" if lane == "GAP_FADE"
+                                else ("SHORT" if m.is_down else "LONG")),
+                "earnings_report_date": report_date.isoformat() if report_date else None,
+                "entry_px": m.price})
+            rows += 1
+            log.info("catalyst shadow", extra=kv(ticker=t, lane=lane,
+                                                  move=f"{m.move_pct:+.3f}",
+                                                  earnings=str(report_date)))
+        return rows
+
     async def _earnings(self, ticker: str) -> int | None:
         try:
             from c1_ingestion.earnings import earnings_next_sessions
@@ -560,6 +632,10 @@ async def main() -> None:
             await svc.scan_once()
         except Exception as e:
             log.error("scan cycle error", extra=kv(error=repr(e)[:300]))
+        try:
+            await svc.catalyst_shadow_pass()          # v0.28.0
+        except Exception as e:
+            log.error("catalyst shadow error", extra=kv(error=repr(e)[:300]))
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:

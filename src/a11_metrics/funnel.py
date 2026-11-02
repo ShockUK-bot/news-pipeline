@@ -30,11 +30,21 @@ def _tools():
     return scalp_replay
 
 
+def _shadow_cfg() -> dict:
+    try:
+        from common.config import config_path, load_yaml
+        return (load_yaml(config_path("scanner.yaml")).get("scanner") or {}).get("catalyst_shadow") or {}
+    except Exception:                                             # noqa: BLE001
+        return {}
+
+
 def classify(status: str, reject_reason: Optional[str], decisions: list[tuple]) -> tuple[str, Optional[str]]:
     """(outcome, reason) from the candidate row and its decision chain
     [(stage, action, veto_reason, reason)] in time order. Pure."""
     if status == "CAPPED":
         return f"CAPPED_{reject_reason or 'UNKNOWN'}", None
+    if status == "SHADOW":                                   # v0.28.0 catalyst lanes
+        return f"SHADOW_{reject_reason or 'UNKNOWN'}", None
     for stage, action, veto, reason in decisions:
         if stage == "ANALYST" and action == "REJECT":
             return "ANALYST_REJECT", (reason or "")[:160]
@@ -53,7 +63,7 @@ async def pending(conn, days: int) -> list[dict]:
                   COALESCE((c.metrics->>'detected_ts')::timestamptz, c.ts) AS detect_ts,
                   (c.metrics->>'move_pct')::numeric AS move_pct
            FROM journal.scanner_candidates c
-           WHERE c.scan_date >= current_date - %s AND c.status IN ('EMITTED','CAPPED')
+           WHERE c.scan_date >= current_date - %s AND c.status IN ('EMITTED','CAPPED','SHADOW')
              AND c.scan_date < current_date + 1
              AND NOT EXISTS (SELECT 1 FROM journal.positions p
                              WHERE p.origin='scanner' AND p.ticker=c.ticker AND p.opened_ts::date=c.scan_date)
@@ -90,8 +100,19 @@ async def process(conn, cand: dict, dry: bool = False) -> Optional[dict]:
     entry = float(first["open"])
     atr = sr.atr5m_before(bars, detect) or round(entry * 0.005, 4)
     qty = max(1, int(LANE_NOTIONAL / entry))
-    L = sr.replay(bars, "LONG", detect, entry, qty, atr, 0.015, 2.0)
-    S = sr.replay(bars, "SHORT", detect, entry, qty, atr, 0.015, 2.0)
+    if cand["status"] == "SHADOW":
+        # v0.28.0: the catalyst lanes' own ladder (fixed % stop, hold to the
+        # close, trail from 2R); config from scanner.yaml catalyst_shadow.
+        sc = _shadow_cfg()
+        stop_pct = float(sc.get("gap_fade_stop_pct", 0.03) if cand.get("reject_reason") == "GAP_FADE"
+                         else sc.get("stop_pct", 0.04))
+        L = sr.replay_hold(bars, "LONG", detect, entry, qty, stop_pct, atr,
+                           float(sc.get("trail_k", 3.0)), float(sc.get("trail_at_r", 2.0)))
+        S = sr.replay_hold(bars, "SHORT", detect, entry, qty, stop_pct, atr,
+                           float(sc.get("trail_k", 3.0)), float(sc.get("trail_at_r", 2.0)))
+    else:
+        L = sr.replay(bars, "LONG", detect, entry, qty, atr, 0.015, 2.0)
+        S = sr.replay(bars, "SHORT", detect, entry, qty, atr, 0.015, 2.0)
     move_dir = "up" if float(cand.get("move_pct") or 0) >= 0 else "down"
     with_move = L["r"] if move_dir == "up" else S["r"]
     row = {"candidate_id": cand["candidate_id"], "scan_date": cand["scan_date"], "ticker": cand["ticker"],
@@ -129,10 +150,12 @@ async def summary(conn, days: int = 30) -> dict:
     """The two questions, as numbers. Pure SQL over the journaled rows."""
     cur = await conn.execute("""
         SELECT outcome, count(*), round(sum(with_move_r),2), round(sum(long_r),2), round(sum(short_r),2),
-               count(*) FILTER (WHERE with_move_r > 0)
+               count(*) FILTER (WHERE with_move_r > 0),
+               count(*) FILTER (WHERE long_r > 0), count(*) FILTER (WHERE short_r > 0)
         FROM journal.scanner_funnel_cf WHERE scan_date >= current_date - %s GROUP BY 1 ORDER BY 2 DESC""", (days,))
     by_outcome = {r[0]: {"n": r[1], "with_move_r": float(r[2]), "long_r": float(r[3]), "short_r": float(r[4]),
-                         "with_move_winners": r[5]} for r in await cur.fetchall()}
+                         "with_move_winners": r[5], "long_winners": r[6], "short_winners": r[7]}
+                  for r in await cur.fetchall()}
     cur = await conn.execute("""
         SELECT count(*), round(sum(short_r),2), round(sum(long_r),2), count(*) FILTER (WHERE long_r > short_r)
         FROM journal.scanner_funnel_cf

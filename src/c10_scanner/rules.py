@@ -364,7 +364,7 @@ def scanner_headline(m: CandidateMetrics, news_match: str) -> str:
             f"{m.rel_volume:.1f}x relative volume — {tag}")
 
 
-def cooloff_calendar_days(sessions: int) -> int:
+def cooloff_calendar_days(sessions: int) -> int:  # noqa: E302
     """v0.27.0: calendar-day window that covers `sessions` NYSE sessions
     including the weekend(s) inside it: 3 sessions -> 5 days, 5 -> 7, 6 -> 10."""
     s = max(0, int(sessions))
@@ -391,3 +391,47 @@ def in_early_window(now_et_hhmm: str, cfg: dict) -> bool:
     if not ew.get("enabled", False):
         return False
     return str(ew.get("start_et", "09:33")) <= now_et_hhmm < cfg["session_start_et"]
+
+
+# ---------------------------------------------------------------------------
+# v0.28.0 — catalyst shadow lanes (journal only, never emit)
+# ---------------------------------------------------------------------------
+
+def in_catalyst_window(now_et_hhmm: str, cfg: dict) -> bool:
+    """Inside the catalyst shadow window (default 09:45 to 10:05 ET)."""
+    c = cfg.get("catalyst_shadow") or {}
+    if not c.get("enabled", False):
+        return False
+    return str(c.get("start_et", "09:45")) <= now_et_hhmm < str(c.get("end_et", "10:05"))
+
+
+def catalyst_shadow_lane(m: CandidateMetrics, earnings_reported: bool, cfg: dict,
+                         asset_name: Optional[str] = None) -> Optional[str]:
+    """Which shadow lane a 09:45 mover belongs to, or None. Pure.
+
+    EARNINGS_CONTINUATION: the name reported today or last evening and is
+        min_move_pct (8 percent) or more from the previous close, either way.
+        October 2026, 86 liquid events: +1.3 to +2.9 percent mean from 09:45
+        to the close, 61 to 77 percent winners, with the move.
+    GAP_FADE: no earnings, UP gap_fade_min_move_pct (15 percent) or more.
+        October 2026, 26 events: -2.9 percent mean with the move, 27 percent
+        winners, so the shadow trade is the SHORT.
+    Liquidity floor, instrument shape and spread are checked here so the
+    journal only carries names the live lane could actually trade."""
+    c = cfg.get("catalyst_shadow") or {}
+    if m.move_pct is None or m.price is None:
+        return None
+    if looks_like_derivative(m.ticker) or m.ticker in KNOWN_ETFS or looks_like_etf(asset_name):
+        return None
+    if m.price < float(c.get("min_price", 5.0)):
+        return None
+    if not m.adv20_dollars or m.adv20_dollars < float(c.get("min_adv20_dollars", 20_000_000)):
+        return None
+    if m.spread_bps is None or m.spread_bps > float(c.get("max_spread_bps", 60)):
+        return None
+    mag = abs(m.move_pct)
+    if earnings_reported:
+        return "EARNINGS_CONTINUATION" if mag >= float(c.get("min_move_pct", 0.08)) else None
+    if m.move_pct >= float(c.get("gap_fade_min_move_pct", 0.15)):
+        return "GAP_FADE"
+    return None
