@@ -1,13 +1,26 @@
-# Current state, 2026-11-02 (written 09:15 CT)
+# Current state, 2026-11-02 (written 15:10 CT, supersedes the 09:15 CT version of this file)
 
 Supersedes `claude_current-state-2026-09-24.md`.
 
-- `v0.26.4` on `main`, pushed, tree matches the tag, 916 unit tests pass. No code or config changed in this session; it was the October review (`docs/claude_month-review-2026-10.md`). Last releases: v0.26.3 (dashboard exits per row) and v0.26.4 (broker cancel treats 422 as not cancellable, per position isolation, reconcile journals a filled catastrophe stop), both before the absence.
-- Host rebooted uncleanly 2026-10-05 11:58 CDT (cause unknown, power or hardware). All services active since 2026-10-05 11:59 CDT (`c4-exec` since 12:05 after a six minute DNS crash loop). Uptime 27 days.
-- Account: broker equity 96,996 (trading capital 100,075). October realized -1,693 on 38 closed trades, 17 winners. Scanner +243 and news longs +274 made money; news shorts -988 and thesis -1,140 lost it. Since inception scanner +1,648, news -2,330, thesis -1,509.
-- Open positions: INVX long 87 at 29.03 (thesis, synthetic stop 26.21, last about 26.5, NO broker catastrophe stop since 2026-10-30 08:33 CT, see the review section 1.3) and RIOT long 67 at 13.89 (thesis, catastrophe stop 8.49 in place).
-- Health: 9 components DEGRADED. Eight GlobeNewswire RSS feeds return 403 since 2026-10-08 (about 600 items a day lost); `backup_offsite` has no Google Drive token. Everything else OK, queues empty, inference healthy, analyst latency 30 s average this morning (up from 20 s at the start of October).
-- A9: two proposals `PROPOSED` and waiting for Ian (1: scanner no scale out, 2026-10-17; 2: shadow a 3.0 ATR scalp stop, 2026-10-31). A9 ran every Saturday.
-- Open items, in order: re-place the INVX catastrophe stop (needs Ian's go, market is open); v0.26.5 cancel race fix plus `c4-exec` startup retry; GlobeNewswire decision; thesis lane re-entry limit; proposals 1 and 2; Google Drive token.
+## Live
 
-Files for the design chat: `claude_month-review-2026-10.md`, `claude_october-loss-review-2026-11-02.md` (why October lost, what to build) and this file. INVX closed 2026-11-02 09:01 CT by operator instruction at 27.18 (-160.95).
+- Services run `v0.30.0` code (config version b42c8d03) since 15:05 CT: `c3-gate`, `a3-risk`, `c4-exec`, `c10-scanner`, `a2-analyst` restarted after the close with the watchdog timer paused; all active, heartbeats fresh, no errors, reconcile clean (equity 96,534). Tree is `v0.30.1` (A9 CLI fix only, no service touches it). Rollback for everything deployed today: `git reset --hard v0.26.4` and restart the same five services.
+- Releases today (all pushed, patch notes in `docs/`): v0.27.0 (thesis entries paused, news shorts off, scalp exits without time stop or scale out and 3.0 ATR trail, scanner from 10:00 ET with a 3 session stop out cool off, news longs EDGAR only at half risk), v0.28.0 (earnings continuation and gap fade shadow lanes, journal only, A11 replay, A9 bar), v0.29.0 and v0.29.1 (dilution short lane live at half risk, exhaustion fade buckets named and watched by A9), v0.30.0 (deterministic analyst pre-check), v0.30.1 (A9 approve CLI registers its config version).
+- A9 proposal 1 (scanner no scale out) APPROVED at b42c8d03; A9 evaluates it on 2026-11-07. Proposal 2 (3.0 ATR stop shadow) still PROPOSED, superseded in spirit by the trail and time stop changes; Ian to reject or leave.
+- Positions: RIOT long 67 at 13.89 (thesis, catastrophe stop 8.49, lane paused for new entries) and PODD long 47 (news long from this morning). INVX closed 09:01 CT at 27.18 (-160.95) on operator instruction after its broker stop was found cancelled (cancel race, see the month review 1.3; code fix still pending as the v0.26.5 item, now folded into the next operational release).
+- Reviews written today: `claude_month-review-2026-10.md` (outages), `claude_october-loss-review-2026-11-02.md` (why October lost, the market study, the plan). Upload both plus the patch notes to the design chat.
+
+## Watching from tomorrow
+
+- Shadow rows in `journal.scanner_candidates` status SHADOW from 09:45 ET; A11 replays them nightly into `journal.scanner_funnel_cf` (outcomes SHADOW_EARNINGS_CONTINUATION, SHADOW_GAP_FADE); A9 Saturday watch lines show progress to the 20 row bar.
+- Analyst pre-check: ANALYST REJECT rows with `payload->>'precheck'='true'` and `queue.defer` activity; expect analyst call volume down about a sixth.
+- Dilution shorts: GATE PASS rows with `payload->>'lane'='news_short_dilution'`; A3 sizes them at half risk.
+- Scanner: first trades after 10:00 ET with the new exits; TICKER_COOLOFF rows for MRVL and PURR this week.
+
+## Open items
+
+1. llama.cpp bench b10970 vs b12050 at 16:17 CT today (build-2026-11 is ready); swap of the llama units is a separate evening change for Ian.
+2. Cancel race fix and c4 startup retry (was v0.26.5): still to build.
+3. GlobeNewswire 403 decision; Google Drive token for backup-offsite.
+4. Qwen4-27B replay bench when weights land; triage model speed bench.
+5. Thesis lane trend rule before it reopens; regime based lane switching; A6/A12 verdicts advisory.
