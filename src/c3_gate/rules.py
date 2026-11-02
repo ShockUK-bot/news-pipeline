@@ -254,6 +254,27 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict,
 # Fade lane (v0.14.12) — SHADOW ONLY: the bullish gap that fades
 # ---------------------------------------------------------------------------
 
+def lane_source_filter(verdict: GateVerdict, thesis: dict, source: str | None,
+                       cfg: dict) -> GateVerdict:
+    """v0.27.0: the news LONG lane is restricted to the sources in
+    cfg['news_long_sources'] (news.news_items.source values). Applied AFTER
+    evaluate() so a PASS on a disallowed source becomes a final VETO
+    LANE_SOURCE and still gets its counterfactual row (that is how the lane
+    earns its way back). Empty/absent list = no restriction. Down-theses are
+    untouched (they have their own switch in shorting.yaml)."""
+    allowed = cfg.get("news_long_sources") or []
+    if not allowed or verdict.verdict != "PASS":
+        return verdict
+    if str(thesis.get("direction") or "up") != "up":
+        return verdict
+    if source is not None and str(source).lower() in {str(a).lower() for a in allowed}:
+        return verdict
+    numbers = dict(verdict.numbers or {})
+    numbers["source"] = source
+    numbers["allowed_sources"] = list(allowed)
+    return GateVerdict("VETO", verdict.rule, "LANE_SOURCE", numbers)
+
+
 FADE_SOURCE_VETOES = ("PRICED_IN", "GATE_EXTENDED")
 
 

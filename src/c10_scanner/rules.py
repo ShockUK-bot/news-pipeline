@@ -364,6 +364,14 @@ def scanner_headline(m: CandidateMetrics, news_match: str) -> str:
             f"{m.rel_volume:.1f}x relative volume — {tag}")
 
 
+def cooloff_calendar_days(sessions: int) -> int:
+    """v0.27.0: calendar-day window that covers `sessions` NYSE sessions
+    including the weekend(s) inside it: 3 sessions -> 5 days, 5 -> 7, 6 -> 10."""
+    s = max(0, int(sessions))
+    weeks, rem = divmod(s, 5)
+    return weeks * 7 + rem + (2 if rem else 0)
+
+
 def in_scan_window(now_et_hhmm: str, cfg: dict) -> bool:
     """Inside the scan window, INCLUDING the v0.24.0 early shadow window."""
     start = cfg["session_start_et"]

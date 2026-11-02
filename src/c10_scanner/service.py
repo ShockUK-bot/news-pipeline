@@ -38,7 +38,7 @@ from common.queue import enqueue
 from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
 
-from .rules import (CandidateMetrics, emission_disposition, filter_candidate,
+from .rules import (cooloff_calendar_days, CandidateMetrics, emission_disposition, filter_candidate,
                     in_early_window, in_scan_window, looks_like_derivative, luld_headroom,
                     scan_mode, scanner_headline, score_candidate)
 from .screener import get_screener
@@ -162,6 +162,27 @@ class C10Service:
                 """SELECT count(*) FROM journal.positions
                    WHERE origin='scanner' AND status='OPEN'""")
             return (await cur.fetchone())[0]
+
+    async def _cooloff_tickers(self) -> set[str]:
+        """v0.27.0: names with a LOSING scanner trade closed within the last
+        `stop_out_cooloff_sessions` sessions are not re-entered (CRWV: three
+        stop-outs on 10-15, 10-16 and 10-20 for -1,327). The window is
+        counted in calendar days with weekends added, so a holiday makes it
+        a day longer, never shorter. 0 or absent = off."""
+        n = int(self.cfg.get("stop_out_cooloff_sessions", 0) or 0)
+        if n <= 0:
+            return set()
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT DISTINCT ticker FROM journal.positions
+                   WHERE origin='scanner' AND status='CLOSED'
+                     AND realized_pnl < 0
+                     AND (closed_ts AT TIME ZONE 'America/New_York')::date
+                         > ((now() AT TIME ZONE 'America/New_York')::date
+                            - make_interval(days => %s))""",
+                (cooloff_calendar_days(n),))
+            return {r[0] for r in await cur.fetchall()}
 
     async def _open_tickers(self) -> set[str]:
         pool = await get_pool()
@@ -414,6 +435,7 @@ class C10Service:
              f"scanning ({emitted_count}/{self.cfg['max_per_day']} today)"))
 
         open_tickers = await self._open_tickers()
+        cooloff_tickers = await self._cooloff_tickers()
         survivors: list[tuple[float, CandidateMetrics, str, list]] = []
         for mv in universe:
             t = mv["symbol"]
@@ -421,6 +443,11 @@ class C10Service:
                 continue
             if t in open_tickers:
                 continue                    # never add to a held name
+            if t in cooloff_tickers:
+                # v0.27.0: journaled once per day per name (self._journaled dedups)
+                await self._journal_candidate(t, "FILTERED", "TICKER_COOLOFF",
+                                              dict(mv))
+                continue
             # v0.12.28: warrants / rights / units / preferreds are excluded by
             # the spec and can never clear min_price or ADV, but before this
             # they still cost four market-data calls each to discover that.

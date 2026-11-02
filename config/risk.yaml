@@ -20,6 +20,8 @@ capital:
                                      # the sector, so a pair trade does not double
                                      # count. gross = the v0.19.0 sum.
   min_viable_risk_fraction: 0.5
+news:                                # v0.27.0 (2026-11-02): news-lane sizing policy
+  long_risk_multiplier: 0.5          # news LONGS at half the risk budget while the EDGAR-only lane builds its sample
 scanner:                             # v0.12.1 — scanner-origin sizing policy
   risk_multiplier: 1.0               # v0.16.0 (2026-09-17): was 0.5. 17 closed
                                      # scanner trades, 11 winners, +1,378; the

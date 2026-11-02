@@ -25,7 +25,8 @@ shorting:
                               # reboot. Committed this time so no reset or
                               # re-sync can revert it unnoticed.
   lanes:
-    news_short: true          # news lane, SHORT horizon (intraday-days)
+    news_short: false        # v0.27.0 (2026-11-02): OFF. 21 trades, -1,209 since 08-26; the analyst's
+                             # direction call scores as a coin flip (loss review, section 3.1).          # news lane, SHORT horizon (intraday-days)
     news_long: true           # news lane, LONG horizon (weeks-months)
     scanner: true             # scanner lane (incl. losers, scalp profile)
     fade: true                # v0.14.12: fade lane. SHADOW ONLY regardless

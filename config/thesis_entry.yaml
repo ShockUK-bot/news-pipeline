@@ -31,7 +31,9 @@ entry:
   min_evidence: 0              # 0 = anchor-only theses may trade (operator
                                # chose to start immediately; raise to demand
                                # N confirming evidence items first)
-  max_new_per_day: 2
+  max_new_per_day: 0          # v0.27.0 (2026-11-02): lane PAUSED. October: 5 longs, 0 winners,
+                               # -1,140; th-2026-001 bought RIOT four times on the way down. Reopens
+                               # only with a price/sector trend rule (docs/claude_october-loss-review-2026-11-02.md).
   max_open_positions: 4        # total origin='thesis' positions
   max_per_thesis: 2            # per thesis_id
   risk_pct: 0.0025             # 0.25% of effective capital per position —

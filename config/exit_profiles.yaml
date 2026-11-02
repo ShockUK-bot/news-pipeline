@@ -17,9 +17,11 @@ profiles:
     initial_stop:   {method: atr_5m, k: 2.0}    # ATR(14) on completed 5-min bars
     catastrophe:    {method: atr_5m, k: 3.5}
     breakeven_at_R: 0.75
-    trail:          {activate_at_R: 1.0, method: atr_5m, k: 1.5}
-    time_stop:      {window_minutes: 60, min_progress_R: 0.5}
-    realization:    {target_fraction: 0.6, action: scale_out_50}
+    trail:          {activate_at_R: 1.0, method: atr_5m, k: 3.0}   # v0.27.0: was 1.5; journaled trail3.0 variant +371 vs base on October's 20 trades
+    time_stop:      null    # v0.27.0: was 60 min / 0.5R. Seven October TIME exits then ran +2.99R on average;
+                            # the 'notime' variant turns the lane's October from -244 to +707.
+    realization:    {target_fraction: 0.6, action: none}   # v0.27.0: A9 proposal 1 (2026-10-17) approved 2026-11-02: no scale-out,
+                            # target still journaled by A11; full size rides the trail.
     earnings_blackout_exit: true
     overnight_hold: force_flat         # HARD RULE: C4 market-exits at force_flat_time_et
     force_flat_time_et: "15:50"

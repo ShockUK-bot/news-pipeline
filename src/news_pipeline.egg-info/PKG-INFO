@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: news-pipeline
+Version: 0.5.0
+Summary: C1+C2 ingestion/dedup, A1 triage/router, A2 analyst, C3 gate, C8 regime for the multi-agent news trading system (baseline v0.5, Phase 1)
+Requires-Python: >=3.12
+Requires-Dist: psycopg[binary,pool]>=3.1
+Requires-Dist: websockets>=12
+Requires-Dist: httpx>=0.27
+Requires-Dist: feedparser>=6.0
+Requires-Dist: pydantic>=2.7
+Requires-Dist: qdrant-client>=1.9
+Requires-Dist: pandas-market-calendars>=4.4
+Provides-Extra: embed
+Requires-Dist: sentence-transformers>=3.0; extra == "embed"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"

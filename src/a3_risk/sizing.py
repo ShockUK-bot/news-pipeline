@@ -153,6 +153,17 @@ def scanner_capital_cfg(capital_cfg: dict, scanner_cfg: dict) -> dict:
     return cfg
 
 
+def news_capital_cfg(capital_cfg: dict, news_cfg: dict | None, side: str) -> dict:
+    """v0.27.0: the news lane's LONG risk budget is scaled by
+    news.long_risk_multiplier (0.5 while the EDGAR-only lane builds its
+    sample). Shorts and other lanes are untouched; absent config = 1.0."""
+    cfg = dict(capital_cfg)
+    if side == "LONG":
+        mult = float((news_cfg or {}).get("long_risk_multiplier", 1.0) or 1.0)
+        cfg["risk_per_trade_pct"] = float(capital_cfg["risk_per_trade_pct"]) * mult
+    return cfg
+
+
 def cluster_verdict(open_same_sector: int, cluster_cfg: dict | None) -> tuple[bool, str]:
     """v0.20.0 scanner sector cluster rule. Returns (blocked, mode). blocked is
     True when the sector already holds max_per_sector scanner positions; the

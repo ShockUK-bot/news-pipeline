@@ -153,7 +153,12 @@ def evaluate_on_bar(pos: dict, bar: dict, session_age: int,
             action = policy["realization"]["action"]
             edge = bar["high"] if side == "LONG" else bar["low"]
             rel = ">=" if side == "LONG" else "<="
-            if action == "scale_out_50":
+            if action == "none":
+                # v0.27.0: no realization action (scalp_v1 after A9 proposal 1).
+                # The target is still journaled by A11's counterfactuals; the
+                # ratchets and the trail own the exit.
+                pass
+            elif action == "scale_out_50":
                 half = qty_open // 2
                 if half > 0:
                     actions.append(ExitAction("SCALE_OUT", "TARGET", half,

@@ -30,7 +30,7 @@ def test_effective_policy_repairs_a_pre_v0262_promotion():
             "trail": {"k": 2.5, "method": "atr", "activate_at_R": 1.5}, "breakeven_at_R": 1.0,
             "atr_value": 6.9144, "atr_method": "atr"}
     eff = effective_policy(hood, PROFILES, r_unit=1.57)
-    assert eff["trail"]["k"] == 1.5 and eff["atr_value"] == 0.785 and eff["atr_method"] == "atr_5m_recovered"
+    assert eff["trail"]["k"] == PROFILES["scalp_v1"]["trail"]["k"] and eff["atr_value"] == 0.785  # v0.27.0: k follows the live profile (3.0) and eff["atr_method"] == "atr_5m_recovered"
     assert eff["profit_lock"] == {"activate_pct": 0.05, "trail_pct": 0.04}
     assert eff["current_stop"] == 118.59                      # journaled state untouched
     # a plain news position on the swing profile only gains the lock

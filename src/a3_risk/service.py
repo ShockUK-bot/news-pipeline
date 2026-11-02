@@ -37,7 +37,8 @@ from router.facts import _schedule_cache
 
 from common import sectors
 from .sizing import (SizingInputs, cluster_verdict, hard_gates,
-                     open_risk_dollars, size_entry, scanner_capital_cfg)
+                     open_risk_dollars, size_entry, scanner_capital_cfg,
+                     news_capital_cfg)
 
 log = get_logger("a3.service")
 
@@ -222,6 +223,7 @@ class A3Service:
         self.capital = cfg["capital"]
         self.limits = cfg["limits"]
         self.scanner_cfg = cfg.get("scanner") or {}
+        self.news_cfg = cfg.get("news") or {}          # v0.27.0
         # v0.13: shorting block (config/shorting.yaml, merged in main()).
         # mode 'shadow' -> shorts journal SHADOW_SHORT and stop before the
         # intent; 'live' -> real SELL_SHORT intents; anything else -> a
@@ -524,7 +526,9 @@ class A3Service:
             capital_cfg = scanner_capital_cfg(self.capital, self.scanner_cfg)
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
-            capital_cfg = self.capital
+            # v0.27.0: news longs at long_risk_multiplier of the budget
+            capital_cfg = (news_capital_cfg(self.capital, self.news_cfg, side)
+                           if origin == "news" else self.capital)
         heat_bd = await sectors.open_sector_heat(inp.sector)
         mode = str(self.capital.get("sector_heat_mode", "net")).lower()
         inp.sector_heat = (heat_bd[mode] if heat_bd and mode in heat_bd else

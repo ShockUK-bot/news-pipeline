@@ -34,7 +34,10 @@ scanner:
                                  # essentially the entire day's scan budget —
                                  # four market-data calls each to reach a
                                  # guaranteed PRICE_FLOOR reject.
-  session_start_et: "09:50"      # open blackout (15m) + 5m of settling
+  session_start_et: "10:00"   # v0.27.0: was 09:50. Five October stop-outs (-2,097) were entries at 09:50-09:52 ET;
+                              # 8-15% movers are a coin flip at 09:45 and +1.5%/66% after a pull-back by 10:00.
+  stop_out_cooloff_sessions: 3  # v0.27.0: no scanner re-entry in a name for 3 sessions after a losing scanner
+                              # trade in it (CRWV: three stop-outs on 10-15, 10-16, 10-20 for -1,327).      # open blackout (15m) + 5m of settling
   early_window:                  # v0.24.0 — SHADOW: scan from start_et, journal
     enabled: true                # survivors as CAPPED / EARLY_WINDOW, emit
     start_et: "09:33"            # nothing. A11 replays them both ways; A9
