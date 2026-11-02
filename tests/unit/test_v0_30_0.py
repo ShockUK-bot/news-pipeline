@@ -53,3 +53,11 @@ def test_wiring():
     assert "except DeferAnalysis as d:" in svc and "await defer(msg.msg_id, d.delay_secs)" in svc
     assert '"precheck": True' in svc
     assert svc.index("pv = precheck(") < svc.index("reply = await self.backend.complete(messages, schema)")
+
+
+def test_a9_approve_registers_config_version():
+    """v0.30.1: --approve / --reject must register the config version before journaling."""
+    a9 = (ROOT / "src" / "a9_review" / "service.py").read_text()
+    body = a9[a9.index("async def set_status"):a9.index("def main()")]
+    assert "await register_config_version(" in body
+    assert body.index("await register_config_version(") < body.index("write_decision(")

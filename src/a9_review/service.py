@@ -344,6 +344,10 @@ async def run_review(cfg: dict, dry: bool = False, backend_override=None) -> Opt
 
 
 async def set_status(proposal_id: int, status: str, config_version: Optional[str]) -> None:
+    # v0.30.1: the CLI path never registered a config version, so the SYSTEM
+    # decision row raised (first use of --approve, 2026-11-02) and the whole
+    # update rolled back. Register like the review run does.
+    await register_config_version(f"a9 proposal {proposal_id} {status.lower()}")
     pool = await get_pool()
     async with pool.connection() as conn:
         if config_version:
