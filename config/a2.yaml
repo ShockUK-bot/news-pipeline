@@ -32,3 +32,9 @@ model:
 health_window: 20              # rolling window of model-output outcomes
 health_min_sample: 10          # need this many before judging the rate
 health_max_invalid_frac: 0.5   # >= this fraction invalid -> DEGRADED (C7 alerts)
+precheck:                      # v0.30.0 (2026-11-02): deterministic gate BEFORE the model call
+  enabled: true
+  rth_only: true               # only during 09:30-16:00 ET; pre-market news keeps today's path
+  min_move_pct: 0.005          # |move since the pre-news reference| below this = "unmoved"
+  wait_max_min: 60             # unmoved this long after the news -> journaled REJECT, no model call
+  defer_secs: 300              # unmoved but younger -> re-queued for this long, no model call

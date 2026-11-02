@@ -23,18 +23,19 @@ import signal as _signal
 
 import httpx
 
-from common.clock import utcnow
+from common.clock import utcnow, is_market_hours
 from common.config import config_path, load_yaml
 from common.contracts import envelope
 from common.db import close_pool, get_pool
 from common.journal import register_config_version, write_decision
 from common.log import get_logger, kv
-from common.queue import ack, claim, enqueue, fail, wait_for_message
+from common.queue import ack, claim, enqueue, fail, wait_for_message, defer
 from common.marketdata import get_marketdata
 from c1_ingestion.heartbeat import set_health
 from c2_dedup.embedder import get_embedder
 from c2_dedup.vectorstore import VectorStore
 from a1_triage.backends import get_backend
+from a2_analyst.precheck import precheck
 from a1_triage.triage import TriageRejected
 
 from .context import build_context
@@ -114,6 +115,7 @@ async def fetch_item(item_id: str, revision: int) -> dict | None:
 
 class A2Service:
     def __init__(self, cfg: dict, backend=None, md=None, store=None):
+        self.precheck_cfg = cfg.get("precheck") or {}          # v0.30.0
         self.cfg = cfg
         self.backend = backend or get_backend(cfg["model"])
         self.retries = int(cfg["model"].get("retries_on_invalid", 1))
@@ -198,6 +200,31 @@ class A2Service:
             log.warning("data-unavailable REJECT journaled",
                         extra=kv(item_id=item_id, ticker=ticker,
                                  error=repr(e)[:150]))
+            return
+
+        # v0.30.0: deterministic pre-check before any model call. A news
+        # signal that has not moved during the regular session is deferred
+        # (no tokens), and rejected with a journal row once the wait window
+        # has passed. Scanner signals and off-session news are untouched.
+        pv = precheck(context, origin, is_market_hours(utcnow()), self.precheck_cfg)
+        if pv is not None and pv.action == "DEFER":
+            log.info("analyst pre-check DEFER", extra=kv(
+                item_id=item_id, ticker=ticker, pct_move=pv.pct_move,
+                minutes=pv.minutes, delay_secs=pv.delay_secs))
+            raise DeferAnalysis(pv.delay_secs)
+        if pv is not None and pv.action == "REJECT":
+            await write_decision(
+                signal_id=signal_id, item_id=item_id, item_revision=revision,
+                ticker=ticker, stage="ANALYST", agent="A2", action="REJECT",
+                payload={"no_trade": True, "origin": origin, "precheck": True,
+                         "pct_move_since_news": pv.pct_move,
+                         "minutes_since_news": pv.minutes,
+                         "queue_wait_secs": queue_wait_secs},
+                reason=pv.reason, model_id=None, latency_ms=None,
+                regime_id=regime_id, derived_from=derived_from)
+            log.info("analyst pre-check REJECT journaled", extra=kv(
+                item_id=item_id, ticker=ticker, pct_move=pv.pct_move,
+                minutes=pv.minutes))
             return
 
         schema = thesis_json_schema()
@@ -343,6 +370,15 @@ class A2Service:
             latency_ms=total_latency, queue_wait_s=queue_wait_secs))
 
 
+class DeferAnalysis(Exception):
+    """v0.30.0: raised by handle() when the pre-check says 'not yet'. The
+    consume loop releases the message back to the queue with a delay."""
+
+    def __init__(self, delay_secs: float):
+        super().__init__(f"defer {delay_secs}s")
+        self.delay_secs = float(delay_secs)
+
+
 async def consume_loop(svc: A2Service, stop: asyncio.Event) -> None:
     import time
     hb_detail = f"consuming {IN_QUEUE}"
@@ -367,6 +403,9 @@ async def consume_loop(svc: A2Service, stop: asyncio.Event) -> None:
         try:
             await svc.handle(msg)
             await ack(msg.msg_id)
+        except DeferAnalysis as d:
+            # v0.30.0: scheduling, not failure (same contract as C3's defer)
+            await defer(msg.msg_id, d.delay_secs)
         except Exception as e:
             log.error("message failed", extra=kv(msg_id=msg.msg_id, error=repr(e)[:300]))
             await fail(msg.msg_id, repr(e))
