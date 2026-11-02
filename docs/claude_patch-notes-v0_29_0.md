@@ -22,7 +22,7 @@ On a second look the fade result is one strong month (October, +20.8 R over 185 
 
 ## Files and tests
 
-`config/shorting.yaml`, `config/gate.yaml`, `config/risk.yaml`, `src/c3_gate/rules.py`, `src/c3_gate/service.py`, `src/a3_risk/sizing.py`, `src/a3_risk/service.py`, `src/a11_metrics/funnel.py`, `src/a9_review/candidates.py`, `tests/unit/test_v0_29_0.py` (one v0.27.0 wiring pin updated). Version 0.29.0. Suite 935 passed.
+`config/shorting.yaml`, `config/gate.yaml`, `config/risk.yaml`, `src/c3_gate/rules.py`, `src/c3_gate/service.py`, `src/a3_risk/sizing.py`, `src/a3_risk/service.py`, `src/a11_metrics/funnel.py`, `src/a9_review/candidates.py`, `tests/unit/test_v0_29_0.py` (one v0.27.0 wiring pin updated). Version 0.29.0 (v0.29.1 fixes a stale test pin; code identical). Suite 935 passed.
 
 ## Services
 
