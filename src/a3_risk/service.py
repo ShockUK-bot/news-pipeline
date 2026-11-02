@@ -527,7 +527,8 @@ class A3Service:
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
             # v0.27.0: news longs at long_risk_multiplier of the budget
-            capital_cfg = (news_capital_cfg(self.capital, self.news_cfg, side)
+            capital_cfg = (news_capital_cfg(self.capital, self.news_cfg, side,
+                                            lane=gate.get("lane"))
                            if origin == "news" else self.capital)
         heat_bd = await sectors.open_sector_heat(inp.sector)
         mode = str(self.capital.get("sector_heat_mode", "net")).lower()

@@ -30,7 +30,7 @@ from router.facts import market_open_now, _schedule_cache
 
 from .counterfactual import record_veto, sweep as counterfactual_sweep
 from .rules import (EHState, GateVerdict, MarketState, ScannerState,
-                    lane_source_filter,
+                    lane_source_filter, catalyst_class, lane_for,
                     ShortContext, evaluate, evaluate_eh, evaluate_scanner)
 
 log = get_logger("c3.service")
@@ -253,11 +253,8 @@ class C3Service:
             return False
         return bool((self.shorting.get("lanes") or {}).get(lane, False))
 
-    def _lane_for(self, thesis: dict, origin: str) -> str:
-        if origin == "scanner":
-            return "scanner"
-        return ("news_long" if str(thesis.get("horizon")).upper() == "LONG"
-                else "news_short")
+    def _lane_for(self, thesis: dict, origin: str, cclass: str | None = None) -> str:
+        return lane_for(thesis, origin, cclass)          # v0.29.0: rules.lane_for
 
     async def _drift_shadow(self, thesis: dict, state, verdict, signal_id: str,
                             item_id: str, revision, body: dict, now) -> None:
@@ -514,13 +511,15 @@ class C3Service:
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT published_ts, source FROM news.news_items WHERE item_id=%s AND revision=%s",
+                "SELECT published_ts, source, headline FROM news.news_items WHERE item_id=%s AND revision=%s",
                 (item_id, revision))
             row = await cur.fetchone()
         if row is None:
             raise ValueError(f"item not in news store: {item_id} rev {revision}")
         published_ts = row[0]
         item_source = row[1]
+        cclass = catalyst_class(row[2])                  # v0.29.0
+        lane = self._lane_for(thesis, "news", cclass)
 
         from common.clock import extended_session
         session = extended_session(now) or "closed"
@@ -637,9 +636,8 @@ class C3Service:
             # froze whenever no positions were open and confused deadman).
             await set_health("marketdata", "OK",
                              f"volume bars ok ({thesis['ticker']})")
-        short = await self.short_ctx(thesis, self._lane_for(thesis, "news"),
-                                     state.pct_from_prior_close)
-        verdict = evaluate(thesis, state, self.cfg, short)
+        short = await self.short_ctx(thesis, lane, state.pct_from_prior_close)
+        verdict = evaluate(thesis, state, self.cfg, short, cclass=cclass)
         # v0.27.0: news longs only from the configured sources (EDGAR).
         verdict = lane_source_filter(verdict, thesis, item_source, self.cfg)
 
@@ -717,7 +715,8 @@ class C3Service:
                     "prenews_price": state.prenews_price}
         gate_body = {"thesis": thesis,
                      "gate": {"verdict": "PASS", "rule": verdict.rule,
-                              **(verdict.numbers or {}), "snapshot": snapshot}}
+                              **(verdict.numbers or {}), "snapshot": snapshot,
+                              "lane": lane, "catalyst_class": cclass}}   # v0.29.0
 
         async with pool.connection() as conn:
             async with conn.transaction():

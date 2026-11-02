@@ -95,7 +95,7 @@ def test_news_capital_cfg():
 
 def test_wiring():
     gate = (ROOT / "src" / "c3_gate" / "service.py").read_text()
-    assert "SELECT published_ts, source FROM news.news_items" in gate
+    assert "SELECT published_ts, source, headline FROM news.news_items" in gate  # v0.29.0 added headline
     assert "lane_source_filter(verdict, thesis, item_source, self.cfg)" in gate
     scan = (ROOT / "src" / "c10_scanner" / "service.py").read_text()
     assert "_cooloff_tickers()" in scan and '"TICKER_COOLOFF"' in scan

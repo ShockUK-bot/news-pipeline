@@ -25,6 +25,9 @@ shorting:
                               # reboot. Committed this time so no reset or
                               # re-sync can revert it unnoticed.
   lanes:
+    news_short_dilution: true   # v0.29.0 (2026-11-02): down theses on offering / placement / reverse split
+                                # headlines (c3 rules.catalyst_class). 193 analyst down-calls since 09-01: 59% lower
+                                # by the close, mean -2.74%. ETB only, half risk (risk.yaml news.short_dilution_risk_multiplier).
     news_short: false        # v0.27.0 (2026-11-02): OFF. 21 trades, -1,209 since 08-26; the analyst's
                              # direction call scores as a coin flip (loss review, section 3.1).          # news lane, SHORT horizon (intraday-days)
     news_long: true           # news lane, LONG horizon (weeks-months)

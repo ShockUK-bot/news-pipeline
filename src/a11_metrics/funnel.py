@@ -161,6 +161,25 @@ async def summary(conn, days: int = 30) -> dict:
         FROM journal.scanner_funnel_cf
         WHERE scan_date >= current_date - %s AND move_direction='up' AND analyst_direction='down'""", (days,))
     n, s_r, l_r, l_better = await cur.fetchone()
+    # v0.29.0: the two exhaustion-fade buckets the October review found, named
+    # so A9 can hold a bar on them. up_structure: up-movers the structure rule
+    # vetoed, shorted. down_capped: down-movers the caps / early window /
+    # size clip kept out, bought.
+    cur = await conn.execute("""
+        SELECT count(*), round(sum(short_r),2), count(*) FILTER (WHERE short_r > 0)
+        FROM journal.scanner_funnel_cf
+        WHERE scan_date >= current_date - %s AND move_direction='up'
+          AND outcome='GATE_VETO' AND reason='SCANNER_STRUCTURE'""", (days,))
+    fu_n, fu_r, fu_w = await cur.fetchone()
+    cur = await conn.execute("""
+        SELECT count(*), round(sum(long_r),2), count(*) FILTER (WHERE long_r > 0)
+        FROM journal.scanner_funnel_cf
+        WHERE scan_date >= current_date - %s AND move_direction='down'
+          AND (outcome IN ('CAPPED_PER_HOUR','CAPPED_PER_SCAN','CAPPED_EARLY_WINDOW','CAPPED_CONCURRENT')
+               OR (outcome='RISK_VETO' AND reason='SIZE_CLIPPED'))""", (days,))
+    fd_n, fd_r, fd_w = await cur.fetchone()
     return {"by_outcome": by_outcome,
             "analyst_short_on_up_move": {"n": n, "short_sum_r": float(s_r or 0), "long_sum_r": float(l_r or 0),
-                                         "long_better": l_better}}
+                                         "long_better": l_better},
+            "fade": {"up_structure": {"n": fu_n, "sum_r": float(fu_r or 0), "winners": fu_w},
+                     "down_capped": {"n": fd_n, "sum_r": float(fd_r or 0), "winners": fd_w}}}

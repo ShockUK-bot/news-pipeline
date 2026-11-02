@@ -67,6 +67,7 @@ gate:
   open_blackout_min: 15        # no entries first 15 min after open (baseline)
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN
   handoff_min_move_pct_long: 0.02
+  credibility_exempt_classes: [offering]   # v0.29.0: the issuer's own release is the primary source; one outlet is enough
   news_long_sources: [edgar]    # v0.27.0: news LONGS only from these news.news_items.source values
                                 # (EDGAR filings 3/3 winners in October; Benzinga longs -684 since inception).
                                 # Other sources journal GATE VETO LANE_SOURCE and keep their counterfactual.

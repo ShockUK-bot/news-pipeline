@@ -261,10 +261,38 @@ def rule_gap_fade_lane(ev: dict) -> tuple[Optional[dict], Optional[str]]:
               metric_json("sum_r", ">", 0, None)), None
 
 
+def _fade_rule(ev: dict, key: str, label: str, side: str, n_bar: int = 30, r_bar: float = 6.0,
+               win_bar: float = 0.55) -> tuple[Optional[dict], Optional[str]]:
+    f = ((ev.get("funnel") or {}).get("fade") or {}).get(key) or {}
+    n = int(f.get("n") or 0)
+    r = f.get("sum_r")
+    w = int(f.get("winners") or 0)
+    if n < n_bar:
+        return None, f"exhaustion fade {label}: {n} of {n_bar} rows" + (f", {side} {r:+.1f}R" if r is not None else "")
+    if r is None or r < r_bar or w / n < win_bar:
+        return None, f"exhaustion fade {label}: n={n}, {side} {r:+.1f}R, {w} winners: under the bar"
+    return _p(f"Exhaustion fade lane ({label}): build the live lane at half size",
+              "scanner candidates in this bucket are vetoed or capped and never traded",
+              f"new lane: {side} the {label} candidates with scalp exits and no time stop (needs its own release)",
+              {"n_instances": n, "sum_r": r, "winners": w, "source": f"journal.scanner_funnel_cf fade.{key}"},
+              f"The {n} {label} candidates would have made {r:+.1f}R {side} ({w} winners).",
+              metric_json("sum_r", ">", 0, None)), None
+
+
+def rule_fade_up_structure(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.29.0: up-movers the scanner structure rule vetoed, shorted."""
+    return _fade_rule(ev, "up_structure", "up-movers vetoed by structure", "short")
+
+
+def rule_fade_down_capped(ev: dict) -> tuple[Optional[dict], Optional[str]]:
+    """v0.29.0: down-movers the caps, early window or size clip kept out, bought."""
+    return _fade_rule(ev, "down_capped", "down-movers capped or clipped", "long")
+
+
 RULES = [rule_lane_negative, rule_gate_money_left, rule_stop_layer_inefficiency,
          rule_guard_hold_bias, rule_scanner_no_scale_out, rule_scanner_concurrency,
          rule_analyst_short_bias, rule_drift_short, rule_fade_lane, rule_scanner_early_window,
-         rule_earnings_lane, rule_gap_fade_lane]
+         rule_earnings_lane, rule_gap_fade_lane, rule_fade_up_structure, rule_fade_down_capped]
 # rule_burst_go_live retired with C12 (v0.25.0, 2026-09-22): three sessions on the
 # realistic column were negative after cost in every cell. Kept for the record.
 

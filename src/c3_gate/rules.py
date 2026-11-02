@@ -45,6 +45,7 @@ gate-threshold design item; the rule SHAPES are per baseline v0.5.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -174,7 +175,8 @@ def growth_credit(independent_outlets: int, cluster_items: int,
 
 
 def evaluate(thesis: dict, state: MarketState, cfg: dict,
-             short: Optional[ShortContext] = None) -> GateVerdict:
+             short: Optional[ShortContext] = None,
+             cclass: Optional[str] = None) -> GateVerdict:
     pct_move = ((state.last_price - state.prenews_price) / state.prenews_price
                 if state.prenews_price else 0.0)
     dm = _dm(thesis["direction"])
@@ -205,7 +207,10 @@ def evaluate(thesis: dict, state: MarketState, cfg: dict,
     impact = _impact_bucket(float(thesis["magnitude_est"]), cfg)
     required = credibility_required(impact, state.tier_min,
                                     thesis["source_risk"], cfg)
+    required = credibility_with_class(required, cclass, cfg)      # v0.29.0
     numbers["credibility"] = {"impact": impact, "required_outlets": required}
+    if cclass:
+        numbers["catalyst_class"] = cclass
     if effective_outlets < required:
         return GateVerdict("VETO", rule, "CREDIBILITY", numbers)
 
@@ -529,3 +534,47 @@ def evaluate_scanner(thesis: dict, s: ScannerState, cfg: dict,
 
     return GateVerdict("PASS", rule, None, numbers)
 
+
+# ---------------------------------------------------------------------------
+# v0.29.0 — catalyst classes and the dilution short lane
+# ---------------------------------------------------------------------------
+
+_OFFERING_RE = re.compile(
+    r"\b(?:public offering|offering of|offering price|prices? (?:an? |its )?(?:upsized |underwritten )?"
+    r"(?:public )?offering|registered direct|private placement|at[- ]the[- ]market|"
+    r"\bATM\b|convertible (?:senior )?notes?|securities purchase agreement|"
+    r"reverse (?:stock )?split|share consolidation|equity line|warrant inducement)",
+    re.IGNORECASE)
+
+
+def catalyst_class(headline: Optional[str]) -> Optional[str]:
+    """v0.29.0: deterministic headline class. Only 'offering' (dilution and
+    its cousins) is recognised for now; everything else is None. Pure.
+    Evidence: 193 analyst down-calls on these headlines since 2026-09-01,
+    59 percent lower by the close, mean -2.74 percent (loss review 5.4)."""
+    if not headline:
+        return None
+    return "offering" if _OFFERING_RE.search(headline) else None
+
+
+def lane_for(thesis: dict, origin: str, cclass: Optional[str] = None) -> str:
+    """Which shorting.yaml lane switch governs this thesis. v0.29.0: a down
+    thesis on an offering headline is the news_short_dilution lane, which
+    stays on while plain news shorts are off."""
+    if origin == "scanner":
+        return "scanner"
+    if str(thesis.get("horizon")).upper() == "LONG":
+        return "news_long"
+    if str(thesis.get("direction") or "up") == "down" and cclass == "offering":
+        return "news_short_dilution"
+    return "news_short"
+
+
+def credibility_with_class(required: int, cclass: Optional[str], cfg: dict) -> int:
+    """v0.29.0: an issuer's own press release is the primary source of an
+    offering; one outlet is enough for the classes listed in
+    cfg['credibility_exempt_classes']."""
+    exempt = [str(x).lower() for x in (cfg.get("credibility_exempt_classes") or [])]
+    if cclass and cclass.lower() in exempt:
+        return min(int(required), 1)
+    return int(required)

@@ -153,14 +153,21 @@ def scanner_capital_cfg(capital_cfg: dict, scanner_cfg: dict) -> dict:
     return cfg
 
 
-def news_capital_cfg(capital_cfg: dict, news_cfg: dict | None, side: str) -> dict:
+def news_capital_cfg(capital_cfg: dict, news_cfg: dict | None, side: str,
+                    lane: str | None = None) -> dict:
     """v0.27.0: the news lane's LONG risk budget is scaled by
     news.long_risk_multiplier (0.5 while the EDGAR-only lane builds its
-    sample). Shorts and other lanes are untouched; absent config = 1.0."""
+    sample). v0.29.0: SHORTs in the news_short_dilution lane are scaled by
+    news.short_dilution_risk_multiplier. Anything else untouched; absent
+    config = 1.0."""
     cfg = dict(capital_cfg)
+    n = news_cfg or {}
+    mult = 1.0
     if side == "LONG":
-        mult = float((news_cfg or {}).get("long_risk_multiplier", 1.0) or 1.0)
-        cfg["risk_per_trade_pct"] = float(capital_cfg["risk_per_trade_pct"]) * mult
+        mult = float(n.get("long_risk_multiplier", 1.0) or 1.0)
+    elif side == "SHORT" and lane == "news_short_dilution":
+        mult = float(n.get("short_dilution_risk_multiplier", 1.0) or 1.0)
+    cfg["risk_per_trade_pct"] = float(capital_cfg["risk_per_trade_pct"]) * mult
     return cfg
 
 
