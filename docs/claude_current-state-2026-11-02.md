@@ -10,4 +10,4 @@ Supersedes `claude_current-state-2026-09-24.md`.
 - A9: two proposals `PROPOSED` and waiting for Ian (1: scanner no scale out, 2026-10-17; 2: shadow a 3.0 ATR scalp stop, 2026-10-31). A9 ran every Saturday.
 - Open items, in order: re-place the INVX catastrophe stop (needs Ian's go, market is open); v0.26.5 cancel race fix plus `c4-exec` startup retry; GlobeNewswire decision; thesis lane re-entry limit; proposals 1 and 2; Google Drive token.
 
-Files for the design chat: `claude_month-review-2026-10.md` and this file.
+Files for the design chat: `claude_month-review-2026-10.md`, `claude_october-loss-review-2026-11-02.md` (why October lost, what to build) and this file. INVX closed 2026-11-02 09:01 CT by operator instruction at 27.18 (-160.95).
