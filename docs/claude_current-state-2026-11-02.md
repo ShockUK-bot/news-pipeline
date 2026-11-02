@@ -19,7 +19,7 @@ Supersedes `claude_current-state-2026-09-24.md`.
 
 ## Open items
 
-1. llama.cpp bench b10970 vs b12050 at 16:17 CT today (build-2026-11 is ready); swap of the llama units is a separate evening change for Ian.
+1. llama.cpp bench b10970 vs b12050 ran 16:17 CT (`docs/bench-analyst-b10970-vs-b12050-2026-11-02.txt`): the new build is 8 percent SLOWER at p50 (12.76 s vs 11.80 s) and worse at p95 (20.5 s vs 14.7 s), same 20/20 schema adherence, 0 empty, 0 errors. No swap. `build-2026-11` stays on disk as a reference; re-bench when b12050's reasoning-preserve default and the GB10 kernels settle, or when Qwen4 lands.
 2. Cancel race fix and c4 startup retry (was v0.26.5): still to build.
 3. GlobeNewswire 403 decision; Google Drive token for backup-offsite.
 4. Qwen4-27B replay bench when weights land; triage model speed bench.

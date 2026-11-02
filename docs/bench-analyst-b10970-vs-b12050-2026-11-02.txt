@@ -1,0 +1,67 @@
+Loading 20 recent news items from the journal...
+Loaded 20 items.
+
+--- b10970-live  (http://127.0.0.1:8081)  thinking=OFF (per-request) ---
+  [  1/20] PASS  12.44s    21.5 tok/s  8-K - BROADWIND, INC. (0001120370) (Filer)
+  [  2/20] PASS  11.88s    22.3 tok/s  Radiopharm Theranostics Reports Quarterly Financial Resu
+  [  3/20] PASS  10.70s    23.0 tok/s  Indian Government Assures Resolution on Bulk Scotch Whis
+  [  4/20] PASS  11.83s    23.3 tok/s  8-K - Keen Vision Acquisition Corp. (0001889983) (Filer)
+  [  5/20] PASS  17.27s    16.4 tok/s  8-K - Blackstone Inc. (0001393818) (Filer)
+  [  6/20] PASS  12.15s    23.1 tok/s  SCHEDULE 13D - Vertical Data Inc. (0002033264) (Subject)
+  [  7/20] PASS  11.72s    21.3 tok/s  BAC Subject to Increasing Scrutiny: Senator Warren Repor
+  [  8/20] PASS   7.90s    20.3 tok/s  CORRECTION FROM SOURCE: Brompton Split Banc Corp. Announ
+  [  9/20] PASS  11.36s    24.6 tok/s  8-K - Cooper-Standard Holdings Inc. (0001320461) (Filer)
+  [ 10/20] PASS  14.66s    17.5 tok/s  8-K - LXP Industrial Trust (0000910108) (Filer)
+  [ 11/20] PASS  11.80s    22.2 tok/s  8-K - Select Water Solutions, Inc. (0001693256) (Filer)
+  [ 12/20] PASS  12.75s    20.8 tok/s  Marvell Technology Narrows Fiscal Third-Quarter Revenue 
+  [ 13/20] PASS  13.43s    18.5 tok/s  Diamondback Energy Reports Third Quarter 2026 Financial 
+  [ 14/20] PASS  12.55s    21.0 tok/s  8-K - UGI CORP /PA/ (0000884614) (Filer)
+  [ 15/20] PASS  11.08s    21.7 tok/s  Palantir Technologies Inc. Reports Q3 2026 Financial Res
+  [ 16/20] PASS  10.72s    23.3 tok/s  Boston Scientific Announces Positive Results from SIMPLA
+  [ 17/20] PASS  10.96s    21.4 tok/s  P&G Increases Cost Pressure Forecast and Plans Price Hik
+  [ 18/20] PASS  10.16s    23.7 tok/s  Vertex Pharmaceuticals Reports Third Quarter 2026 Financ
+  [ 19/20] PASS  11.53s    22.2 tok/s  Phillip Securities Upgrades Amazon to Buy
+  [ 20/20] PASS  11.32s    23.2 tok/s  8-K - LiveRamp Holdings, Inc. (0000733269) (Filer)
+
+--- b12050-new  (http://127.0.0.1:8082)  thinking=OFF (per-request) ---
+  [  1/20] PASS  12.61s    19.8 tok/s  8-K - BROADWIND, INC. (0001120370) (Filer)
+  [  2/20] PASS  11.24s    21.3 tok/s  Radiopharm Theranostics Reports Quarterly Financial Resu
+  [  3/20] PASS  13.08s    20.2 tok/s  Indian Government Assures Resolution on Bulk Scotch Whis
+  [  4/20] PASS  12.76s    20.9 tok/s  8-K - Keen Vision Acquisition Corp. (0001889983) (Filer)
+  [  5/20] PASS  13.49s    21.1 tok/s  8-K - Blackstone Inc. (0001393818) (Filer)
+  [  6/20] PASS  12.82s    21.8 tok/s  SCHEDULE 13D - Vertical Data Inc. (0002033264) (Subject)
+  [  7/20] PASS  11.95s    21.0 tok/s  BAC Subject to Increasing Scrutiny: Senator Warren Repor
+  [  8/20] PASS   8.91s    20.2 tok/s  CORRECTION FROM SOURCE: Brompton Split Banc Corp. Announ
+  [  9/20] PASS  16.96s    16.7 tok/s  8-K - Cooper-Standard Holdings Inc. (0001320461) (Filer)
+  [ 10/20] PASS  12.10s    21.2 tok/s  8-K - LXP Industrial Trust (0000910108) (Filer)
+  [ 11/20] PASS  20.54s    12.7 tok/s  8-K - Select Water Solutions, Inc. (0001693256) (Filer)
+  [ 12/20] PASS  12.69s    20.7 tok/s  Marvell Technology Narrows Fiscal Third-Quarter Revenue 
+  [ 13/20] PASS  15.66s    15.5 tok/s  Diamondback Energy Reports Third Quarter 2026 Financial 
+  [ 14/20] PASS  12.99s    20.5 tok/s  8-K - UGI CORP /PA/ (0000884614) (Filer)
+  [ 15/20] PASS  11.76s    20.6 tok/s  Palantir Technologies Inc. Reports Q3 2026 Financial Res
+  [ 16/20] PASS  12.58s    22.0 tok/s  Boston Scientific Announces Positive Results from SIMPLA
+  [ 17/20] PASS  11.69s    20.4 tok/s  P&G Increases Cost Pressure Forecast and Plans Price Hik
+  [ 18/20] PASS   9.97s    22.3 tok/s  Vertex Pharmaceuticals Reports Third Quarter 2026 Financ
+  [ 19/20] PASS  15.95s    16.0 tok/s  Phillip Securities Upgrades Amazon to Buy
+  [ 20/20] PASS  26.30s    10.5 tok/s  8-K - LiveRamp Holdings, Inc. (0000733269) (Filer)
+
+==============================================================================
+SUMMARY
+==============================================================================
+slot                       p50     p95   tok/s  out tok   schema  empty  errs
+------------------------------------------------------------------------------
+b10970-live             11.80s  14.66s    21.6      254    20/20      0     0
+b12050-new              12.76s  20.54s    19.3      255    20/20      0     0
+------------------------------------------------------------------------------
+  p50 latency is the decision metric. tok/s is diagnostic only:
+  a model decoding 2x faster while emitting 3x the tokens is SLOWER.
+
+  b12050-new is 8% SLOWER than b10970-live at p50 latency.
+  Contract adherence: b10970-live 20/20, b12050-new 20/20.
+
+GO criteria for cutover (all four must hold):
+  1. candidate p50 <= live p50            [wall clock, not tok/s]
+  2. candidate schema_ok >= live schema_ok
+  3. candidate empty == 0 and errors == 0
+  4. candidate magnitude_bad == 0         [non-negotiable]
+
