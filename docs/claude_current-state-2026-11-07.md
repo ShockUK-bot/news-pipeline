@@ -13,7 +13,7 @@ Supersedes `claude_current-state-2026-11-02.md`.
 
 ## Open items
 
-1. Ian: approve or reject A9 proposal 3 (recommended together with trend day mode) and proposal 2 (recommended reject).
+1. Done 11-07 15:00 CT: proposal 3 APPROVED and applied (v0.31.1, scanner from 09:33 ET, c10-scanner restarted), proposal 2 REJECTED. A9 evaluates proposals 1 and 3 on 11-14.
 2. Breakeven ratchet: v0.30.2 journals `be1.5` and `nobe` variants nightly from 11-09; decide after two weeks. Mechanics bug to fix: the first bar after a fill can count as progress (TSLA ratchet moved six seconds after entry).
 3. Normal day gross short budget: one 0.30 scanner position still fills the 0.30 gross short cap outside trend days; proposed 0.15 per position and 0.60 gross (config, needs a yes).
 4. Cancel race fix and c4 startup retry (from the October review), still to build.
