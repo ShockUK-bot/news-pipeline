@@ -43,7 +43,8 @@ FORCE_FLAT_CT = "14:50"
 def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
            qty: int, atr: float, mag: float, stop_k: float,
            trail_k: float = TRAIL_K, time_stop: bool = True,
-           scale_out: bool = True, runner_hold: bool = False) -> dict:
+           scale_out: bool = True, runner_hold: bool = False,
+           be_r: float = BE_R) -> dict:
     """Pure ladder replay. bars: [{ts(CT datetime), open, high, low, close}].
     v0.16.0 variants: trail_k (ATR multiple of the trail), time_stop off,
     scale_out off (full size rides the trail), runner_hold (after the scale-out
@@ -94,7 +95,7 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
                 proposed = (round(entry_px, 2), "breakeven")
         elif prog >= TRAIL_AT:
             proposed = (round(hwm - m * trail_k * atr, 2), "trail")
-        elif prog >= BE_R and basis == "initial":
+        elif prog >= be_r and basis == "initial":
             proposed = (round(entry_px, 2), "breakeven")
         if proposed and ((proposed[0] > stop) if side == "LONG" else (proposed[0] < stop)):
             stop, basis = proposed
@@ -169,6 +170,12 @@ VARIANTS = {                       # v0.16.0: journaled nightly per scanner trad
     "stop3.0": {"stop_k": 3.0},
     "trail2.5": {"trail_k": 2.5},
     "trail3.0": {"trail_k": 3.0},
+    # v0.30.2: the breakeven ratchet question (TSLA and AVGO 2026-11-05: both
+    # shorts scratched at breakeven inside 20 minutes on a day the names fell
+    # another 3 to 6 percent). be1.5 ratchets to breakeven only from 1.5R;
+    # nobe never ratchets to breakeven (the trail still engages from 1R).
+    "be1.5": {"be_r": 1.5},
+    "nobe": {"be_r": 99.0},
 }
 
 

@@ -61,3 +61,24 @@ def test_a9_approve_registers_config_version():
     body = a9[a9.index("async def set_status"):a9.index("def main()")]
     assert "await register_config_version(" in body
     assert body.index("await register_config_version(") < body.index("write_decision(")
+
+
+def test_replay_breakeven_variants():
+    """v0.30.2: be1.5 and nobe variants exist and change the breakeven ratchet."""
+    import sys
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    sys.path.insert(0, str(ROOT / "ops" / "tools"))
+    import scalp_replay as sr
+    CT = ZoneInfo("America/Chicago")
+    assert "be1.5" in sr.VARIANTS and "nobe" in sr.VARIANTS
+    t0 = datetime(2026, 11, 5, 9, 0, tzinfo=CT)
+    def bar(i, o, h, l, c):
+        return {"ts": t0 + timedelta(minutes=i), "open": o, "high": h, "low": l, "close": c}
+    # short from 100, atr 1, stop 2.0 -> r_unit 2; drops to 98.3 (0.85R: past breakeven 0.75R, short of
+    # the 1R trail), bounces through entry, then falls to 94
+    bars = [bar(0, 100, 100.2, 98.3, 98.3), bar(1, 98.3, 100.1, 98.2, 99.5), bar(2, 99.5, 99.6, 94.0, 94.2)]
+    base = sr.replay(bars, "SHORT", t0, 100.0, 100, 1.0, 0.015, 2.0, time_stop=False, scale_out=False)
+    nobe = sr.replay(bars, "SHORT", t0, 100.0, 100, 1.0, 0.015, 2.0, time_stop=False, scale_out=False, be_r=99.0)
+    assert base["exits"][0][1] == "BREAKEVEN" and base["pnl"] == 0.0
+    assert nobe["pnl"] > 400 and nobe["exits"][-1][1] == "EOD_MARK"
