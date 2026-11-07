@@ -34,7 +34,11 @@ scanner:
                                  # essentially the entire day's scan budget —
                                  # four market-data calls each to reach a
                                  # guaranteed PRICE_FLOOR reject.
-  session_start_et: "10:00"   # v0.27.0: was 09:50. Five October stop-outs (-2,097) were entries at 09:50-09:52 ET;
+  session_start_et: "09:33"   # v0.31.1 (2026-11-07): A9 proposal 3 approved: the 09:33 early window goes live
+                              # (+5.6R over 37 shadow candidates, 65% winners; Thursday 11-05 early shorts +6.5R).
+                              # v0.27.0 had moved this 09:50 -> 10:00 after October's first-minute stop-outs;
+                              # the stop-out cool-off and no-time-stop exits stay. ROLLBACK: "10:00".
+                              # (history: v0.27.0: was 09:50. Five October stop-outs (-2,097) were entries at 09:50-09:52 ET;
                               # 8-15% movers are a coin flip at 09:45 and +1.5%/66% after a pull-back by 10:00.
   stop_out_cooloff_sessions: 3
   catalyst_shadow:              # v0.28.0 (2026-11-02): journal-only lanes, see docs/claude_october-loss-review-2026-11-02.md 5.1

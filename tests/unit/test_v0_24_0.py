@@ -86,7 +86,7 @@ def test_yaml_pins():
     assert f["min_move_pct"] == 0.01 and f["window_max_min_after_open"] == 180 and "GATE_NO_CONFIRM" in f["source_vetoes"]
     assert d["enabled"] is True and d["source_vetoes"] == ["PRICED_IN", "GATE_EXTENDED"]
     s = yaml.safe_load((ROOT / "config" / "scanner.yaml").read_text())["scanner"]
-    assert s["early_window"]["enabled"] is True and s["early_window"]["start_et"] == "09:33" and s["session_start_et"] == "10:00"  # v0.27.0: was 09:50
+    assert s["early_window"]["enabled"] is True and s["early_window"]["start_et"] == "09:33" and s["session_start_et"] == "09:33"  # v0.31.1: A9 proposal 3 (was 10:00 in v0.27.0, 09:50 before)
     svc = (ROOT / "src" / "c3_gate" / "service.py").read_text()
     assert "await self._drift_shadow(" in svc and "rule='drift_short'" in svc.replace('"', "'")
 
