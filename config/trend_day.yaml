@@ -1,0 +1,29 @@
+# Trend day mode (v0.31.0, 2026-11-07). Deterministic, session scoped.
+# Evidence: docs/claude_thu-fri-review-2026-11-07.md. On 2026-11-05 QQQ was
+# -3.6% at 10:00 ET and fell to -6.4%; every liquid name shorted at 09:45 made
+# 2.4 to 4.6% by the close, and the system took two trades because its caps
+# (2 concurrent, 2 per scan, 6 per hour, a gross short budget equal to one
+# position) and the Monday news-short switch throttled it. Over two years the
+# index rule "down 2% at 11:00 and below the 10:00 price" was right 80 to 86%
+# of the time; the 10:00 version is the switch used here.
+trend_day:
+  enabled: true
+  symbols: [QQQ, SPY]            # any one triggers
+  check_from_et: "10:00"         # first evaluation; checked every scanner cycle after that
+  min_drop_pct: 0.02             # index vs previous close at or below -2%
+  require_below_0945: true       # and still below its 09:45 ET price (falling, not bouncing)
+  direction: down                # only the down version is built; up days were a coin flip (Friday 11-06)
+  news_shorts_on: true           # lifts the news_short lane switch for the session
+  block_new_longs: true          # C3 and A3 veto new LONG entries (TREND_DAY_LONG); open longs keep their exits
+  scanner:
+    max_concurrent_positions: 4  # was 2 (A3)
+    max_per_scan: 4              # was 2 (C10, down movers only)
+    max_per_hour: 12             # was 6 (C10, down movers only)
+    relax_structure_for_shorts: true   # C3: VWAP / range checks off for with-move shorts (the 11:00 bounce vetoed PLTR, SPCX, MSTR)
+    max_position_notional_pct: 0.15    # was 0.30, so four shorts fit the gross budget
+  shorting:
+    max_gross_short_notional_pct: 0.60   # was 0.30 (one position used it all)
+    max_short_heat_pct: 0.03             # was 0.015
+  capital:
+    heat_split_short_pct: 0.03           # was 0.02
+    max_portfolio_heat_pct: 0.04         # was 0.03

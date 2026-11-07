@@ -34,6 +34,7 @@ from common.db import get_pool, jb, close_pool
 from common.journal import register_config_version
 from common.log import get_logger, kv
 from common.marketdata import adv20, get_marketdata
+from common import trendday
 from common.queue import enqueue
 from common.ta import day_vwap, rel_volume_day, resample_5m
 from c1_ingestion.heartbeat import set_health
@@ -87,6 +88,7 @@ class C10Service:
         self._assets = None
         self._assets_unavailable = False
         self._shadow_seen: set[tuple] = set()      # v0.28.0 (day, ticker)
+        self.tcfg = trendday.load_cfg()              # v0.31.0 trend day mode
         self._live_warned = False
 
     # ------------------------------------------------------------------ state
@@ -383,6 +385,14 @@ class C10Service:
                              f"circuit breaker: {losses} scanner losses today")
             return 0
 
+        # v0.31.0: trend day detection (sets journal.control trend_day once a day)
+        try:
+            trend = await trendday.evaluate_and_set(self.md, self.now_fn(), self.tcfg, "C10")
+        except Exception as e:                                    # noqa: BLE001
+            log.warning("trend day evaluation failed", extra=kv(error=repr(e)[:150]))
+            trend = None
+        caps_cfg = trendday.scanner_caps(self.cfg, self.tcfg) if trend == "down" else self.cfg
+
         emitted_count, emitted_tickers = await self._emitted_today()
         # v0.13.8 — the daily cap no longer blinds the scanner. Before this,
         # cap-reached meant an early return: on 2026-08-19 all 6 emissions
@@ -511,8 +521,10 @@ class C10Service:
             # per-hour pacing joins the cap family. The borrow lookup is
             # deferred: only a candidate that would otherwise EMIT spends the
             # (cached) assets-API call.
+            # v0.31.0: down movers get the trend day caps on a down trend day
+            dcfg = caps_cfg if (trend == "down" and m.is_down) else self.cfg
             disp = emission_disposition(
-                score, m, self.cfg,
+                score, m, dcfg,
                 emitted_this_scan=emitted,
                 emitted_today=emitted_count + emitted,
                 emitted_last_hour=emitted_hour + emitted,
@@ -520,7 +532,7 @@ class C10Service:
             if disp is None and m.is_down \
                     and self.cfg.get("precheck_short_availability", True):
                 disp = emission_disposition(
-                    score, m, self.cfg,
+                    score, m, dcfg,
                     emitted_this_scan=emitted,
                     emitted_today=emitted_count + emitted,
                     emitted_last_hour=emitted_hour + emitted,

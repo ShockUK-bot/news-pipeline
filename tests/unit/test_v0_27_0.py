@@ -100,4 +100,4 @@ def test_wiring():
     scan = (ROOT / "src" / "c10_scanner" / "service.py").read_text()
     assert "_cooloff_tickers()" in scan and '"TICKER_COOLOFF"' in scan
     risk = (ROOT / "src" / "a3_risk" / "service.py").read_text()
-    assert 'news_capital_cfg(self.capital, self.news_cfg, side,' in risk  # v0.29.0 added lane=
+    assert 'news_capital_cfg(capital_eff, self.news_cfg, side,' in risk  # v0.29.0 lane=, v0.31.0 capital_eff

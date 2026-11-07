@@ -29,8 +29,9 @@ from c1_ingestion.heartbeat import set_health
 from router.facts import market_open_now, _schedule_cache
 
 from .counterfactual import record_veto, sweep as counterfactual_sweep
+from common import trendday
 from .rules import (EHState, GateVerdict, MarketState, ScannerState,
-                    lane_source_filter, catalyst_class, lane_for,
+                    lane_source_filter, catalyst_class, lane_for, trend_day_long_filter,
                     ShortContext, evaluate, evaluate_eh, evaluate_scanner)
 
 log = get_logger("c3.service")
@@ -245,6 +246,8 @@ class C3Service:
         # v0.13: shorting block (config/shorting.yaml, merged in main()).
         # Absent/empty block == shorting off == long-only behavior, exactly.
         self.shorting = cfg.get("shorting") or {}
+        self.tcfg = trendday.load_cfg()            # v0.31.0
+        self._trend = None
         self._assets = assets                  # injected in tests
 
     def _shorting_on(self, lane: str) -> bool:
@@ -346,7 +349,12 @@ class C3Service:
         theses (zero overhead on the long path — no asset API call)."""
         if thesis.get("direction") == "up":
             return None
-        if not self._shorting_on(lane):
+        enabled = self._shorting_on(lane)
+        if not enabled and lane == "news_short" and self._trend == "down" \
+                and (self.tcfg.get("news_shorts_on", True)) \
+                and str(self.shorting.get("mode") or "").lower() == "live":
+            enabled = True                    # v0.31.0: trend day lifts the news short switch
+        if not enabled:
             return ShortContext(enabled=False, etb_ok=False)
         if self._assets is None:
             from common.assets import AssetsClient
@@ -425,8 +433,12 @@ class C3Service:
         prev = scanner.get("prev_close")
         prior_close_pct = (round((state.last_price - prev) / prev, 5)
                            if prev and state.last_price else None)
+        self._trend = await trendday.active(now)                       # v0.31.0
+        if self._trend == "down":
+            scfg = trendday.gate_scanner_cfg(scfg, thesis.get("direction") or "up", self.tcfg)
         short = await self.short_ctx(thesis, "scanner", prior_close_pct)
         verdict = evaluate_scanner(thesis, state, scfg, short)
+        verdict = trend_day_long_filter(verdict, thesis, self._trend, self.tcfg)   # v0.31.0
 
         if verdict.verdict == "VETO":
             decision_id = await write_decision(
@@ -636,10 +648,12 @@ class C3Service:
             # froze whenever no positions were open and confused deadman).
             await set_health("marketdata", "OK",
                              f"volume bars ok ({thesis['ticker']})")
+        self._trend = await trendday.active(now)                       # v0.31.0
         short = await self.short_ctx(thesis, lane, state.pct_from_prior_close)
         verdict = evaluate(thesis, state, self.cfg, short, cclass=cclass)
         # v0.27.0: news longs only from the configured sources (EDGAR).
         verdict = lane_source_filter(verdict, thesis, item_source, self.cfg)
+        verdict = trend_day_long_filter(verdict, thesis, self._trend, self.tcfg)   # v0.31.0
 
         if verdict.verdict == "VETO":
             # v0.12.10: inside the confirmation window, a verdict whose

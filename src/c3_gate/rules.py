@@ -570,6 +570,20 @@ def lane_for(thesis: dict, origin: str, cclass: Optional[str] = None) -> str:
     return "news_short"
 
 
+def trend_day_long_filter(verdict: GateVerdict, thesis: dict, trend: Optional[str],
+                          cfg: dict) -> GateVerdict:
+    """v0.31.0: on a DOWN trend day a PASS for an up thesis becomes a final
+    VETO TREND_DAY_LONG (journaled with its counterfactual like any veto).
+    Shorts and non trend days are untouched."""
+    if trend != "down" or not (cfg or {}).get("block_new_longs", True):
+        return verdict
+    if verdict.verdict != "PASS" or str(thesis.get("direction") or "up") != "up":
+        return verdict
+    numbers = dict(verdict.numbers or {})
+    numbers["trend_day"] = trend
+    return GateVerdict("VETO", verdict.rule, "TREND_DAY_LONG", numbers)
+
+
 def credibility_with_class(required: int, cclass: Optional[str], cfg: dict) -> int:
     """v0.29.0: an issuer's own press release is the primary source of an
     offering; one outlet is enough for the classes listed in

@@ -35,7 +35,7 @@ from c1_ingestion.heartbeat import Heartbeat, set_health
 from a1_triage.backends import get_backend
 from router.facts import _schedule_cache
 
-from common import sectors
+from common import sectors, trendday
 from .sizing import (SizingInputs, cluster_verdict, hard_gates,
                      open_risk_dollars, size_entry, scanner_capital_cfg,
                      news_capital_cfg)
@@ -224,6 +224,7 @@ class A3Service:
         self.limits = cfg["limits"]
         self.scanner_cfg = cfg.get("scanner") or {}
         self.news_cfg = cfg.get("news") or {}          # v0.27.0
+        self.tcfg = trendday.load_cfg()                 # v0.31.0
         # v0.13: shorting block (config/shorting.yaml, merged in main()).
         # mode 'shadow' -> shorts journal SHADOW_SHORT and stop before the
         # intent; 'live' -> real SELL_SHORT intents; anything else -> a
@@ -367,6 +368,23 @@ class A3Service:
                         extra=kv(signal_id=signal_id))
             return
 
+        # v0.31.0: trend day mode (set by C10 from the index ETFs at 10:00 ET)
+        trend = await trendday.active()
+        capital_eff, scanner_eff, shorting_eff = self.capital, self.scanner_cfg, self.shorting
+        if trend == "down":
+            capital_eff, scanner_eff, shorting_eff = trendday.risk_overrides(
+                self.capital, self.scanner_cfg, self.shorting, self.tcfg)
+            if side == "LONG" and self.tcfg.get("block_new_longs", True):
+                await write_decision(
+                    signal_id=signal_id, item_id=item_id, item_revision=revision,
+                    ticker=ticker, stage="RISK", agent="A3", action="VETO",
+                    veto_reason="TREND_DAY_LONG",
+                    payload={"origin": origin, "trend_day": trend},
+                    reason="down trend day: no new longs",
+                    regime_id=body.get("regime_id"))
+                log.info("risk VETO trend day long", extra=kv(signal_id=signal_id, ticker=ticker))
+                return
+
         controls = await read_controls()
         # v0.13.3: the account's own shorting permission (published by C4
         # reconciliation). Vetoing HERE — before the model call, before the
@@ -417,7 +435,7 @@ class A3Service:
                 extra_flags.append("SCANNER_SECTOR_CLUSTER")
                 log.info("scanner sector cluster (shadow)",
                          extra=kv(ticker=ticker, sector=sector, open_same_sector=same))
-            max_conc = int(self.scanner_cfg.get("max_concurrent_positions", 2))
+            max_conc = int(scanner_eff.get("max_concurrent_positions", 2))
             if await open_scanner_positions() >= max_conc:
                 await write_decision(
                     signal_id=signal_id, item_id=item_id,
@@ -523,19 +541,21 @@ class A3Service:
                 reason="scalp_v1 profile defaults (no discretion on scanner lane)")
             model_used = False
             # v0.16.0: lane policy (risk multiplier + scanner notional cap)
-            capital_cfg = scanner_capital_cfg(self.capital, self.scanner_cfg)
+            capital_cfg = scanner_capital_cfg(capital_eff, scanner_eff)
         else:
             adj, model_used = await self.discretion(thesis, gate, profile)
             # v0.27.0: news longs at long_risk_multiplier of the budget
-            capital_cfg = (news_capital_cfg(self.capital, self.news_cfg, side,
+            capital_cfg = (news_capital_cfg(capital_eff, self.news_cfg, side,
                                             lane=gate.get("lane"))
-                           if origin == "news" else self.capital)
+                           if origin == "news" else capital_eff)
         heat_bd = await sectors.open_sector_heat(inp.sector)
         mode = str(self.capital.get("sector_heat_mode", "net")).lower()
         inp.sector_heat = (heat_bd[mode] if heat_bd and mode in heat_bd else
                            (heat_bd["gross"] if heat_bd else None))
         result = size_entry(inp, capital_cfg, self.limits, profile,
-                            horizon, adj.k, shorting_cfg=self.shorting)
+                            horizon, adj.k, shorting_cfg=shorting_eff)
+        if trend == "down":
+            result.flags.append("TREND_DAY")
         result.numbers["sector_heat_breakdown"] = heat_bd
         result.flags.extend(extra_flags)
 
