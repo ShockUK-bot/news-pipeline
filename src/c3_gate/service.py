@@ -609,12 +609,22 @@ class C3Service:
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT published_ts FROM news.news_items WHERE item_id=%s AND revision=%s",
+                "SELECT published_ts, source, headline FROM news.news_items WHERE item_id=%s AND revision=%s",
                 (item_id, revision))
             row = await cur.fetchone()
         if row is None:
             raise ValueError(f"item not in news store: {item_id} rev {revision}")
         published_ts = row[0]
+        # v0.31.2: these three belong HERE (the main news branch). The
+        # v0.27.0 and v0.29.0 edits that introduced them matched the first
+        # occurrence of this query, which is the EH shadow branch above, so
+        # from 2026-11-02 15:05 CT to 2026-11-10 every in-session news thesis
+        # raised NameError('lane') at short_ctx and was dropped after five
+        # attempts (272 messages). tests/unit/test_v0_31_2.py checks the
+        # assignments by function with the AST, not by substring.
+        item_source = row[1]
+        cclass = catalyst_class(row[2])
+        lane = self._lane_for(thesis, "news", cclass)
 
         now = self.now_fn()
 
