@@ -94,9 +94,12 @@ def test_globenewswire_subject_labels_are_url_safe():
 # So it is browser impersonation being refused, not bots as such.
 
 def test_every_globenewswire_feed_overrides_the_browser_ua():
+    """v0.31.3: the eight GlobeNewswire feeds were removed (403 to every
+    client since 2026-10-08; Benzinga carries the releases). The rule stays
+    for any future re-add: an honest UA, never a browser string."""
     feeds = _rss_feeds()
     gnw = {n: f for n, f in feeds.items() if "globenewswire.com" in f["url"]}
-    assert gnw, "expected globenewswire feeds in the registry"
+    assert not gnw, "GlobeNewswire feeds were removed in v0.31.3; re-adding needs a fresh probe"
     for name, feed in gnw.items():
         ua = feed.get("user_agent", "")
         assert ua, f"{name} would be tarpitted by Akamai without its own UA"
@@ -190,6 +193,8 @@ def test_low_volume_lanes_clear_twice_their_measured_gap():
                           "gnw-ipo": 71.6}
     feeds = _rss_feeds()
     for name, gap in measured_max_gap_h.items():
+        if name not in feeds:                      # v0.31.3: GlobeNewswire lanes removed
+            continue
         assert feeds[name]["stale_after_hours"] >= 2 * gap, name
 
 

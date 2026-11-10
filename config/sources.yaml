@@ -107,31 +107,17 @@ rss:
       expect_title_prefix: "All Business Technology"
       require_items: true
       stale_after_hours: 120    # floor: holiday weekend + a quiet day
-    # v0.13.4 — THE globenewswire ReadTimeout, root cause found 2026-08-15.
-    # GlobeNewswire is behind Akamai, and Akamai TARPITS the browser User-Agent
-    # v0.11.1 introduced: TLS completes, the request goes out, and the server
-    # then sends ZERO bytes until the client gives up. No timeout value fixes
-    # that. Probed from the Spark, same URL, same second:
-    #     Chrome/124 browser string ....... 0 bytes, timeout
-    #     no User-Agent header at all ..... 0 bytes, timeout
-    #     curl/8.5.0 ...................... 200, 36772 bytes, 0.19s
-    #     python-httpx/0.28.1 ............. 200, 36772 bytes, 0.24s
-    #     news-pipeline/... (below) ....... 200, 36772 bytes, 0.16s
-    #     Mozilla/5.0 (compatible; news-pipeline/...) 200, 36772 bytes
-    # So it is browser IMPERSONATION being refused, not the word "Mozilla" and
-    # not bots as such. This is the exact inverse of prnewswire (v0.11.1, which
-    # 404s honest bots) and the same shape as BLS (v0.12.25) — three publishers,
-    # three incompatible demands, which is why poll_headers does this per feed.
-    # The string identifies us honestly and gives their ops a way to reach us
-    # instead of silently escalating. It is a STATIC identifier: the version in
-    # it does not track releases, and it should only be edited after re-probing.
-    # Not personal data, so a literal here is fine (contrast BLS, rule 22).
-    - name: "globenewswire-public"
-      url: "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      require_items: true
-      stale_after_hours: 120    # floor: holiday weekend + a quiet day
-      read_timeout_secs: 40    # generous, but the real fix is the UA above
+    # -- globenewswire-public: REMOVED in v0.31.3 (2026-11-10) ------------
+    # 403 Forbidden on every poll since 2026-10-08, with the honest
+    # news-pipeline identifier (v0.13.4) and with plain curl alike: Akamai now
+    # refuses this client outright (the v0.13.4 tarpit story is in git
+    # history). Not replaced by another URL: the same host serves every
+    # GlobeNewswire feed. Coverage is NOT lost: Alpaca's Benzinga stream
+    # carries GlobeNewswire releases (1,914 items with globenewswire.com
+    # URLs in the week to 2026-11-10, against ~2,900/week the eight feeds
+    # delivered in early October), on tier 2 with the analyst context. The
+    # eight feeds produced 2,383 escalations and 0 positions in their life.
+    # Health rows for them were deleted with the operator's approval.
     # -- businesswire-all: REMOVED in v0.13.5 -----------------------------
     # The channel is dead and there is no replacement we can reach. Probed
     # 2026-08-15/16 from the Spark:
@@ -150,8 +136,9 @@ rss:
     # is exactly what require_items exists to catch, and v0.13.3 shipped it
     # WITHOUT require_items on the one feed already known to be fragile.
     # Hence the consistency rule below, and the test that now enforces it.
-    # The wire lane is still covered: GlobeNewswire (8 feeds), PR Newswire
-    # (2), Newsfile (1), plus Alpaca's Benzinga stream on tier 2.
+    # The wire lane is still covered: PR Newswire (2), Newsfile (1), plus
+    # Alpaca's Benzinga stream on tier 2 (which also carries GlobeNewswire
+    # and Business Wire releases; GlobeNewswire's own feeds removed v0.31.3).
     # Newsfile (TMX): dense US small/mid-cap coverage, which is the size band
     # the majors under-serve. 25 items/poll, verified fresh 2026-08-15.
     - name: "newsfile-global"
@@ -159,56 +146,12 @@ rss:
       require_items: true
       stale_after_hours: 120    # floor: holiday weekend + a quiet day
 
-    # -- GlobeNewswire subject lanes (v0.13.3) -----------------------------
-    # Same host we already poll, split by catalyst type so A1 sees the event
-    # class without having to infer it. The numeric code is what selects the
-    # content; the text after the hyphen and the whole feedTitle segment are
-    # cosmetic, so we use "x" — a label containing "/" or "'" (e.g. subject
-    # 22, "Insider's Buy/Sell") returns HTTP 400 unless double-encoded.
-    # An unknown code does NOT 404 — it returns a valid, EMPTY feed. Hence
-    # require_items on every one of these.
-    - name: "gnw-earnings"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/13-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "earnings"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 1.2h, floor 120h
-    - name: "gnw-manda"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/27-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "m-and-a"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 5.5h, floor 120h
-    - name: "gnw-ipo"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/21-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "ipo", "offering"]
-      require_items: true
-      stale_after_hours: 168    # 2x measured max gap 71.6h, floor 120h
-    - name: "gnw-clinical"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/90-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "clinical", "biotech"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 59h, floor 120h
-    - name: "gnw-insider"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/22-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "insider"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 41.7h, floor 120h
-    - name: "gnw-classaction"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/84-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "litigation"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 1.4h, floor 120h
-    - name: "gnw-management"
-      url: "https://www.globenewswire.com/RssFeed/subjectcode/86-x/feedTitle/x"
-      user_agent: "news-pipeline/0.13.4 (+https://github.com/ShockUK-bot/news-pipeline)"
-      tags: ["catalyst", "management-change"]
-      require_items: true
-      stale_after_hours: 120    # 2x measured max gap 15.2h, floor 120h
+    # -- GlobeNewswire subject lanes (v0.13.3): REMOVED in v0.31.3 ----------
+    # gnw-earnings, gnw-manda, gnw-ipo, gnw-clinical, gnw-insider,
+    # gnw-classaction, gnw-management: same host, same 403 since 2026-10-08,
+    # see the globenewswire-public note above. The catalyst-class tags they
+    # carried are now inferred by A1 from the headline (and the offering
+    # class deterministically by C3 rules.catalyst_class since v0.29.0).
 
     # -- Exchange market structure (v0.13.3) -------------------------------
     # Nasdaq UTP trading halts. Tier 1: this is the exchange itself, not an
@@ -223,7 +166,7 @@ rss:
     # inference. NOTE: http, not https; the currenthalts and news variants
     # of this feed are both retired (404).
     - name: "nasdaq-halts"
-      url: "http://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
+      url: "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"   # v0.31.3: http 301s here; follow nothing
       tier: 1
       tags: ["halt", "market-structure"]
       adapter: "nasdaq_halts"
