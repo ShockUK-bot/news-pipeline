@@ -1,9 +1,10 @@
 # A5 Macro/Thematic configuration (Phase 8; v0.12.23 bootstrap + wide pass).
 lane:
-  max_age_hours: 168           # thesis-lane messages older than a week
+  max_age_hours: 96            # v0.31.4 (2026-11-10): was 168. Evidence older than four sessions no longer feeds a thesis;
+                               # the queue had 143 waiting, oldest 177h, with inflow 72/day against 60 claimed
                                # bulk-expire (also the backlog drain)
-  top_k: 25                    # items claimed + modeled per nightly run
-  deep_top_k: 60               # ...on the Sunday deep pass
+  top_k: 40                    # v0.31.4: was 25 (items claimed + modeled per nightly run)
+  deep_top_k: 100              # v0.31.4: was 60; the deep pass has run every night since v0.14.13 and claimed exactly 60 while 72/day arrived
   force_deep: true             # v0.14.13 (2026-09-15): EVERY night is a deep
                                # pass. The nightly lane only ever carried
                                # ticker-less items (router rule 3), so the
