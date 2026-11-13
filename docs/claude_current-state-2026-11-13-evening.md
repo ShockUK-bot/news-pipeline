@@ -24,7 +24,8 @@ Trend day flag set at 09:15 CT (QQQ -2.03 percent). Three scanner shorts opened 
 
 - Monday 2026-11-16: confirm the first `LANE_SHADOW` row and that nothing is emitted before 10:00 ET.
 - Scanner exit ladder: under `v27` four trades supply +5,923 and the other 47 sum to -2,160. The breakeven ratchet is not the problem. No change proposed yet.
-- Offered, not approved: a direction accuracy bench for the analyst (replay past news with known outcomes) to test the republished 27B file and Qwen 4 27B when it ships; exit cancel race fix; earnings calendar duplicate dates (NBIS, CRWV); shadow sizing (1 R at about 1,160 dollars); `CLAUDE.md` version text refresh (still says v0.26.4); removing unused July model files in `/opt/models` (about 28 GB).
+- Declined by Ian on 2026-11-13: the direction accuracy bench for the analyst. No model change is planned.
+- Offered, not approved: exit cancel race fix; earnings calendar duplicate dates (NBIS, CRWV); shadow sizing (1 R at about 1,160 dollars); `CLAUDE.md` version text refresh (still says v0.26.4); removing unused July model files in `/opt/models` (about 28 GB).
 - `backup_offsite` DEGRADED (Google Drive token), unchanged.
 - Position 27 (SMTC, 2026-08-26) has no replay rows.
 
