@@ -68,6 +68,10 @@ gate:
   handoff_gap_ratio: 0.5       # gap >= 0.5x magnitude_est -> PRICED_IN
   handoff_min_move_pct_long: 0.02
   credibility_exempt_classes: [offering]   # v0.29.0: the issuer's own release is the primary source; one outlet is enough
+  news_long_shadow: true        # v0.31.6 (2026-11-13): the news LONG lane is shadow only. Every long that passes the
+                                # gate journals GATE VETO LANE_SHADOW and keeps its counterfactual row; no order.
+                                # EDGAR longs since v0.27.0: 6 trades, 2 winners, -437; EDGAR up calls right 45% of 352.
+                                # Set false to trade the sources below again.
   news_long_sources: [edgar]    # v0.27.0: news LONGS only from these news.news_items.source values
                                 # (EDGAR filings 3/3 winners in October; Benzinga longs -684 since inception).
                                 # Other sources journal GATE VETO LANE_SOURCE and keep their counterfactual.

@@ -9,12 +9,13 @@ from common import trendday as td
 from c3_gate.rules import GateVerdict, trend_day_long_filter
 
 ROOT = Path(__file__).resolve().parents[2]
-CFG = yaml.safe_load((ROOT / "config" / "trend_day.yaml").read_text())["trend_day"]
+RAW = yaml.safe_load((ROOT / "config" / "trend_day.yaml").read_text())["trend_day"]
+CFG = {**RAW, "enabled": True}      # v0.31.6 switched the mode off in config; the rules are still tested as built
 ET = ZoneInfo("America/New_York")
 
 
 def test_config():
-    assert CFG["enabled"] is True and CFG["min_drop_pct"] == 0.02 and CFG["direction"] == "down"
+    assert RAW["enabled"] is False and CFG["min_drop_pct"] == 0.02 and CFG["direction"] == "down"
     assert CFG["symbols"] == ["QQQ", "SPY"] and CFG["check_from_et"] == "10:00"
     assert CFG["scanner"]["max_concurrent_positions"] == 4 and CFG["shorting"]["max_gross_short_notional_pct"] == 0.60
 

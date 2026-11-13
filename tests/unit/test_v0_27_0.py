@@ -28,7 +28,7 @@ def test_config_switches():
     assert scalp["realization"]["action"] == "none"
     assert scalp["realization"]["target_fraction"] == 0.6      # A11 still journals the target
     sc = _cfg("scanner.yaml")["scanner"]
-    assert sc["session_start_et"] == "09:33" and sc["stop_out_cooloff_sessions"] == 3  # v0.31.1: A9 proposal 3
+    assert sc["session_start_et"] == "10:00" and sc["stop_out_cooloff_sessions"] == 3  # v0.31.6: back to 10:00
     assert sc["early_window"]["enabled"] is True                # shadow window untouched
     assert _cfg("gate.yaml")["gate"]["news_long_sources"] == ["edgar"]
     assert _cfg("risk.yaml")["news"]["long_risk_multiplier"] == 0.5

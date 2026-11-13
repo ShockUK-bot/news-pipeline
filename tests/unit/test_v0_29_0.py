@@ -52,7 +52,7 @@ def test_credibility_with_class():
 
 def test_config():
     lanes = _cfg("shorting.yaml")["shorting"]["lanes"]
-    assert lanes["news_short"] is False and lanes["news_short_dilution"] is True
+    assert lanes["news_short"] is False and lanes["news_short_dilution"] is False   # v0.31.6: off
     assert _cfg("shorting.yaml")["shorting"]["etb_only"] is True
     assert _cfg("gate.yaml")["gate"]["credibility_exempt_classes"] == ["offering"]
     assert _cfg("risk.yaml")["news"]["short_dilution_risk_multiplier"] == 0.5

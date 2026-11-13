@@ -265,13 +265,26 @@ def lane_source_filter(verdict: GateVerdict, thesis: dict, source: str | None,
     cfg['news_long_sources'] (news.news_items.source values). Applied AFTER
     evaluate() so a PASS on a disallowed source becomes a final VETO
     LANE_SOURCE and still gets its counterfactual row (that is how the lane
-    earns its way back). Empty/absent list = no restriction. Down-theses are
+    earns its way back). Empty/absent list = no restriction. v0.31.6:
+    cfg['news_long_shadow'] true turns the longs that pass both into a final
+    VETO LANE_SHADOW (measured the same way, no order). Down-theses are
     untouched (they have their own switch in shorting.yaml)."""
     allowed = cfg.get("news_long_sources") or []
-    if not allowed or verdict.verdict != "PASS":
+    shadow = bool(cfg.get("news_long_shadow", False))
+    if verdict.verdict != "PASS" or not (allowed or shadow):
         return verdict
     if str(thesis.get("direction") or "up") != "up":
         return verdict
+    in_allowed = (not allowed) or (
+        source is not None and str(source).lower() in {str(a).lower() for a in allowed})
+    if shadow and in_allowed:
+        # v0.31.6: the whole news LONG lane in shadow. A long that would have
+        # traded (passed the gate AND the source rule) journals LANE_SHADOW,
+        # so its counterfactual can be told apart from the LANE_SOURCE ones.
+        numbers = dict(verdict.numbers or {})
+        numbers["source"] = source
+        numbers["shadow"] = True
+        return GateVerdict("VETO", verdict.rule, "LANE_SHADOW", numbers)
     if source is not None and str(source).lower() in {str(a).lower() for a in allowed}:
         return verdict
     numbers = dict(verdict.numbers or {})

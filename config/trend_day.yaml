@@ -6,8 +6,11 @@
 # position) and the Monday news-short switch throttled it. Over two years the
 # index rule "down 2% at 11:00 and below the 10:00 price" was right 80 to 86%
 # of the time; the 10:00 version is the switch used here.
+# v0.31.6 (2026-11-13): OFF. Back test of this exact rule over 510 sessions: it fired on 47, the index
+# kept falling on 25 of them, and shorting the down 4% movers from the trigger to 15:50 ET averaged
+# -0.12% a day (27 of 47 days positive, worst -4.86%, best +4.12%). See docs/claude_patch-notes-v0_31_5.md.
 trend_day:
-  enabled: true
+  enabled: false
   symbols: [QQQ, SPY]            # any one triggers
   check_from_et: "10:00"         # first evaluation; checked every scanner cycle after that
   min_drop_pct: 0.02             # index vs previous close at or below -2%

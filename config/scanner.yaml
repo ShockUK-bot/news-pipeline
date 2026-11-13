@@ -34,7 +34,10 @@ scanner:
                                  # essentially the entire day's scan budget —
                                  # four market-data calls each to reach a
                                  # guaranteed PRICE_FLOOR reject.
-  session_start_et: "09:33"   # v0.31.1 (2026-11-07): A9 proposal 3 approved: the 09:33 early window goes live
+  session_start_et: "10:00"   # v0.31.6 (2026-11-13): back to 10:00; 09:33 to 10:00 is the shadow early window again.
+                              # The +5.6R that carried proposal 3 was one day (+6.47R from ten candidates on 11-05);
+                              # live entries before 10:00 ET: 33 trades, -257; after: 18 trades, +1,525.
+                              # History: v0.31.1 (2026-11-07) A9 proposal 3 approved: the 09:33 early window goes live
                               # (+5.6R over 37 shadow candidates, 65% winners; Thursday 11-05 early shorts +6.5R).
                               # v0.27.0 had moved this 09:50 -> 10:00 after October's first-minute stop-outs;
                               # the stop-out cool-off and no-time-stop exits stay. ROLLBACK: "10:00".
