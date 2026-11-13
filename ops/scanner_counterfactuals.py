@@ -28,9 +28,12 @@ async def pending_ids(conn) -> list[int]:
         """SELECT p.position_id FROM journal.positions p
            WHERE p.origin='scanner' AND p.status='CLOSED' AND p.qty_initial > 0
              AND EXISTS (SELECT 1 FROM journal.exits e WHERE e.position_id=p.position_id)
-             AND NOT EXISTS (SELECT 1 FROM journal.scanner_counterfactuals c
-                             WHERE c.position_id=p.position_id)
-           ORDER BY p.position_id""")
+             AND (SELECT count(DISTINCT c.variant) FROM journal.scanner_counterfactuals c
+                  WHERE c.position_id=p.position_id AND c.variant = ANY(%s)) < %s
+           ORDER BY p.position_id""", (list(VARIANTS), len(VARIANTS)))
+    # v0.31.5: pending = missing ANY current variant (was: has no rows at all),
+    # so a variant added later is backfilled for every historical trade. be1.5
+    # and nobe (v0.30.2) only ever reached the trades closed after they shipped.
     return [r[0] for r in await cur.fetchall()]
 
 
@@ -39,7 +42,8 @@ async def process(conn, pid: int) -> dict | None:
     bars = await fetch_bars(p["ticker"], p["entry_ts"])
     if not bars:
         return None
-    res = replay_variants(bars, p["side"], p["entry_ts"], p["entry_px"], p["qty"], p["atr"], p["mag"])
+    res = replay_variants(bars, p["side"], p["entry_ts"], p["entry_px"], p["qty"], p["atr"], p["mag"],
+                          policy=p.get("policy"))
     async with conn.transaction():
         for name, r in res.items():
             await conn.execute(

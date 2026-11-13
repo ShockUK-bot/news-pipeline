@@ -44,15 +44,19 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
            qty: int, atr: float, mag: float, stop_k: float,
            trail_k: float = TRAIL_K, time_stop: bool = True,
            scale_out: bool = True, runner_hold: bool = False,
-           be_r: float = BE_R) -> dict:
+           be_r: float = BE_R, trail_at: float = TRAIL_AT,
+           time_win: float = TIME_WIN, time_min_r: float = TIME_MIN_R,
+           tf: float = TF) -> dict:
     """Pure ladder replay. bars: [{ts(CT datetime), open, high, low, close}].
     v0.16.0 variants: trail_k (ATR multiple of the trail), time_stop off,
     scale_out off (full size rides the trail), runner_hold (after the scale-out
-    the runner keeps only the breakeven stop until force-flat)."""
+    the runner keeps only the breakeven stop until force-flat).
+    v0.31.5: trail_at, time_win, time_min_r and tf are parameters too, so a
+    trade can be replayed under its own journaled exit policy ('asrun')."""
     m = 1 if side == "LONG" else -1
     stop = round(entry_px - m * stop_k * atr, 2)
     r_unit = stop_k * atr
-    target = round(entry_px * (1 + m * TF * mag), 4)
+    target = round(entry_px * (1 + m * tf * mag), 4)
     hwm, basis, qty_open, scaled, pnl, exits = entry_px, "initial", qty, False, 0.0, []
     mfe, close_r = 0.0, None
     first = entry_ts.replace(second=0, microsecond=0)
@@ -76,7 +80,7 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
             exits.append((hhmm, "FORCE_FLAT", qty_open, b["close"]))
             qty_open = 0
             break
-        if time_stop and minutes_open >= TIME_WIN and prog < TIME_MIN_R:
+        if time_stop and minutes_open >= time_win and prog < time_min_r:
             pnl += m * (b["close"] - entry_px) * qty_open
             exits.append((hhmm, "TIME", qty_open, b["close"]))
             qty_open = 0
@@ -93,7 +97,7 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
         if runner_hold and scaled:
             if basis == "initial":
                 proposed = (round(entry_px, 2), "breakeven")
-        elif prog >= TRAIL_AT:
+        elif prog >= trail_at:
             proposed = (round(hwm - m * trail_k * atr, 2), "trail")
         elif prog >= be_r and basis == "initial":
             proposed = (round(entry_px, 2), "breakeven")
@@ -109,6 +113,35 @@ def replay(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
     return {"pnl": round(pnl, 2), "r": round(pnl / (qty * r_unit), 2) if qty and r_unit else 0.0,
             "r_unit": round(r_unit, 4), "stop0": stop if not exits else None, "exits": exits,
             "mfe_r": round(mfe, 3), "close_r": close_r}
+
+
+def policy_kwargs(policy: dict | None) -> dict | None:
+    """v0.31.5: replay() keyword arguments that reproduce a position's own
+    journaled exit policy (the 'asrun' variant). None when the policy is not a
+    scalp ladder the replay models: a scalp promoted to short_term_v1 carries a
+    session time stop and a percent profit lock, which replay() does not have.
+    Pure."""
+    if not policy or policy.get("profile") != "scalp_v1" or policy.get("profit_lock"):
+        return None
+    trail = policy.get("trail") or {}
+    real = policy.get("realization") or {}
+    ts = policy.get("time_stop")
+    if ts and "window_minutes" not in ts:
+        return None
+    try:
+        kw = {"stop_k": float((policy.get("initial_stop") or {}).get("k") or 2.0),
+              "trail_k": float(trail["k"]),
+              "trail_at": float(trail["activate_at_R"]),
+              "be_r": float(policy["breakeven_at_R"]),
+              "scale_out": real.get("action") == "scale_out_50",
+              "tf": float(real.get("target_fraction") or TF),
+              "time_stop": bool(ts)}
+        if ts:
+            kw["time_win"] = float(ts["window_minutes"])
+            kw["time_min_r"] = float(ts["min_progress_R"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return kw
 
 
 def replay_hold(bars: list[dict], side: str, entry_ts: datetime, entry_px: float,
@@ -176,15 +209,35 @@ VARIANTS = {                       # v0.16.0: journaled nightly per scanner trad
     # nobe never ratchets to breakeven (the trail still engages from 1R).
     "be1.5": {"be_r": 1.5},
     "nobe": {"be_r": 99.0},
+    # v0.31.5: every variant above is ONE change from the pre v0.27.0 ladder
+    # (1.5 ATR trail, 60 minute time stop, 50% scale-out), which stopped being
+    # the live profile on 2026-11-02. So be1.5 and nobe measured the breakeven
+    # question on a ladder nobody trades, and no variant could be compared with
+    # the live result. v27 is the v0.27.0 profile as a FIXED definition (3.0
+    # ATR trail from 1R, no time stop, no scale-out, breakeven at 0.75R);
+    # v27_be1.5 and v27_nobe are the breakeven question asked of that ladder.
+    # Fixed parameters, never read from config: a journaled row keeps meaning
+    # the same thing after the next config change.
+    "v27": {"trail_k": 3.0, "time_stop": False, "scale_out": False},
+    "v27_be1.5": {"trail_k": 3.0, "time_stop": False, "scale_out": False, "be_r": 1.5},
+    "v27_nobe": {"trail_k": 3.0, "time_stop": False, "scale_out": False, "be_r": 99.0},
 }
+ASRUN = "asrun"                    # v0.31.5: the position's own journaled policy; the
+                                   # fidelity check (asrun vs realized_pnl). Not in
+                                   # VARIANTS: promoted scalps have no asrun row.
 
 
-def replay_variants(bars, side, entry_ts, entry_px, qty, atr, mag) -> dict[str, dict]:
+def replay_variants(bars, side, entry_ts, entry_px, qty, atr, mag,
+                    policy: dict | None = None) -> dict[str, dict]:
     out = {}
     for name, kw in VARIANTS.items():
         kw = dict(kw)
         k = kw.pop("stop_k", 2.0)
         out[name] = replay(bars, side, entry_ts, entry_px, qty, atr, mag, k, **kw)
+    kw = policy_kwargs(policy)
+    if kw is not None:
+        k = kw.pop("stop_k")
+        out[ASRUN] = replay(bars, side, entry_ts, entry_px, qty, atr, mag, k, **kw)
     return out
 
 
@@ -234,7 +287,7 @@ async def load_position(position_id: int) -> dict:
     return {"ticker": ticker, "side": side, "entry_ts": opened_ts.astimezone(CT),
             "closed_ts": closed_ts.astimezone(CT) if closed_ts else None,
             "entry_px": float(avg_entry), "qty": int(qty), "r_unit": float(r_unit),
-            "atr": atr,
+            "atr": atr, "policy": policy,
             "mag": float(policy.get("magnitude_est") or 0.015),
             "actual_pnl": float(realized),
             "actual_r": round(float(realized) / (int(qty) * float(r_unit)), 2)}
