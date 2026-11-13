@@ -26,7 +26,17 @@ Full suite in the build copy: 960 passed, 1 skipped.
 
 ## 4. Deploy and verification
 
-DEPLOY_SECTION
+Deployed 2026-11-13 at 15:29 CT, after the close and after the 15:20 CT A11 run (so today was scored under the settings it traded with). All positions were flat.
+
+- `main` brought up to the build, tagged `v0.31.6`, `git diff v0.31.6 --stat` empty, suite 960 passed on `main`.
+- `c7-watchdog.timer` stopped, `a3-risk`, `c3-gate`, `c4-exec`, `c10-scanner` restarted, watchdog timer started again.
+- All four active. Logs: `A3 up`, `C3 up`, `C4 up (reconciled)`, `C10 up window=10:00-15:15 ET caps=2/scan`. No errors or tracebacks in any of the four logs after the restart.
+- Heartbeats `risk`, `gate`, `exec`, `scanner` fresh (under 90 seconds) and OK.
+- Pushed `main` and tags.
+
+Not yet observed live (first chance is the next session, Monday 2026-11-16): a `LANE_SHADOW` veto row in `journal.decisions`, and scanner candidates between 09:33 and 10:00 ET journaled `CAPPED_EARLY_WINDOW` with nothing emitted.
+
+Same evening, from v0.31.5: the A11 run backfilled the new replay variants. 53 of 54 closed scanner trades now have `v27`, `v27_be1.5` and `v27_nobe`; 47 have `asrun`. Position 27 (SMTC, 2026-08-26) has no variant rows.
 
 ## 5. Rollback
 
